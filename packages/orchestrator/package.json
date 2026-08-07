@@ -12,7 +12,8 @@
   "dependencies": {
     "@langchain/langgraph": "^1.4.9",
     "@tekisho/domain": "*",
-    "uuid": "^14.0.1"
+    "uuid": "^14.0.1",
+    "zod": "*"
   },
   "devDependencies": {
     "@types/node": "^26.1.2",

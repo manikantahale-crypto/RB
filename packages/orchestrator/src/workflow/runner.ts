@@ -1,19 +1,20 @@
 import type { EventInput, WorkflowResult } from '../types.js';
-import type { WorkflowRegistry } from './registry.js';
 import type { Pool } from 'pg';
+import type { GraphCompiler } from '../graphs/compiler.js';
 
+/**
+ * Executes a workflow by graph_key: compiler loads topology from DB,
+ * hydrates nodes from the registry, invokes LangGraph, persists emitted events.
+ */
 export class WorkflowRunner {
-  private registry: WorkflowRegistry;
-  private pool?: Pool;
-
-  constructor(registry: WorkflowRegistry, pool?: Pool) {
-    this.registry = registry;
-    this.pool = pool;
-  }
+  constructor(
+    private compiler: GraphCompiler,
+    private pool?: Pool
+  ) {}
 
   public async executeWorkflow(workflow_name: string, event: EventInput): Promise<WorkflowResult> {
     try {
-      const graph = this.registry.getGraph(workflow_name);
+      const graph = await this.compiler.get(workflow_name, event.organization_id);
 
       const finalState = await graph.invoke({ trigger_event: event });
 
@@ -44,11 +45,14 @@ export class WorkflowRunner {
                   generatedEvent.correlation_id,
                   event.event_id,
                   'orchestrator',
-                  generatedEvent.payload
+                  generatedEvent.payload,
                 ]
               );
             }
             await client.query('COMMIT');
+            console.log(
+              `[WorkflowRunner] wrote ${events.length} event(s) to event_outbox for ${workflow_name}`
+            );
           } catch (err) {
             await client.query('ROLLBACK');
             throw err;
@@ -63,14 +67,14 @@ export class WorkflowRunner {
       return {
         status: 'COMPLETED',
         events,
-        finalState: cleanState
+        finalState: cleanState,
       };
     } catch (error: any) {
       return {
         status: 'FAILED',
         events: [],
         finalState: {},
-        error: error.message
+        error: error.message,
       };
     }
   }

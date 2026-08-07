@@ -2,9 +2,8 @@ import * as PgBossModule from "pg-boss";
 import { env } from "./env.js";
 import pg from 'pg';
 import { SimpleRunbookResolver } from "@tekisho/orchestrator/src/resolver/runbook.js";
-import { WorkflowRegistry } from "@tekisho/orchestrator/src/workflow/registry.js";
 import { WorkflowRunner } from "@tekisho/orchestrator/src/workflow/runner.js";
-import { jdGraph, resumeGraph, matchGraph } from "@tekisho/orchestrator/src/workflow/graphs/syntra.js";
+import { GraphCompiler } from "@tekisho/orchestrator/src/graphs/compiler.js";
 import { EVENT_TYPES } from "@tekisho/domain";
 import type { EventEnvelope } from "@tekisho/domain";
 import type { EventInput } from "@tekisho/orchestrator/src/types.js";
@@ -46,25 +45,24 @@ async function bootstrapPgBoss(): Promise<void> {
   await boss.start();
   console.log("pg-boss tables created successfully");
 
-  // Construct Resolver & Registry
+  // event.type → graph_key (design §9.1 routing table, simplified)
   const resolver = new SimpleRunbookResolver({
     [EVENT_TYPES.JD_RECEIVED]: 'syntra.jd.workflow',
     [EVENT_TYPES.RESUME_RECEIVED]: 'syntra.resume.workflow',
     'syntra.match.requested': 'syntra.match.workflow'
   });
-  const registry = new WorkflowRegistry();
-  registry.register('syntra.jd.workflow', jdGraph);
-  registry.register('syntra.resume.workflow', resumeGraph);
-  registry.register('syntra.match.workflow', matchGraph);
 
-  // Construct Pool for WorkflowRunner — keep small; shares the same pooler budget.
+  // Pool for compiler + outbox — keep small; shares the same pooler budget.
   const pool = new pg.Pool({
     connectionString: env.DATABASE_MIGRATOR_URL,
     ssl: { rejectUnauthorized: false },
     max: 2,
   });
 
-  const runner = new WorkflowRunner(registry, pool);
+  // Topology from DB (graph_definitions); behavior from node registry.
+  const compiler = new GraphCompiler(pool);
+  await compiler.ensureSchemaAndSeed();
+  const runner = new WorkflowRunner(compiler, pool);
 
   console.log("Listening for orchestration.dispatch events...");
   await boss.createQueue("orchestration.dispatch");
@@ -134,7 +132,11 @@ async function bootstrapPgBoss(): Promise<void> {
           });
           const result = await runner.executeWorkflow(workflowName, eventInput);
           if (result.status === "FAILED") throw new Error(result.error);
-          console.log(`[Dispatcher] ${queue} → ${workflowName} completed.`);
+          console.log(`[Dispatcher] ${queue} → ${workflowName} completed.`, result.finalState);
+          if (result.events.length) {
+            console.log(`[Dispatcher] emitted ${result.events.length} event(s):`,
+              result.events.map((e) => ({ type: e.event_type, payload: e.payload })));
+          }
         } catch (error) {
           console.error(`[Dispatcher] Error on ${queue} job ${job.id}:`, error);
           throw error;
