@@ -1,6 +1,7 @@
 import * as PgBossModule from "pg-boss";
 import { env } from "./env.js";
 import pg from 'pg';
+import { PostgresSaver } from "@langchain/langgraph-checkpoint-postgres";
 import { SimpleRunbookResolver } from "@tekisho/orchestrator/src/resolver/runbook.js";
 import { WorkflowRunner } from "@tekisho/orchestrator/src/workflow/runner.js";
 import { GraphCompiler } from "@tekisho/orchestrator/src/graphs/compiler.js";
@@ -8,6 +9,7 @@ import { EVENT_TYPES } from "@tekisho/domain";
 import type { EventEnvelope } from "@tekisho/domain";
 import type { EventInput } from "@tekisho/orchestrator/src/types.js";
 import { v4 as uuidv4 } from "uuid";
+import { startOutboxRelay } from "./workers/outbox-relay.worker.js";
 
 // Syntra publishes jd.uploaded with a minimal payload { jobId }. The orchestrator
 // runbook keys off syntra.jd.received, so we translate the queue name and
@@ -28,13 +30,13 @@ console.log("Database connection target:", {
 async function bootstrapPgBoss(): Promise<void> {
   console.log("Starting pg-boss bootstrap & dispatcher...");
 
-  // Supabase session-mode pooler caps clients at pool_size (often 15). Default
-  // pg.Pool/pg-boss max is 10 each — two pools alone blow past the limit.
+  // Supabase session-mode pooler caps clients at pool_size (often 15). Keep
+  // boss + app pool tiny; relay reuses `pool` (no third Pool).
   const boss = new PgBossModule.PgBoss({
     connectionString: env.DATABASE_MIGRATOR_URL,
     schema: "pgboss",
     ssl: { rejectUnauthorized: false },
-    max: 3,
+    max: 2,
   });
 
   // Transient pooler errors (EMAXCONNSESSION) must not crash the process.
@@ -52,17 +54,25 @@ async function bootstrapPgBoss(): Promise<void> {
     'syntra.match.requested': 'syntra.match.workflow'
   });
 
-  // Pool for compiler + outbox — keep small; shares the same pooler budget.
+  // Pool for compiler + outbox writes + checkpointer + relay — keep small.
   const pool = new pg.Pool({
     connectionString: env.DATABASE_MIGRATOR_URL,
     ssl: { rejectUnauthorized: false },
     max: 2,
   });
 
+  // Same Postgres as bootstrap-checkpointer.ts; schema option instead of search_path
+  // so this pool can still query public.graph_definitions / event_outbox.
+  const checkpointer = new PostgresSaver(pool, undefined, { schema: "langgraph" });
+  await checkpointer.setup();
+
   // Topology from DB (graph_definitions); behavior from node registry.
-  const compiler = new GraphCompiler(pool);
+  const compiler = new GraphCompiler(pool, checkpointer);
   await compiler.ensureSchemaAndSeed();
   const runner = new WorkflowRunner(compiler, pool);
+
+  // Outbox relay after checkpointer: shares boss + migrator pool.
+  const stopOutboxRelay = await startOutboxRelay({ boss, pool });
 
   console.log("Listening for orchestration.dispatch events...");
   await boss.createQueue("orchestration.dispatch");
@@ -74,10 +84,13 @@ async function bootstrapPgBoss(): Promise<void> {
       console.log(`[Dispatcher] Received event: ${envelope.event_type} (ID: ${envelope.event_id})`);
 
       try {
-        const workflowName = resolver.resolve(envelope.event_type, {
-          organization_id: envelope.organization_id,
-          payload: envelope.payload_ref
-        });
+        const workflowName = resolver.tryResolve(envelope.event_type);
+        if (!workflowName) {
+          console.log(
+            `[Dispatcher] terminal event ${envelope.event_type} — no runbook, acking`
+          );
+          continue;
+        }
         
         const eventInput: EventInput = {
           event_id: envelope.event_id,
@@ -88,8 +101,15 @@ async function bootstrapPgBoss(): Promise<void> {
           correlation_id: envelope.correlation_id,
           payload: envelope.payload_ref
         };
-        
-        const result = await runner.executeWorkflow(workflowName, eventInput);
+
+        const pinnedVersion = job.data.__graphVersion
+          ?? await compiler.resolveActiveVersion(workflowName, eventInput.organization_id);
+        const result = await runner.executeWorkflow(
+          workflowName,
+          eventInput,
+          String(job.id),
+          pinnedVersion
+        );
         
         if (result.status === 'FAILED') {
           console.error(`[Dispatcher] Workflow failed: ${result.error}`);
@@ -130,7 +150,14 @@ async function bootstrapPgBoss(): Promise<void> {
             organization_id: eventInput.organization_id,
             payload: eventInput.payload,
           });
-          const result = await runner.executeWorkflow(workflowName, eventInput);
+          const pinnedVersion = job.data.__graphVersion
+            ?? await compiler.resolveActiveVersion(workflowName, eventInput.organization_id);
+          const result = await runner.executeWorkflow(
+            workflowName,
+            eventInput,
+            String(job.id),
+            pinnedVersion
+          );
           if (result.status === "FAILED") throw new Error(result.error);
           console.log(`[Dispatcher] ${queue} → ${workflowName} completed.`, result.finalState);
           if (result.events.length) {
@@ -148,6 +175,7 @@ async function bootstrapPgBoss(): Promise<void> {
   // Graceful shutdown handling
   const shutdown = async () => {
     console.log("\nShutting down dispatcher...");
+    await stopOutboxRelay();
     await boss.stop();
     await pool.end();
     process.exit(0);

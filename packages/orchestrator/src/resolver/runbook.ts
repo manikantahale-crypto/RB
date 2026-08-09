@@ -14,8 +14,13 @@ export class SimpleRunbookResolver implements RunbookResolver {
     this.routingTable = routingTable;
   }
 
+  /** Returns null when no runbook exists (terminal / unroutable events). */
+  public tryResolve(eventType: string): string | null {
+    return this.routingTable[eventType] ?? null;
+  }
+
   public resolve(eventType: string, context: ResolveContext): string {
-    const runbook = this.routingTable[eventType];
+    const runbook = this.tryResolve(eventType);
     if (!runbook) {
       throw new Error(`No runbook defined for event type: ${eventType}`);
     }

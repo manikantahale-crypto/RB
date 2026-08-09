@@ -17,7 +17,7 @@ build/
 out/
 *.tsbuildinfo
 
-# Test / coverage
+# Coverage
 coverage/
 
 # Logs & caches
@@ -30,3 +30,26 @@ coverage/
 Thumbs.db
 .idea/
 .vscode/
+
+# Local working docs (not for remote)
+STATUS_TRACKER.md
+plan.md
+ORCHESTRATOR_AUDIT.md
+plans/
+
+# Ad-hoc / local scripts (scratch probes, one-off SQL, send helpers)
+tmp-*
+tmp-*.mjs
+check-*.mjs
+check-*.ts
+packages/db/scripts/
+apps/worker/scripts/
+
+# Local test suites & test-only helpers (keep out of git for now)
+**/*.test.ts
+**/*.test.js
+**/*.spec.ts
+**/*.spec.js
+**/tests/
+**/__tests__/
+packages/orchestrator/src/nodes/test-*.ts

@@ -1,5 +1,6 @@
 import { createHash } from 'node:crypto';
 import { Annotation, StateGraph, type CompiledGraph } from '@langchain/langgraph';
+import type { BaseCheckpointSaver } from '@langchain/langgraph-checkpoint';
 import type { Pool } from 'pg';
 import type { EventInput } from '../types.js';
 import { nodeRegistry, type NodeKey } from '../nodes/registry.js';
@@ -33,7 +34,10 @@ type Cached = {
 export class GraphCompiler {
   private cache = new Map<string, Cached>();
 
-  constructor(private pool: Pool) {}
+  constructor(
+    private pool: Pool,
+    private checkpointer?: BaseCheckpointSaver
+  ) {}
 
   /** Ensure table exists (design §5.2 shape) and seed Syntra defs. */
   async ensureSchemaAndSeed(): Promise<void> {
@@ -105,35 +109,45 @@ export class GraphCompiler {
     ];
 
     for (const s of seeds) {
-      await this.pool.query(
-        `INSERT INTO graph_definitions (
-           id, org_id, graph_key, version, definition, checksum, status, created_by, activated_at
-         ) VALUES ($1, NULL, $2, 1, $3::jsonb, $4, 'active', 'seed', now())
-         ON CONFLICT (id) DO UPDATE SET
-           definition = EXCLUDED.definition,
-           checksum = EXCLUDED.checksum,
-           status = 'active',
-           activated_at = COALESCE(graph_definitions.activated_at, now())`,
-        [s.id, s.key, JSON.stringify(s.def), s.checksum]
-      );
-
-      // Also refresh any prior row for the same global key/version.
-      await this.pool.query(
+      // Prefer update by natural key — rows may already exist under a different id
+      // (constraint: graph_definitions_unique_version).
+      const updated = await this.pool.query(
         `UPDATE graph_definitions
-         SET definition = $1::jsonb, checksum = $2, status = 'active',
+         SET definition = $1::jsonb,
+             checksum = $2,
+             status = 'active',
              activated_at = COALESCE(activated_at, now())
          WHERE graph_key = $3 AND version = 1 AND org_id IS NULL`,
         [JSON.stringify(s.def), s.checksum, s.key]
       );
+
+      if ((updated.rowCount ?? 0) === 0) {
+        await this.pool.query(
+          `INSERT INTO graph_definitions (
+             id, org_id, graph_key, version, definition, checksum, status, created_by, activated_at
+           ) VALUES ($1, NULL, $2, 1, $3::jsonb, $4, 'active', 'seed', now())`,
+          [s.id, s.key, JSON.stringify(s.def), s.checksum]
+        );
+      }
     }
 
     console.log('[GraphCompiler] graph_definitions ready (Syntra JD/resume/match seeded)');
   }
 
-  async get(graphKey: string, organizationId?: string | null): Promise<CompiledGraph<any, any, any>> {
-    const row = await this.loadActive(graphKey, organizationId ?? null);
+  async get(
+    graphKey: string,
+    organizationId?: string | null,
+    pinnedVersion?: number
+  ): Promise<CompiledGraph<any, any, any>> {
+    const row = pinnedVersion != null
+      ? await this.loadVersion(graphKey, organizationId ?? null, pinnedVersion)
+      : await this.loadActive(graphKey, organizationId ?? null);
     if (!row) {
-      throw new Error(`DEFINITION_INVALID: no active graph_definitions for ${graphKey}`);
+      throw new Error(
+        pinnedVersion != null
+          ? `DEFINITION_INVALID: no graph_definitions for ${graphKey} version ${pinnedVersion}`
+          : `DEFINITION_INVALID: no active graph_definitions for ${graphKey}`
+      );
     }
 
     const cacheKey = `${graphKey}@${row.version}:${row.checksum}`;
@@ -145,6 +159,18 @@ export class GraphCompiler {
     this.cache.set(cacheKey, { checksum: row.checksum, version: row.version, graph });
     console.log(`[GraphCompiler] compiled ${graphKey}@${row.version} (${row.checksum})`);
     return graph;
+  }
+
+  /** Active version number for pin-at-consume (design D3). */
+  async resolveActiveVersion(
+    graphKey: string,
+    organizationId?: string | null
+  ): Promise<number> {
+    const row = await this.loadActive(graphKey, organizationId ?? null);
+    if (!row) {
+      throw new Error(`DEFINITION_INVALID: no active graph_definitions for ${graphKey}`);
+    }
+    return row.version;
   }
 
   private async loadActive(
@@ -164,23 +190,30 @@ export class GraphCompiler {
     return rows[0] ?? null;
   }
 
+  private async loadVersion(
+    graphKey: string,
+    organizationId: string | null,
+    version: number
+  ): Promise<{ version: number; checksum: string; definition: unknown } | null> {
+    const { rows } = await this.pool.query(
+      `SELECT version, checksum, definition
+       FROM graph_definitions
+       WHERE graph_key = $1
+         AND version = $3
+         AND (org_id = $2 OR org_id IS NULL)
+       ORDER BY org_id NULLS LAST
+       LIMIT 1`,
+      [graphKey, organizationId, version]
+    );
+    return rows[0] ?? null;
+  }
+
   private compile(def: GraphDefinition): CompiledGraph<any, any, any> {
-    const nodeIds = new Set(def.nodes.map((n) => n.id));
-    for (const [from, to] of def.edges) {
-      for (const end of [from, to]) {
-        if (end === '__start__' || end === '__end__') continue;
-        if (!nodeIds.has(end)) {
-          throw new Error(`DEFINITION_INVALID: edge endpoint "${end}" not in nodes`);
-        }
-      }
-    }
+    validateDefinition(def);
 
     let builder: any = new StateGraph(SyntraState);
 
     for (const node of def.nodes) {
-      if (!(node.impl in nodeRegistry)) {
-        throw new Error(`DEFINITION_INVALID: unknown impl "${node.impl}"`);
-      }
       const factory = nodeRegistry[node.impl as NodeKey];
       const impl = factory();
       const config = node.config ?? {};
@@ -202,7 +235,89 @@ export class GraphCompiler {
       builder = builder.addEdge(from, to);
     }
 
-    return builder.compile();
+    return this.checkpointer
+      ? builder.compile({ checkpointer: this.checkpointer })
+      : builder.compile();
+  }
+}
+
+/**
+ * Static definition checks (design §7) — fail before any node runs.
+ * Exported for unit tests without DB/checkpointer.
+ */
+export function validateDefinition(def: GraphDefinition): void {
+  // 1. Duplicate node ids
+  const seenIds = new Set<string>();
+  for (const node of def.nodes) {
+    if (seenIds.has(node.id)) {
+      throw new Error(`DEFINITION_INVALID: duplicate node id "${node.id}"`);
+    }
+    seenIds.add(node.id);
+  }
+  const nodeIds = new Set(def.nodes.map((n) => n.id));
+
+  // Existing: every edge endpoint is a declared node (or reserved)
+  for (const [from, to] of def.edges) {
+    for (const end of [from, to]) {
+      if (end === '__start__' || end === '__end__') continue;
+      if (!nodeIds.has(end)) {
+        throw new Error(`DEFINITION_INVALID: edge endpoint "${end}" not in nodes`);
+      }
+    }
+  }
+
+  // Existing: every impl is in the node registry
+  for (const node of def.nodes) {
+    if (!(node.impl in nodeRegistry)) {
+      throw new Error(`DEFINITION_INVALID: unknown impl "${node.impl}"`);
+    }
+  }
+
+  // 2. At least one edge from __start__
+  if (!def.edges.some(([from]) => from === '__start__')) {
+    throw new Error('DEFINITION_INVALID: no edge from __start__');
+  }
+
+  // 3. At least one edge into __end__
+  if (!def.edges.some(([, to]) => to === '__end__')) {
+    throw new Error('DEFINITION_INVALID: nothing reaches __end__');
+  }
+
+  // 4. No orphan nodes (must appear on at least one edge)
+  const onEdge = new Set<string>();
+  for (const [from, to] of def.edges) {
+    if (from !== '__start__' && from !== '__end__') onEdge.add(from);
+    if (to !== '__start__' && to !== '__end__') onEdge.add(to);
+  }
+  for (const id of nodeIds) {
+    if (!onEdge.has(id)) {
+      throw new Error(`DEFINITION_INVALID: orphan node "${id}"`);
+    }
+  }
+
+  // 5. Every node reachable from __start__
+  const adj = new Map<string, string[]>();
+  for (const [from, to] of def.edges) {
+    const list = adj.get(from) ?? [];
+    list.push(to);
+    adj.set(from, list);
+  }
+  const reachable = new Set<string>();
+  const queue: string[] = ['__start__'];
+  reachable.add('__start__');
+  while (queue.length > 0) {
+    const cur = queue.shift()!;
+    for (const next of adj.get(cur) ?? []) {
+      if (!reachable.has(next)) {
+        reachable.add(next);
+        queue.push(next);
+      }
+    }
+  }
+  for (const id of nodeIds) {
+    if (!reachable.has(id)) {
+      throw new Error(`DEFINITION_INVALID: node ${id} unreachable from __start__`);
+    }
   }
 }
 

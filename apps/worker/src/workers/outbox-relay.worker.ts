@@ -6,7 +6,7 @@
 // (the transactional outbox pattern).
 
 import { Pool } from "pg";
-import { PgBoss } from "pg-boss";
+import type { PgBoss } from "pg-boss";
 import { env } from "../env.js";
 import type { EventEnvelope, EventType } from "@tekisho/domain";
 
@@ -104,31 +104,135 @@ export async function relayOnce(pool: Pool, boss: PgBoss): Promise<number> {
   }
 }
 
-export async function startOutboxRelay(): Promise<() => Promise<void>> {
-  const pool = new Pool({
-    connectionString: env.DATABASE_MIGRATOR_URL,
-    ssl: { rejectUnauthorized: false },
-  });
+export type StartOutboxRelayOptions = {
+  /** Shared dispatcher PgBoss — avoids a second session-mode connection pool. */
+  boss: PgBoss;
+  /**
+   * Shared migrator pool (compiler / checkpointer / outbox writes).
+   * Used when DATABASE_RELAY_URL is unset so we do not open another Pool
+   * against the session-mode pooler (budget ~15).
+   */
+  pool?: Pool;
+};
 
-  const boss = new PgBoss({
-    connectionString: env.DATABASE_MIGRATOR_URL,
-    schema: "pgboss",
-    ssl: { rejectUnauthorized: false },
-  });
-  await boss.start();
+function isPoolerExhausted(error: unknown): boolean {
+  const message = error instanceof Error ? error.message : String(error);
+  return message.includes("EMAXCONNSESSION") || message.includes("max clients");
+}
+
+/** Returns an error message if the DB role cannot relay; null if OK. */
+async function checkOutboxRelayPrivileges(pool: Pool): Promise<string | null> {
+  let client;
+  try {
+    client = await pool.connect();
+  } catch (error) {
+    if (isPoolerExhausted(error)) {
+      return (
+        `session pooler exhausted (EMAXCONNSESSION) during privilege check — ` +
+        `relay disabled. Stop other workers / wait for idle connections, then restart.`
+      );
+    }
+    throw error;
+  }
+  try {
+    const { rows } = await client.query<{
+      current_user: string;
+      can_update: boolean;
+    }>(`
+      SELECT current_user,
+             has_table_privilege(current_user, 'event_outbox', 'update') AS can_update
+    `);
+    const { current_user: dbUser, can_update: canUpdate } = rows[0]!;
+    if (!canUpdate) {
+      return (
+        `Outbox relay DB role "${dbUser}" lacks UPDATE on event_outbox ` +
+        `(SELECT ... FOR UPDATE + mark published_at both need it). ` +
+        `Set DATABASE_RELAY_URL to syntra_relay on project mdxsybudkorrvmojqowx, ` +
+        `or run packages/db/scripts/fix-event-outbox-migrator-bridge.sql as postgres there.`
+      );
+    }
+
+    await client.query("BEGIN");
+    try {
+      await client.query(`
+        SELECT id FROM event_outbox
+         WHERE published_at IS NULL
+         ORDER BY id
+         FOR UPDATE SKIP LOCKED
+         LIMIT 1
+      `);
+      await client.query("COMMIT");
+      return null;
+    } catch (error) {
+      await client.query("ROLLBACK");
+      const message = error instanceof Error ? error.message : String(error);
+      return (
+        `Outbox relay cannot lock event_outbox rows as "${dbUser}": ${message}. ` +
+        `Under FORCE RLS the role also needs an UPDATE policy ` +
+        `(see packages/db/scripts/fix-event-outbox-migrator-bridge.sql).`
+      );
+    }
+  } finally {
+    client.release();
+  }
+}
+
+/**
+ * Starts the outbox poll loop. Caller owns PgBoss lifecycle (start/stop).
+ *
+ * Prefers DATABASE_RELAY_URL (syntra_relay — design / RLS). Falls back to
+ * DATABASE_MIGRATOR_URL via the shared bootstrap pool when provided.
+ */
+export async function startOutboxRelay(
+  options: StartOutboxRelayOptions
+): Promise<() => Promise<void>> {
+  const { boss } = options;
+  const relayUrl = env.DATABASE_RELAY_URL?.trim() ?? "";
+  const usingRelayUrl = relayUrl.length > 0;
+
+  // Prefer a dedicated relay URL; otherwise reuse the bootstrap migrator pool
+  // so we do not burn another session-mode slot.
+  let pool: Pool;
+  let ownsPool = false;
+  if (usingRelayUrl) {
+    pool = new Pool({
+      connectionString: relayUrl,
+      ssl: { rejectUnauthorized: false },
+      max: 1,
+    });
+    ownsPool = true;
+  } else if (options.pool) {
+    pool = options.pool;
+  } else {
+    pool = new Pool({
+      connectionString: env.DATABASE_MIGRATOR_URL,
+      ssl: { rejectUnauthorized: false },
+      max: 1,
+    });
+    ownsPool = true;
+  }
 
   // Dead-letter queue must exist before the main queue can reference it.
   await boss.createQueue(DISPATCH_DLQ);
 
   // Main dispatch queue, with retry policy + dead-letter routing baked in.
-  // The consumer inherits these settings; the relay (publisher) just needs
-  // the queue to exist.
   await boss.createQueue(DISPATCH_QUEUE, {
     retryLimit: RETRY_LIMIT,
     retryDelay: RETRY_DELAY_SECONDS,
     retryBackoff: true,
     deadLetter: DISPATCH_DLQ,
   });
+
+  // SELECT ... FOR UPDATE needs UPDATE (+ RLS UPDATE policy under FORCE).
+  // Missing privileges / pooler exhaustion: keep dispatcher up, skip poll loop.
+  const privilegeError = await checkOutboxRelayPrivileges(pool);
+  if (privilegeError) {
+    console.error(`[OutboxRelay] DISABLED — ${privilegeError}`);
+    return async () => {
+      if (ownsPool) await pool.end();
+      console.log("Outbox relay stopped (was disabled)");
+    };
+  }
 
   let stopped = false;
 
@@ -138,6 +242,9 @@ export async function startOutboxRelay(): Promise<() => Promise<void>> {
         let processed = 0;
         do {
           processed = await relayOnce(pool, boss);
+          if (processed > 0) {
+            console.log(`[OutboxRelay] published ${processed} event(s)`);
+          }
         } while (processed === BATCH_SIZE && !stopped);
       } catch (error) {
         console.error("outbox relay tick failed:", error);
@@ -149,25 +256,17 @@ export async function startOutboxRelay(): Promise<() => Promise<void>> {
   };
 
   void loop();
-  console.log(`Outbox relay started → queue "${DISPATCH_QUEUE}"`);
+  if (usingRelayUrl) {
+    console.log(`Outbox relay started → queue "${DISPATCH_QUEUE}" (DATABASE_RELAY_URL)`);
+  } else {
+    console.log(
+      `Outbox relay started → queue "${DISPATCH_QUEUE}" (shared migrator pool — set DATABASE_RELAY_URL for syntra_relay)`
+    );
+  }
 
   return async () => {
     stopped = true;
-    await boss.stop();
-    await pool.end();
+    if (ownsPool) await pool.end();
     console.log("Outbox relay stopped");
   };
-}
-
-if (import.meta.url === `file://${process.argv[1]}`) {
-  startOutboxRelay()
-    .then((stop) => {
-      const shutdown = () => void stop().then(() => process.exit(0));
-      process.on("SIGINT", shutdown);
-      process.on("SIGTERM", shutdown);
-    })
-    .catch((error) => {
-      console.error("Failed to start outbox relay:", error);
-      process.exitCode = 1;
-    });
 }

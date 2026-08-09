@@ -12,11 +12,33 @@ export class WorkflowRunner {
     private pool?: Pool
   ) {}
 
-  public async executeWorkflow(workflow_name: string, event: EventInput): Promise<WorkflowResult> {
+  public async executeWorkflow(
+    workflow_name: string,
+    event: EventInput,
+    threadKey?: string,
+    pinnedVersion?: number
+  ): Promise<WorkflowResult> {
     try {
-      const graph = await this.compiler.get(workflow_name, event.organization_id);
+      const graph = await this.compiler.get(
+        workflow_name,
+        event.organization_id,
+        pinnedVersion
+      );
 
-      const finalState = await graph.invoke({ trigger_event: event });
+      // Prefer stable pg-boss job id (survives redelivery). Syntra path mints a new
+      // event_id on every delivery, so event_id alone is not a resume key.
+      const threadId = `${event.organization_id}:${threadKey ?? event.event_id}`;
+      const config = {
+        configurable: { thread_id: threadId },
+        durability: 'sync' as const,
+      };
+      // Re-invoking with new input restarts from __start__. If a checkpoint already
+      // has pending next nodes (crash mid-graph), resume with null input (D4).
+      const snapshot = await graph.getState(config);
+      const finalState =
+        snapshot.next && snapshot.next.length > 0
+          ? await graph.invoke(null, config)
+          : await graph.invoke({ trigger_event: event }, config);
 
       const events: EventInput[] = finalState._emittedEvents || [];
       const cleanState = { ...finalState };
