@@ -14,6 +14,7 @@ export const EVENT_TYPES = {
     RESUME_RECEIVED: "syntra.resume.received",
     PROFILE_PREPARED: "syntra.profile.prepared",
     DUPLICATE_REVIEW_REQUIRED: "syntra.duplicate.review_required",
+    MATCH_REQUESTED: "syntra.match.requested",
     MATCH_COMPLETED: "syntra.match.completed",
     APPROVAL_REQUESTED: "syntra.approval.requested",
     APPROVAL_DECIDED: "syntra.approval.decided",
@@ -97,6 +98,14 @@ export const EVENT_TYPES = {
     };
   }
   
+  export interface MatchRequestedPayload {
+    jobId?: string;
+    resumeId?: string;
+    candidateId?: string;
+    skillMatchScore?: number;
+    [key: string]: unknown;
+  }
+
   export interface MatchCompletedPayload {
     match_job_id: string;
     requirement_id: string;
@@ -145,6 +154,7 @@ export const EVENT_TYPES = {
     [EVENT_TYPES.RESUME_RECEIVED]: ResumeReceivedPayload;
     [EVENT_TYPES.PROFILE_PREPARED]: ProfilePreparedPayload;
     [EVENT_TYPES.DUPLICATE_REVIEW_REQUIRED]: DuplicateReviewRequiredPayload;
+    [EVENT_TYPES.MATCH_REQUESTED]: MatchRequestedPayload;
     [EVENT_TYPES.MATCH_COMPLETED]: MatchCompletedPayload;
     [EVENT_TYPES.APPROVAL_REQUESTED]: ApprovalRequestedPayload;
     [EVENT_TYPES.APPROVAL_DECIDED]: ApprovalDecidedPayload;

@@ -1,7 +1,7 @@
 import { v4 as uuidv4 } from 'uuid';
 import { EVENT_TYPES } from '@tekisho/domain';
 import type { EventInput } from '../types.js';
-import type { NodeImpl, SyntraGraphState } from './types.js';
+import type { NodeCtx, NodeImpl, SyntraGraphState } from './types.js';
 
 const SYNTRA_BASE = process.env.SYNTRA_API_URL || 'http://localhost:4000';
 
@@ -34,50 +34,48 @@ function completionEvent(
 }
 
 /** Summarize JD via Syntra internal API. */
-export const syntraJdProcess: NodeImpl = async (state) => {
+export const syntraJdProcess: NodeImpl = async (state, ctx) => {
   const trigger = state.trigger_event;
   const jobId = trigger?.payload?.jobId;
   if (!jobId || !trigger) throw new Error('syntra.jd.process: no jobId in payload');
 
+  ctx.logger.info('calling Syntra JD process', { jobId, orgId: ctx.orgId });
   const r = await postSyntra(`/internal/jobs/${jobId}/process`);
-  return {
-    result: `job ${jobId}: ${r.status ?? 'ok'}`,
-    _emittedEvents: [
-      completionEvent(trigger, EVENT_TYPES.JD_PARSED, {
-        jobId,
-        status: r.status,
-        syntra: r,
-      }),
-    ],
-  };
+  ctx.events.emit(
+    completionEvent(trigger, EVENT_TYPES.JD_PARSED, {
+      jobId,
+      status: r.status,
+      syntra: r,
+    })
+  );
+  return { result: `job ${jobId}: ${r.status ?? 'ok'}` };
 };
 
 /** Summarize resume + profile via Syntra. */
-export const syntraResumeProcess: NodeImpl = async (state) => {
+export const syntraResumeProcess: NodeImpl = async (state, ctx) => {
   const trigger = state.trigger_event;
   const resumeId = trigger?.payload?.resumeId;
   const candidateId = trigger?.payload?.candidateId;
   if (!resumeId || !trigger) throw new Error('syntra.resume.process: no resumeId in payload');
 
+  ctx.logger.info('calling Syntra resume process', { resumeId, orgId: ctx.orgId });
   const r = await postSyntra(`/internal/resumes/${resumeId}/process`, { candidateId });
-  return {
-    result: `resume ${resumeId}: ${r.status ?? 'ok'}`,
-    _emittedEvents: [
-      completionEvent(trigger, EVENT_TYPES.PROFILE_PREPARED, {
-        resumeId,
-        candidateId,
-        status: r.status,
-        syntra: r,
-      }),
-    ],
-  };
+  ctx.events.emit(
+    completionEvent(trigger, EVENT_TYPES.PROFILE_PREPARED, {
+      resumeId,
+      candidateId,
+      status: r.status,
+      syntra: r,
+    })
+  );
+  return { result: `resume ${resumeId}: ${r.status ?? 'ok'}` };
 };
 
 /**
  * Score job × resume via Syntra.
  * Prefer Syntra response score; fall back to inbound skillMatchScore from the queue payload.
  */
-export const syntraMatchProcess: NodeImpl = async (state: SyntraGraphState) => {
+export const syntraMatchProcess: NodeImpl = async (state: SyntraGraphState, ctx: NodeCtx) => {
   const trigger = state.trigger_event;
   const jobId = trigger?.payload?.jobId;
   const resumeId = trigger?.payload?.resumeId;
@@ -85,23 +83,24 @@ export const syntraMatchProcess: NodeImpl = async (state: SyntraGraphState) => {
     throw new Error('syntra.match.process: need jobId and resumeId');
   }
 
+  ctx.logger.info('calling Syntra match process', { jobId, resumeId, orgId: ctx.orgId });
   const r = await postSyntra(`/internal/matches/process`, { jobId, resumeId });
   const skillMatchScore =
     r.skillMatchScore ?? r.score ?? r.matchScore ?? trigger.payload?.skillMatchScore ?? null;
 
+  ctx.events.emit(
+    completionEvent(trigger, EVENT_TYPES.MATCH_COMPLETED, {
+      jobId,
+      resumeId,
+      candidateId: trigger.payload?.candidateId,
+      skillMatchScore,
+      result_count: 1,
+      top_score: skillMatchScore,
+      status: r.status,
+      syntra: r,
+    })
+  );
   return {
     result: `match ${jobId}/${resumeId}: ${r.status ?? 'ok'} (score=${skillMatchScore})`,
-    _emittedEvents: [
-      completionEvent(trigger, EVENT_TYPES.MATCH_COMPLETED, {
-        jobId,
-        resumeId,
-        candidateId: trigger.payload?.candidateId,
-        skillMatchScore,
-        result_count: 1,
-        top_score: skillMatchScore,
-        status: r.status,
-        syntra: r,
-      }),
-    ],
   };
 };

@@ -56,7 +56,11 @@ export function toEnvelope(row: OutboxRow): EventEnvelope {
   };
 }
 
-export async function relayOnce(pool: Pool, boss: PgBoss): Promise<number> {
+export async function relayOnce(
+  pool: Pool,
+  boss: PgBoss,
+  resolvePin?: StartOutboxRelayOptions["resolvePin"],
+): Promise<number> {
   const client = await pool.connect();
   try {
     await client.query("BEGIN");
@@ -80,7 +84,17 @@ export async function relayOnce(pool: Pool, boss: PgBoss): Promise<number> {
 
     const publishedIds: string[] = [];
     for (const row of rows) {
-      const envelope = toEnvelope(row);
+      const envelope = toEnvelope(row) as EventEnvelope & {
+        __graphKey?: string;
+        __graphVersion?: number;
+      };
+      if (resolvePin) {
+        const pin = await resolvePin(row.event_type, row.organization_id);
+        if (pin) {
+          envelope.__graphKey = pin.graphKey;
+          envelope.__graphVersion = pin.graphVersion;
+        }
+      }
       await boss.send(DISPATCH_QUEUE, envelope, {
         singletonKey: row.aggregate_id, // serialize per aggregate
       });
@@ -113,6 +127,14 @@ export type StartOutboxRelayOptions = {
    * against the session-mode pooler (budget ~15).
    */
   pool?: Pool;
+  /**
+   * Design D3: stamp graph pin onto dispatch jobs at enqueue (relay).
+   * Return null for terminal events with no runbook.
+   */
+  resolvePin?: (
+    eventType: string,
+    organizationId: string,
+  ) => Promise<{ graphKey: string; graphVersion: number } | null>;
 };
 
 function isPoolerExhausted(error: unknown): boolean {
@@ -186,7 +208,7 @@ async function checkOutboxRelayPrivileges(pool: Pool): Promise<string | null> {
 export async function startOutboxRelay(
   options: StartOutboxRelayOptions
 ): Promise<() => Promise<void>> {
-  const { boss } = options;
+  const { boss, resolvePin } = options;
   const relayUrl = env.DATABASE_RELAY_URL?.trim() ?? "";
   const usingRelayUrl = relayUrl.length > 0;
 
@@ -241,7 +263,7 @@ export async function startOutboxRelay(
       try {
         let processed = 0;
         do {
-          processed = await relayOnce(pool, boss);
+          processed = await relayOnce(pool, boss, resolvePin);
           if (processed > 0) {
             console.log(`[OutboxRelay] published ${processed} event(s)`);
           }

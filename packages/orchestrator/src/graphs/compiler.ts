@@ -1,11 +1,16 @@
-import { createHash } from 'node:crypto';
 import { Annotation, StateGraph, type CompiledGraph } from '@langchain/langgraph';
 import type { BaseCheckpointSaver } from '@langchain/langgraph-checkpoint';
 import type { Pool } from 'pg';
 import type { EventInput } from '../types.js';
 import { nodeRegistry, type NodeKey } from '../nodes/registry.js';
-import type { NodeCtx, SyntraGraphState } from '../nodes/types.js';
+import type { SyntraGraphState } from '../nodes/types.js';
+import { createNodeCtx } from '../nodes/ctx.js';
 import { GraphDefinitionSchema, type GraphDefinition } from './definition.js';
+import { graphSeedCatalog } from './defs/catalog.js';
+import { validateDefinition } from './validate-definition.js';
+
+export { validateDefinition } from './validate-definition.js';
+export { checksumOf, defineGraph } from './define-graph.js';
 
 const SyntraState = Annotation.Root({
   result: Annotation<string>({ reducer: (x, y) => y ?? x, default: () => '' }),
@@ -39,7 +44,10 @@ export class GraphCompiler {
     private checkpointer?: BaseCheckpointSaver
   ) {}
 
-  /** Ensure table exists (design §5.2 shape) and seed Syntra defs. */
+  /**
+   * Ensure table exists and seed recipes from git-authored `.def.ts` catalog
+   * (design §8 — git is authoring source; DB is runtime store).
+   */
   async ensureSchemaAndSeed(): Promise<void> {
     await this.pool.query(`
       CREATE TABLE IF NOT EXISTS graph_definitions (
@@ -57,7 +65,6 @@ export class GraphCompiler {
       )
     `);
 
-    // Indexes — ignore if already present under another name.
     await this.pool.query(`
       CREATE UNIQUE INDEX IF NOT EXISTS graph_definitions_key_version_scope
         ON graph_definitions (graph_key, version, COALESCE(org_id, '~global~'));
@@ -66,72 +73,44 @@ export class GraphCompiler {
         WHERE status = 'active';
     `);
 
-    const seeds: Array<{ id: string; key: string; def: GraphDefinition; checksum: string }> = [
-      {
-        id: 'graph_syntra_jd_v1',
-        key: 'syntra.jd.workflow',
-        checksum: 'seed-syntra-jd-v1',
-        def: {
-          graphKey: 'syntra.jd.workflow',
-          nodes: [{ id: 'process', impl: 'syntra.jd.process' }],
-          edges: [
-            ['__start__', 'process'],
-            ['process', '__end__'],
-          ],
-        },
-      },
-      {
-        id: 'graph_syntra_resume_v1',
-        key: 'syntra.resume.workflow',
-        checksum: 'seed-syntra-resume-v1',
-        def: {
-          graphKey: 'syntra.resume.workflow',
-          nodes: [{ id: 'process', impl: 'syntra.resume.process' }],
-          edges: [
-            ['__start__', 'process'],
-            ['process', '__end__'],
-          ],
-        },
-      },
-      {
-        id: 'graph_syntra_match_v1',
-        key: 'syntra.match.workflow',
-        checksum: 'seed-syntra-match-v1',
-        def: {
-          graphKey: 'syntra.match.workflow',
-          nodes: [{ id: 'process', impl: 'syntra.match.process' }],
-          edges: [
-            ['__start__', 'process'],
-            ['process', '__end__'],
-          ],
-        },
-      },
-    ];
+    for (const s of graphSeedCatalog) {
+      const key = s.definition.graphKey;
+      const defJson = JSON.stringify(s.definition);
 
-    for (const s of seeds) {
-      // Prefer update by natural key — rows may already exist under a different id
-      // (constraint: graph_definitions_unique_version).
       const updated = await this.pool.query(
         `UPDATE graph_definitions
          SET definition = $1::jsonb,
              checksum = $2,
-             status = 'active',
-             activated_at = COALESCE(activated_at, now())
-         WHERE graph_key = $3 AND version = 1 AND org_id IS NULL`,
-        [JSON.stringify(s.def), s.checksum, s.key]
+             status = $3,
+             activated_at = CASE
+               WHEN $3 = 'active' THEN COALESCE(activated_at, now())
+               ELSE activated_at
+             END
+         WHERE graph_key = $4 AND version = $5 AND org_id IS NULL`,
+        [defJson, s.checksum, s.status, key, s.version]
       );
 
       if ((updated.rowCount ?? 0) === 0) {
         await this.pool.query(
           `INSERT INTO graph_definitions (
              id, org_id, graph_key, version, definition, checksum, status, created_by, activated_at
-           ) VALUES ($1, NULL, $2, 1, $3::jsonb, $4, 'active', 'seed', now())`,
-          [s.id, s.key, JSON.stringify(s.def), s.checksum]
+           ) VALUES ($1, NULL, $2, $3, $4::jsonb, $5, $6, 'def.ts', $7)`,
+          [
+            s.id,
+            key,
+            s.version,
+            defJson,
+            s.checksum,
+            s.status,
+            s.status === 'active' ? new Date() : null,
+          ]
         );
       }
     }
 
-    console.log('[GraphCompiler] graph_definitions ready (Syntra JD/resume/match seeded)');
+    console.log(
+      `[GraphCompiler] graph_definitions ready (${graphSeedCatalog.length} recipe(s) from .def.ts)`
+    );
   }
 
   async get(
@@ -161,7 +140,7 @@ export class GraphCompiler {
     return graph;
   }
 
-  /** Active version number for pin-at-consume (design D3). */
+  /** Active version number for pin-at-enqueue / durable pin (design D3). */
   async resolveActiveVersion(
     graphKey: string,
     organizationId?: string | null
@@ -219,15 +198,20 @@ export class GraphCompiler {
       const config = node.config ?? {};
 
       builder = builder.addNode(node.id, async (state: SyntraGraphState) => {
-        const ctx: NodeCtx = {
-          orgId: state.trigger_event?.organization_id ?? '',
+        const orgId = state.trigger_event?.organization_id ?? '';
+        const { ctx, drainEvents } = createNodeCtx({
+          orgId,
           config,
-          logger: {
-            info: (...args: unknown[]) => console.log(`[node:${node.id}]`, ...args),
-            error: (...args: unknown[]) => console.error(`[node:${node.id}]`, ...args),
-          },
+          nodeId: node.id,
+          pool: this.pool,
+        });
+        const patch = await impl(state, ctx);
+        const viaCtx = drainEvents();
+        if (viaCtx.length === 0) return patch;
+        return {
+          ...patch,
+          _emittedEvents: [...(patch._emittedEvents ?? []), ...viaCtx],
         };
-        return impl(state, ctx);
       });
     }
 
@@ -239,88 +223,4 @@ export class GraphCompiler {
       ? builder.compile({ checkpointer: this.checkpointer })
       : builder.compile();
   }
-}
-
-/**
- * Static definition checks (design §7) — fail before any node runs.
- * Exported for unit tests without DB/checkpointer.
- */
-export function validateDefinition(def: GraphDefinition): void {
-  // 1. Duplicate node ids
-  const seenIds = new Set<string>();
-  for (const node of def.nodes) {
-    if (seenIds.has(node.id)) {
-      throw new Error(`DEFINITION_INVALID: duplicate node id "${node.id}"`);
-    }
-    seenIds.add(node.id);
-  }
-  const nodeIds = new Set(def.nodes.map((n) => n.id));
-
-  // Existing: every edge endpoint is a declared node (or reserved)
-  for (const [from, to] of def.edges) {
-    for (const end of [from, to]) {
-      if (end === '__start__' || end === '__end__') continue;
-      if (!nodeIds.has(end)) {
-        throw new Error(`DEFINITION_INVALID: edge endpoint "${end}" not in nodes`);
-      }
-    }
-  }
-
-  // Existing: every impl is in the node registry
-  for (const node of def.nodes) {
-    if (!(node.impl in nodeRegistry)) {
-      throw new Error(`DEFINITION_INVALID: unknown impl "${node.impl}"`);
-    }
-  }
-
-  // 2. At least one edge from __start__
-  if (!def.edges.some(([from]) => from === '__start__')) {
-    throw new Error('DEFINITION_INVALID: no edge from __start__');
-  }
-
-  // 3. At least one edge into __end__
-  if (!def.edges.some(([, to]) => to === '__end__')) {
-    throw new Error('DEFINITION_INVALID: nothing reaches __end__');
-  }
-
-  // 4. No orphan nodes (must appear on at least one edge)
-  const onEdge = new Set<string>();
-  for (const [from, to] of def.edges) {
-    if (from !== '__start__' && from !== '__end__') onEdge.add(from);
-    if (to !== '__start__' && to !== '__end__') onEdge.add(to);
-  }
-  for (const id of nodeIds) {
-    if (!onEdge.has(id)) {
-      throw new Error(`DEFINITION_INVALID: orphan node "${id}"`);
-    }
-  }
-
-  // 5. Every node reachable from __start__
-  const adj = new Map<string, string[]>();
-  for (const [from, to] of def.edges) {
-    const list = adj.get(from) ?? [];
-    list.push(to);
-    adj.set(from, list);
-  }
-  const reachable = new Set<string>();
-  const queue: string[] = ['__start__'];
-  reachable.add('__start__');
-  while (queue.length > 0) {
-    const cur = queue.shift()!;
-    for (const next of adj.get(cur) ?? []) {
-      if (!reachable.has(next)) {
-        reachable.add(next);
-        queue.push(next);
-      }
-    }
-  }
-  for (const id of nodeIds) {
-    if (!reachable.has(id)) {
-      throw new Error(`DEFINITION_INVALID: node ${id} unreachable from __start__`);
-    }
-  }
-}
-
-export function checksumOf(definition: unknown): string {
-  return createHash('sha256').update(JSON.stringify(definition)).digest('hex');
 }

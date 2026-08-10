@@ -1,6 +1,7 @@
 import type { EventInput, WorkflowResult } from '../types.js';
 import type { Pool } from 'pg';
 import type { GraphCompiler } from '../graphs/compiler.js';
+import { withOrgConnection } from '../db/with-org-connection.js';
 
 /**
  * Executes a workflow by graph_key: compiler loads topology from DB,
@@ -47,9 +48,7 @@ export class WorkflowRunner {
 
       if (events.length > 0) {
         if (this.pool) {
-          const client = await this.pool.connect();
-          try {
-            await client.query('BEGIN');
+          await withOrgConnection(this.pool, event.organization_id, async (client) => {
             for (const generatedEvent of events) {
               await client.query(
                 `INSERT INTO event_outbox (
@@ -71,16 +70,10 @@ export class WorkflowRunner {
                 ]
               );
             }
-            await client.query('COMMIT');
-            console.log(
-              `[WorkflowRunner] wrote ${events.length} event(s) to event_outbox for ${workflow_name}`
-            );
-          } catch (err) {
-            await client.query('ROLLBACK');
-            throw err;
-          } finally {
-            client.release();
-          }
+          });
+          console.log(
+            `[WorkflowRunner] wrote ${events.length} event(s) to event_outbox for ${workflow_name} (app.org_id set)`
+          );
         } else {
           console.warn('WorkflowRunner: no pool provided, skipping event_outbox persistence');
         }

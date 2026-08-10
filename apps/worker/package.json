@@ -6,11 +6,11 @@
   "main": "./src/bootstrap-pgboss.ts",
   "types": "./src/bootstrap-pgboss.ts",
   "scripts": {
+    "start": "tsx src/bootstrap-pgboss.ts",
     "bootstrap:pgboss": "tsx src/bootstrap-pgboss.ts",
     "bootstrap:checkpointer": "tsx src/bootstrap-checkpointer.ts",
     "bootstrap:runtime": "npm run bootstrap:pgboss && npm run bootstrap:checkpointer",
-    
-  "test": "vitest run"
+    "test": "vitest run"
   },
   "devDependencies": {
     "@types/pg": "^8.20.4",
