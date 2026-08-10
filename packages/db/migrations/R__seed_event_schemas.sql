@@ -198,6 +198,26 @@ INSERT INTO _seed_event_schemas VALUES
   }'),
 
 -- ---------------------------------------------------------------------------
+-- 5b. syntra.match.requested — Syntra / ingress trigger for match workflow
+-- ---------------------------------------------------------------------------
+('syntra.match.requested',
+ 'A job×resume match was requested (Syntra queue or platform ingress).',
+ 'Match requested',
+ 'Orchestrator match workflow',
+ '{
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "title": "syntra.match.requested payload",
+    "type": "object",
+    "additionalProperties": true,
+    "properties": {
+      "jobId":            { "type": "string" },
+      "resumeId":         { "type": "string" },
+      "candidateId":      { "type": "string" },
+      "skillMatchScore":  { "type": "number" }
+    }
+  }'),
+
+-- ---------------------------------------------------------------------------
 -- 6. syntra.match.completed
 -- ---------------------------------------------------------------------------
 -- The event the recruiter's browser is waiting on. policy_id and the version

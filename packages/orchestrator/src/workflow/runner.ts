@@ -1,98 +1,96 @@
-import type { Pool } from 'pg';
 import type { EventInput, WorkflowResult } from '../types.js';
-import type { DBRunbookResolver, GraphDefinition } from '../resolver.js';
-import { Registry } from './registry.js';
-import { GraphCompiler } from './compiler.js';
+import type { Pool } from 'pg';
+import type { GraphCompiler } from '../graphs/compiler.js';
+import { withOrgConnection } from '../db/with-org-connection.js';
 
+/**
+ * Executes a workflow by graph_key: compiler loads topology from DB,
+ * hydrates nodes from the registry, invokes LangGraph, persists emitted events.
+ */
 export class WorkflowRunner {
-  private resolver: DBRunbookResolver;
-  private registry: Registry;
-  private pool: Pool;
+  constructor(
+    private compiler: GraphCompiler,
+    private pool?: Pool
+  ) {}
 
-  constructor(resolver: DBRunbookResolver, registry: Registry, pool: Pool) {
-    this.resolver = resolver;
-    this.registry = registry;
-    this.pool = pool;
-  }
-
-  public async executeWorkflow(event: EventInput): Promise<WorkflowResult> {
+  public async executeWorkflow(
+    workflow_name: string,
+    event: EventInput,
+    threadKey?: string,
+    pinnedVersion?: number
+  ): Promise<WorkflowResult> {
     try {
-      // 1. Resolve workflow definition
-      const orgId = event.payload?.org_id || null;
-      const graphDef = await this.resolver.resolve(event.event_type, orgId);
-      
-      // 2. Check cache or compile
-      const cacheKey = Registry.buildCacheKey(graphDef.org_id, graphDef.graph_key, graphDef.checksum);
-      let graph = this.registry.getGraph(cacheKey);
-      
-      if (!graph) {
-        graph = GraphCompiler.compile(graphDef);
-        this.registry.registerGraph(cacheKey, graph);
-      }
+      const graph = await this.compiler.get(
+        workflow_name,
+        event.organization_id,
+        pinnedVersion
+      );
 
-      // 3. Execute graph
-      // Note: trigger_event is passed into state so the Syntra nodes can extract IDs.
-      const finalState = await graph.invoke({
-        trigger_event: event
-      });
+      // Prefer stable pg-boss job id (survives redelivery). Syntra path mints a new
+      // event_id on every delivery, so event_id alone is not a resume key.
+      const threadId = `${event.organization_id}:${threadKey ?? event.event_id}`;
+      const config = {
+        configurable: { thread_id: threadId },
+        durability: 'sync' as const,
+      };
+      // Re-invoking with new input restarts from __start__. If a checkpoint already
+      // has pending next nodes (crash mid-graph), resume with null input (D4).
+      const snapshot = await graph.getState(config);
+      const finalState =
+        snapshot.next && snapshot.next.length > 0
+          ? await graph.invoke(null, config)
+          : await graph.invoke({ trigger_event: event }, config);
 
-      const emittedEvents: EventInput[] = finalState._emittedEvents || [];
+      const events: EventInput[] = finalState._emittedEvents || [];
       const cleanState = { ...finalState };
       delete cleanState._emittedEvents;
+      delete cleanState.trigger_event;
 
-      // 4. Persist emitted events to event_outbox (transactionally if there were multiple, but we just insert)
-      if (emittedEvents.length > 0) {
-        await this.persistOutboxEvents(emittedEvents, event);
+      if (events.length > 0) {
+        if (this.pool) {
+          await withOrgConnection(this.pool, event.organization_id, async (client) => {
+            for (const generatedEvent of events) {
+              await client.query(
+                `INSERT INTO event_outbox (
+                  event_id, event_type, schema_version, organization_id,
+                  aggregate_type, aggregate_id, correlation_id, causation_id,
+                  producer, payload_ref
+                ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`,
+                [
+                  generatedEvent.event_id,
+                  generatedEvent.event_type,
+                  '1.0',
+                  generatedEvent.organization_id,
+                  generatedEvent.aggregate_type,
+                  generatedEvent.aggregate_id,
+                  generatedEvent.correlation_id,
+                  event.event_id,
+                  'orchestrator',
+                  generatedEvent.payload,
+                ]
+              );
+            }
+          });
+          console.log(
+            `[WorkflowRunner] wrote ${events.length} event(s) to event_outbox for ${workflow_name} (app.org_id set)`
+          );
+        } else {
+          console.warn('WorkflowRunner: no pool provided, skipping event_outbox persistence');
+        }
       }
 
       return {
         status: 'COMPLETED',
-        events: emittedEvents,
-        finalState: cleanState
+        events,
+        finalState: cleanState,
       };
     } catch (error: any) {
       return {
         status: 'FAILED',
         events: [],
         finalState: {},
-        error: error.message
+        error: error.message,
       };
-    }
-  }
-
-  private async persistOutboxEvents(events: EventInput[], causeEvent: EventInput) {
-    const client = await this.pool.connect();
-    try {
-      await client.query('BEGIN');
-      for (const e of events) {
-        await client.query(`
-          INSERT INTO event_outbox (
-            event_id, event_type, schema_version, organization_id,
-            aggregate_type, aggregate_id, correlation_id, causation_id,
-            producer, payload_ref, occurred_at
-          ) VALUES (
-            $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, now()
-          )`,
-          [
-            e.event_id,
-            e.event_type,
-            '1.0',
-            causeEvent.payload?.org_id || 'UNKNOWN',
-            'orchestrator',
-            e.aggregate_id,
-            causeEvent.event_id, // correlation_id propagates original event_id
-            causeEvent.event_id, // causation_id is the immediate trigger
-            'orchestrator-engine',
-            e.payload
-          ]
-        );
-      }
-      await client.query('COMMIT');
-    } catch (err) {
-      await client.query('ROLLBACK');
-      throw err;
-    } finally {
-      client.release();
     }
   }
 }

@@ -7,11 +7,15 @@
   "types": "./src/run-factory.ts",
   "scripts": {
     "test": "vitest run",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "generate:graph-seeds": "tsx scripts/generate-graph-seed-sql.ts"
   },
   "dependencies": {
     "@langchain/langgraph": "^1.4.9",
-    "uuid": "^14.0.1"
+    "@tekisho/domain": "*",
+    "pg": "^8.16.3",
+    "uuid": "^14.0.1",
+    "zod": "*"
   },
   "devDependencies": {
     "@types/node": "^26.1.2",

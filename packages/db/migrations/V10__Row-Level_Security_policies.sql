@@ -202,6 +202,22 @@ CREATE POLICY event_outbox_relay_all ON event_outbox
   USING (true)
   WITH CHECK (true);
 
+-- Dev/bootstrap bridge: worker may poll the outbox as syntra_migrator until
+-- DATABASE_RELAY_URL is provisioned. SELECT ... FOR UPDATE + mark published_at
+-- need UPDATE under FORCE RLS (SELECT/INSERT policies alone are not enough).
+CREATE POLICY event_outbox_migrator_select ON event_outbox
+  FOR SELECT TO syntra_migrator
+  USING (true);
+
+CREATE POLICY event_outbox_migrator_insert ON event_outbox
+  FOR INSERT TO syntra_migrator
+  WITH CHECK (true);
+
+CREATE POLICY event_outbox_migrator_update ON event_outbox
+  FOR UPDATE TO syntra_migrator
+  USING (true)
+  WITH CHECK (true);
+
 
 -- -----------------------------------------------------------------------------
 -- processed_events — queue infrastructure, relay only
