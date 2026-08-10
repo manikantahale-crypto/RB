@@ -1,47 +1,75 @@
-import { describe, it, expect, beforeEach } from 'vitest';
-import { PolicyEngine } from '../src/policy/engine.js';
+import { describe, it, expect, vi } from 'vitest';
+import { DBRunbookResolver } from '../src/resolver/db-resolver.js';
+import { GraphCompiler } from '../src/workflow/compiler.js';
 import { WorkflowRegistry } from '../src/workflow/registry.js';
 import { WorkflowRunner } from '../src/workflow/runner.js';
-import { syntraGraph } from '../src/workflow/graphs/syntra.js';
 import type { EventInput } from '../src/types.js';
+import { NodeRegistry } from '../src/workflow/node-registry.js';
 
-describe('Orchestrator Flow Integration Test', () => {
-  let policyEngine: PolicyEngine;
-  let registry: WorkflowRegistry;
-  let runner: WorkflowRunner;
+describe('DBRunbookResolver', () => {
+  it('should resolve global workflow if no org specific found', async () => {
+    const mockPool = {
+      query: vi.fn().mockResolvedValue({
+        rows: [{ id: '1', org_id: null, graph_key: 'syntra.jd.workflow', version: 1, definition: {}, checksum: 'abc', status: 'active' }]
+      })
+    } as any;
 
-  beforeEach(() => {
-    // 2. Register SYNTRA graph
-    policyEngine = new PolicyEngine({
-      'requirement.created': 'syntra.matching.workflow'
-    });
-    
-    registry = new WorkflowRegistry();
-    registry.register('syntra.matching.workflow', syntraGraph);
-
-    runner = new WorkflowRunner(policyEngine, registry);
+    const resolver = new DBRunbookResolver(mockPool);
+    const result = await resolver.resolve('jd.uploaded', 'org1');
+    expect(result.graph_key).toBe('syntra.jd.workflow');
+    expect(result.org_id).toBeNull();
   });
+});
 
-  it('should process requirement.created and return match.completed without DB', async () => {
-    // 1. Create fake event
-    const event: EventInput = {
-      event_id: '123',
-      event_type: 'requirement.created',
-      aggregate_id: 'req1',
-      payload: {}
+describe('GraphCompiler', () => {
+  it('should compile valid definition', () => {
+    // Add mock node to registry
+    (NodeRegistry as any).implementations.set('test.impl', async (state: any) => ({ _emittedEvents: [] }));
+
+    const def = {
+      id: '1', org_id: null, graph_key: 'test', version: 1, checksum: '123', status: 'active',
+      definition: {
+        nodes: [{ id: 'n1', impl: 'test.impl' }],
+        edges: [['__start__', 'n1'], ['n1', '__end__']]
+      }
     };
 
-    // 3. Execute WorkflowRunner
-    const result = await runner.executeWorkflow(event);
+    const graph = GraphCompiler.compile(def);
+    expect(graph).toBeDefined();
+  });
+});
 
-    // 4. Verify status and event
-    expect(result.status).toBe('COMPLETED');
-    expect(result.events).toHaveLength(1);
-    expect(result.events[0]!.event_type).toBe('match.completed');
-    expect(result.events[0]!.payload.status).toBe('completed');
-    
-    // Verify pure state evolution
-    expect(result.finalState.summary).toBe('resume processed');
-    expect(result.finalState.saved).toBe(true);
+describe('WorkflowRunner', () => {
+  it('should compile, cache, and execute', async () => {
+    const mockPool = {
+      connect: vi.fn().mockResolvedValue({
+        query: vi.fn(),
+        release: vi.fn()
+      })
+    } as any;
+
+    const mockResolver = {
+      resolve: vi.fn().mockResolvedValue({
+        id: '1', org_id: null, graph_key: 'test', version: 1, checksum: '123', status: 'active',
+        definition: {
+          nodes: [{ id: 'n1', impl: 'test.impl' }],
+          edges: [['__start__', 'n1'], ['n1', '__end__']]
+        }
+      })
+    } as any;
+
+    const registry = new WorkflowRegistry();
+    const runner = new WorkflowRunner(mockResolver, registry, mockPool);
+
+    const event: EventInput = {
+      event_id: 'e1',
+      event_type: 'jd.uploaded',
+      aggregate_id: 'a1',
+      payload: { jobId: 'job1' }
+    };
+
+    const res = await runner.executeWorkflow(event);
+    expect(res.status).toBe('COMPLETED');
+    expect(registry.getGraph('global::test::123')).toBeDefined();
   });
 });

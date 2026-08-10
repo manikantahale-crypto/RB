@@ -16,6 +16,7 @@
   },
   "dependencies": {
     "@tekisho/domain": "*",
+    "@tekisho/orchestrator": "*",
     "dotenv": "^16.4.7",
     "pg": "*",
     "pg-boss": "^12.27.0"
