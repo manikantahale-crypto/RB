@@ -31,7 +31,8 @@ DECLARE
     'skills',
     'channels',
     'agent_definitions',
-    'event_schemas'
+    'event_schemas',
+    'agent_templates'
   ];
   not_ours oid[];
   offenders text;

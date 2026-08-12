@@ -59,3 +59,16 @@ curl -X POST http://localhost:4100/v1/events -H "Content-Type: application/json"
 ```
 
 Expect `202` + worker logs: `[Router]` then `[Module]`.
+
+## Verified live (2026-08-10)
+
+- API returned **202** for `POST /v1/events`
+- Worker: `[Router] ingress syntra.jd.received` → `[Router] → module.syntra.jd` → `[Module]`
+- Job used: `b4cb2200-3aff-4f89-85a6-ec981f5b5ff7`
+- Syntra process may still need OpenRouter for a full AI finish — front door itself is proven
+
+## Soft leftovers (not blocking Phase 1)
+
+- Outbox write + queue send are best-effort (not one shared DB transaction)
+- Migrator may warn on `event_schemas` (match.requested seed) — JD/resume OK
+- Syntra can keep using direct queues (bridge) until pointed at `/v1/events`

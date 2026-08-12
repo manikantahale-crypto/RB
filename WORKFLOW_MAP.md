@@ -2,7 +2,7 @@
 
 **What this is:** Pictures of the live Syntra path, plus which file does what.  
 **Updated:** 2026-08-10  
-**Not about:** Recruiter Copilot / Kafka
+**Phase 1:** ✅ Verified live (front door → Router → Module)
 
 Also see: `plan.md`, `STATUS_TRACKER.md`, `ORCHESTRATOR_AUDIT.md`, `FRONT_DOOR.md`
 

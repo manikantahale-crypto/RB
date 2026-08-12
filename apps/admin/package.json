@@ -1,0 +1,27 @@
+{
+  "name": "@tekisho/admin",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Agent authoring admin SPA (Stage 1: Agent List + Policy Editor)",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc -p tsconfig.app.json --noEmit && vite build",
+    "preview": "vite preview",
+    "typecheck": "tsc -p tsconfig.app.json --noEmit"
+  },
+  "dependencies": {
+    "@tekisho/authoring": "*",
+    "react": "^19.1.0",
+    "react-dom": "^19.1.0",
+    "react-router-dom": "^7.6.0"
+  },
+  "devDependencies": {
+    "@types/node": "*",
+    "@types/react": "^19.1.0",
+    "@types/react-dom": "^19.1.0",
+    "@vitejs/plugin-react": "^4.5.0",
+    "typescript": "*",
+    "vite": "^6.3.0"
+  }
+}

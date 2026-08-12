@@ -1,0 +1,29 @@
+{
+  "name": "@tekisho/admin-api",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Agent authoring API (Stage 1: Save policy + Generate agent.ts)",
+  "main": "./src/index.ts",
+  "scripts": {
+    "start": "tsx src/index.ts",
+    "dev": "tsx watch src/index.ts",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@fastify/cors": "^11.0.1",
+    "@tekisho/authoring": "*",
+    "dotenv": "^16.4.7",
+    "fastify": "*",
+    "pg": "*",
+    "zod": "*"
+  },
+  "devDependencies": {
+    "@types/node": "*",
+    "@types/pg": "^8.20.4",
+    "tsx": "^4.23.5",
+    "typescript": "*",
+    "vitest": "*"
+  }
+}
