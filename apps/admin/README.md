@@ -34,12 +34,27 @@ Stage 1: *nothing executes.*
 
 ## Run
 
-```powershell
-npm run start -w @tekisho/admin-api
-# → http://localhost:4200/health
+**Authoring only (one terminal):**
 
-npm run dev -w @tekisho/admin
-# → http://localhost:5173
+```powershell
+cd ...\orchaestration
+npm run dev:admin
+# → API http://localhost:4200/health
+# → UI  http://localhost:5173
 ```
 
-Stages 1–3 authoring APIs + SPA actions are wired. Activating an authored graph does **not** remount runtime `*.workflow` traffic.
+Ctrl+C stops both.
+
+**Separate terminals (same thing):**
+
+```powershell
+npm run dev -w @tekisho/admin-api
+npm run dev -w @tekisho/admin
+```
+
+Do **not** start API (`:4100`) or worker unless you are smoke-testing events
+(`npm run start -w @tekisho/api` + `npm start`).
+
+Stages 1–3 authoring APIs + SPA actions are wired. After **Make this live**,
+JD production traffic prefers `syntra.authored` when that key is active
+(else seed `syntra.jd.workflow`). Match/resume still use their seed keys.

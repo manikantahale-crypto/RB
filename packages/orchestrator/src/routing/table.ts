@@ -8,23 +8,40 @@ import { EVENT_TYPES } from '@tekisho/domain';
  * - terminal → persisted + observed only (UI / audit); no graph
  * - resume  → continue a parked human.gate thread
  * - fail    → mirror into failed_workflows
+ *
+ * Production go-live: JD traffic prefers the authored key (`syntra.authored`)
+ * when an active definition exists; otherwise falls back to the seed workflow
+ * so local smoke still works before admin Activate / Make this live.
  */
 export type EventHandleKind = 'graph' | 'terminal' | 'resume' | 'fail';
 
 export type PlatformEventPlan = {
   kind: EventHandleKind;
-  /** Required when kind === 'graph' */
+  /** Required when kind === 'graph' — preferred / primary graph_key */
   graphKey?: string;
+  /**
+   * When set, router uses `graphKey` only if that key has an active
+   * graph_definitions row; otherwise routes to this seed key.
+   */
+  fallbackGraphKey?: string;
   moduleQueue?: string;
   note: string;
 };
 
+/** Authored Syntra agent graph_key (admin Activate / go-live). */
+export const SYNTRA_AUTHORED_GRAPH_KEY = 'syntra.authored';
+
+/** Seed JD workflow kept as fallback when authored is not active. */
+export const SYNTRA_JD_SEED_GRAPH_KEY = 'syntra.jd.workflow';
+
 export const PLATFORM_EVENT_PLAN: Record<string, PlatformEventPlan> = {
   [EVENT_TYPES.JD_RECEIVED]: {
     kind: 'graph',
-    graphKey: 'syntra.jd.workflow',
+    graphKey: SYNTRA_AUTHORED_GRAPH_KEY,
+    fallbackGraphKey: SYNTRA_JD_SEED_GRAPH_KEY,
     moduleQueue: 'module.syntra.jd',
-    note: 'Trigger — process JD via Syntra HTTP',
+    note:
+      'Trigger — prefer syntra.authored when active; else seed syntra.jd.workflow',
   },
   [EVENT_TYPES.JD_PARSED]: {
     kind: 'terminal',
@@ -77,6 +94,31 @@ export function planForEvent(eventType: string): PlatformEventPlan {
       note: 'Unknown event — ack as terminal',
     }
   );
+}
+
+/**
+ * Pick the graph_key the router should pin.
+ * Prefer `plan.graphKey` when active; else `fallbackGraphKey` when present.
+ */
+export async function resolveRoutableGraphKey(args: {
+  eventType: string;
+  organizationId?: string | null;
+  hasActive: (
+    graphKey: string,
+    organizationId?: string | null,
+  ) => Promise<boolean>;
+}): Promise<string | null> {
+  const plan = planForEvent(args.eventType);
+  if (plan.kind !== 'graph' || !plan.graphKey) return null;
+
+  if (!plan.fallbackGraphKey) return plan.graphKey;
+
+  const preferredActive = await args.hasActive(
+    plan.graphKey,
+    args.organizationId,
+  );
+  if (preferredActive) return plan.graphKey;
+  return plan.fallbackGraphKey;
 }
 
 /** event_type → graph_key for runbook / router */

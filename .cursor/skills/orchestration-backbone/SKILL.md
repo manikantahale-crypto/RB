@@ -32,7 +32,7 @@ description: >-
 - **Independent of Syntra.** Syntra is an optional peer:
   - Product domain: `syntra.*` tables + Syntra HTTP (`nodes/syntra.ts`)
   - Platform events: Syntra sets `ORCH_API_URL` and POSTs envelopes (not bridge)
-- **Bridge OFF by default** (`ENABLE_SYNTRA_BRIDGE`). Bridge ON is deprecated
+- **Bridge removed** — Syntra must use `ORCH_API_URL` → `POST /v1/events` (no `jd.uploaded` dual consumers)
   dual-consumer debugging only — see BRIDGE.md.
 - **Do not rebuild** proven pieces unless explicitly asked.
 - Topology change = **new graph version + promote**, never UPDATE active rows.

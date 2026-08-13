@@ -203,6 +203,15 @@ export class GraphCompiler {
     return row.version;
   }
 
+  /** True when an active graph_definitions row exists for this key (+ org). */
+  async hasActiveDefinition(
+    graphKey: string,
+    organizationId?: string | null,
+  ): Promise<boolean> {
+    const row = await this.loadActive(graphKey, organizationId ?? null);
+    return row != null;
+  }
+
   /** Parsed recipe for entryInput / stateSchema checks at invoke time. */
   async loadDefinition(
     graphKey: string,

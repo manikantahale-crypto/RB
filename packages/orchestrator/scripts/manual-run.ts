@@ -21,7 +21,7 @@ async function main() {
   await compiler.ensureSchemaAndSeed();
 
   const resolver = new SimpleRunbookResolver({
-    [EVENT_TYPES.JD_RECEIVED]: 'syntra.jd.workflow',
+    [EVENT_TYPES.JD_RECEIVED]: 'syntra.authored',
   });
   const runner = new WorkflowRunner(compiler, pool);
 

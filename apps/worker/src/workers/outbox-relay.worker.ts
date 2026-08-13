@@ -1,9 +1,9 @@
 // Outbox relay worker.
 //
 // The ONLY publisher into pg-boss. Reads unpublished rows from event_outbox,
-// composes the wire envelope, publishes each to the dispatch queue, and marks
-// the row published — so business writes never touch the queue directly
-// (the transactional outbox pattern).
+// inserts the pg-boss job on the **same Postgres transaction client** as the
+// published_at update (pg-boss `db` option), then COMMITs — so enqueue + mark
+// published succeed or fail together (true transactional outbox on one DB).
 
 import { Pool } from "pg";
 import type { PgBoss } from "pg-boss";
@@ -22,11 +22,6 @@ export const DISPATCH_DLQ = "orchestration.dispatch.dlq";
 const BATCH_SIZE = 100;
 const POLL_INTERVAL_MS = 1000;
 
-// Retry policy for the dispatch queue. Applied to jobs the CONSUMER
-// (the orchestrator dispatcher) processes: if its handler throws, pg-boss
-// re-runs the job up to retryLimit times with exponential backoff. After
-// the retries are exhausted, the job moves to the dead-letter queue instead
-// of just failing, so nothing is silently lost.
 const RETRY_LIMIT = 5;
 const RETRY_DELAY_SECONDS = 5;
 
@@ -45,6 +40,21 @@ export interface OutboxRow {
   occurred_at: Date;
 }
 
+/** pg-boss IDatabase adapter over a pg Client already inside BEGIN. */
+export function pgClientAsBossDb(client: {
+  query: (
+    text: string,
+    values?: unknown[],
+  ) => Promise<{ rows: unknown[] }>;
+}) {
+  return {
+    executeSql: async (text: string, values?: unknown[]) => {
+      const result = await client.query(text, values);
+      return { rows: result.rows };
+    },
+  };
+}
+
 export function toEnvelope(row: OutboxRow): EventEnvelope {
   return {
     event_id: row.event_id,
@@ -58,6 +68,15 @@ export function toEnvelope(row: OutboxRow): EventEnvelope {
     payload_ref: row.payload_ref,
     producer: row.producer,
   };
+}
+
+function isPermissionish(error: unknown): boolean {
+  const message = error instanceof Error ? error.message : String(error);
+  return (
+    /permission denied|insufficient_privilege|must be owner|does not exist/i.test(
+      message,
+    )
+  );
 }
 
 export async function relayOnce(
@@ -86,23 +105,33 @@ export async function relayOnce(
       return 0;
     }
 
+    const txDb = pgClientAsBossDb(client);
     const publishedIds: string[] = [];
+
     for (const row of rows) {
       const envelope = toEnvelope(row);
       const plan = planForEvent(row.event_type);
+      const sendOpts = {
+        ...MODULE_SEND_OPTIONS,
+        singletonKey: row.event_id,
+        db: txDb,
+      };
 
       if (plan.kind === "graph") {
-        // Design front door: relay → ingress → router (D3 pin) → module.*
-        await boss.createQueue(INGRESS_QUEUE);
-        await boss.send(INGRESS_QUEUE, envelope, {
-          ...MODULE_SEND_OPTIONS,
-          singletonKey: row.event_id,
-        });
+        try {
+          await boss.send(INGRESS_QUEUE, envelope, sendOpts);
+        } catch (err) {
+          // Separate relay role may lack pgboss write — fall back off-TX send.
+          if (!isPermissionish(err)) throw err;
+          await boss.send(INGRESS_QUEUE, envelope, {
+            ...MODULE_SEND_OPTIONS,
+            singletonKey: row.event_id,
+          });
+        }
         console.log(
           `[Relay] ${row.event_type} → ${INGRESS_QUEUE} (${row.event_id})`,
         );
       } else {
-        // terminal / resume / fail — dispatch handlers (never re-enter graphs)
         const stamped = envelope as EventEnvelope & {
           __graphKey?: string;
           __graphVersion?: number;
@@ -114,9 +143,15 @@ export async function relayOnce(
             stamped.__graphVersion = pin.graphVersion;
           }
         }
-        await boss.send(DISPATCH_QUEUE, stamped, {
-          singletonKey: row.event_id,
-        });
+        try {
+          await boss.send(DISPATCH_QUEUE, stamped, sendOpts);
+        } catch (err) {
+          if (!isPermissionish(err)) throw err;
+          await boss.send(DISPATCH_QUEUE, stamped, {
+            ...MODULE_SEND_OPTIONS,
+            singletonKey: row.event_id,
+          });
+        }
         console.log(
           `[Relay] ${row.event_type} → ${DISPATCH_QUEUE} (terminal/control) (${row.event_id})`,
         );
@@ -146,14 +181,9 @@ export type StartOutboxRelayOptions = {
   boss: PgBoss;
   /**
    * Shared migrator pool (compiler / checkpointer / outbox writes).
-   * Used when DATABASE_RELAY_URL is unset so we do not open another Pool
-   * against the session-mode pooler (budget ~15).
+   * Preferred for transactional send (same role can write pgboss + event_outbox).
    */
   pool?: Pool;
-  /**
-   * Design D3: stamp graph pin onto dispatch jobs at enqueue (relay).
-   * Return null for terminal events with no runbook.
-   */
   resolvePin?: (
     eventType: string,
     organizationId: string,
@@ -192,8 +222,8 @@ async function checkOutboxRelayPrivileges(pool: Pool): Promise<string | null> {
       return (
         `Outbox relay DB role "${dbUser}" lacks UPDATE on event_outbox ` +
         `(SELECT ... FOR UPDATE + mark published_at both need it). ` +
-        `Set DATABASE_RELAY_URL to syntra_relay on project mdxsybudkorrvmojqowx, ` +
-        `or run packages/db/scripts/fix-event-outbox-migrator-bridge.sql as postgres there.`
+        `Prefer shared migrator pool (leave DATABASE_RELAY_URL empty) after ` +
+        `packages/db/scripts/grant-orch-runtime.sql, or set DATABASE_RELAY_URL to syntra_relay.`
       );
     }
 
@@ -214,7 +244,7 @@ async function checkOutboxRelayPrivileges(pool: Pool): Promise<string | null> {
       return (
         `Outbox relay cannot lock event_outbox rows as "${dbUser}": ${message}. ` +
         `Under FORCE RLS the role also needs an UPDATE policy ` +
-        `(see packages/db/scripts/fix-event-outbox-migrator-bridge.sql).`
+        `(see packages/db/scripts/grant-orch-runtime.sql).`
       );
     }
   } finally {
@@ -225,29 +255,34 @@ async function checkOutboxRelayPrivileges(pool: Pool): Promise<string | null> {
 /**
  * Starts the outbox poll loop. Caller owns PgBoss lifecycle (start/stop).
  *
- * Prefers DATABASE_RELAY_URL (syntra_relay — design / RLS). Falls back to
- * DATABASE_MIGRATOR_URL via the shared bootstrap pool when provided.
+ * Prefers the shared migrator `pool` (same role as pg-boss) so job insert +
+ * published_at commit atomically. DATABASE_RELAY_URL is used only when no
+ * shared pool is provided.
  */
 export async function startOutboxRelay(
-  options: StartOutboxRelayOptions
+  options: StartOutboxRelayOptions,
 ): Promise<() => Promise<void>> {
   const { boss, resolvePin } = options;
   const relayUrl = env.DATABASE_RELAY_URL?.trim() ?? "";
-  const usingRelayUrl = relayUrl.length > 0;
+  const usingRelayUrl = relayUrl.length > 0 && !options.pool;
 
-  // Prefer a dedicated relay URL; otherwise reuse the bootstrap migrator pool
-  // so we do not burn another session-mode slot.
   let pool: Pool;
   let ownsPool = false;
-  if (usingRelayUrl) {
+  if (options.pool) {
+    // Same connection role as pg-boss → transactional send via { db }.
+    pool = options.pool;
+    if (relayUrl.length > 0) {
+      console.log(
+        "[OutboxRelay] shared migrator pool preferred for transactional send (DATABASE_RELAY_URL ignored while pool is passed)",
+      );
+    }
+  } else if (relayUrl.length > 0) {
     pool = new Pool({
       connectionString: relayUrl,
       ssl: { rejectUnauthorized: false },
       max: 1,
     });
     ownsPool = true;
-  } else if (options.pool) {
-    pool = options.pool;
   } else {
     pool = new Pool({
       connectionString: env.DATABASE_MIGRATOR_URL,
@@ -262,19 +297,15 @@ export async function startOutboxRelay(
     });
   }
 
-  // Dead-letter queue must exist before the main queue can reference it.
   await boss.createQueue(DISPATCH_DLQ);
-
-  // Main dispatch queue, with retry policy + dead-letter routing baked in.
   await boss.createQueue(DISPATCH_QUEUE, {
     retryLimit: RETRY_LIMIT,
     retryDelay: RETRY_DELAY_SECONDS,
     retryBackoff: true,
     deadLetter: DISPATCH_DLQ,
   });
+  await boss.createQueue(INGRESS_QUEUE);
 
-  // SELECT ... FOR UPDATE needs UPDATE (+ RLS UPDATE policy under FORCE).
-  // Missing privileges / pooler exhaustion: keep dispatcher up, skip poll loop.
   const privilegeError = await checkOutboxRelayPrivileges(pool);
   if (privilegeError) {
     console.error(`[OutboxRelay] DISABLED — ${privilegeError}`);
@@ -306,11 +337,17 @@ export async function startOutboxRelay(
   };
 
   void loop();
-  if (usingRelayUrl) {
-    console.log(`Outbox relay started → queue "${DISPATCH_QUEUE}" (DATABASE_RELAY_URL)`);
+  if (options.pool) {
+    console.log(
+      `Outbox relay started → ${INGRESS_QUEUE} / ${DISPATCH_QUEUE} (shared pool, transactional send)`,
+    );
+  } else if (usingRelayUrl) {
+    console.log(
+      `Outbox relay started → ${DISPATCH_QUEUE} (DATABASE_RELAY_URL — prefer shared migrator pool for atomic send)`,
+    );
   } else {
     console.log(
-      `Outbox relay started → queue "${DISPATCH_QUEUE}" (shared migrator pool — set DATABASE_RELAY_URL for syntra_relay)`
+      `Outbox relay started → ${DISPATCH_QUEUE} (migrator pool, transactional send)`,
     );
   }
 

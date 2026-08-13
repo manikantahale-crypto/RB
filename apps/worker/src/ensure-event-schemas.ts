@@ -3,7 +3,8 @@ import { EVENT_TYPES } from "@tekisho/domain";
 
 /**
  * Ensure syntra.match.requested is registered so ingress can write event_outbox
- * (FK to event_schemas). Soft-skips on permission errors (migrator may lack INSERT).
+ * (FK to event_schemas). Idempotent; quiet when already seeded by Flyway
+ * R__seed_event_schemas / R__orch_runtime_grants.
  */
 export async function ensureIngressEventSchemas(pool: Pool): Promise<void> {
   try {
@@ -45,13 +46,20 @@ export async function ensureIngressEventSchemas(pool: Pool): Promise<void> {
         }),
       ],
     );
-    console.log("[Bootstrap] registered event_schemas row for syntra.match.requested");
-  } catch (err: any) {
-    // SELECT or INSERT may fail under RLS / missing GRANTs — don't block the worker.
+    console.log(
+      "[Bootstrap] registered event_schemas row for syntra.match.requested",
+    );
+  } catch (err: unknown) {
+    const message = err instanceof Error ? err.message : String(err);
+    // Row may already exist via Flyway; SELECT/INSERT denied under RLS is OK
+    // when R__seed_event_schemas already applied as postgres.
+    if (/duplicate key|unique constraint|already exists/i.test(message)) {
+      return;
+    }
     console.warn(
-      "[Bootstrap] skip ensureIngressEventSchemas:",
-      err?.message ?? err,
-      "(JD/resume ingress still works if those schemas already exist; run Flyway as postgres to add match.requested)",
+      "[Bootstrap] ensureIngressEventSchemas:",
+      message,
+      "— if match ingress fails FK, run Flyway R__seed_event_schemas.sql / grant-orch-runtime.sql as postgres",
     );
   }
 }

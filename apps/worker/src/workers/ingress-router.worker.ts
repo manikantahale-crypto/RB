@@ -1,13 +1,12 @@
 import type { PgBoss } from 'pg-boss';
 import type { EventEnvelope } from '@tekisho/domain';
-import { SimpleRunbookResolver } from '@tekisho/orchestrator/src/resolver/runbook.js';
 import type { GraphCompiler } from '@tekisho/orchestrator/src/graphs/compiler.js';
 import {
-  EVENT_TO_GRAPH,
   EVENT_TO_MODULE_QUEUE,
   GRAPH_TO_MODULE_QUEUE,
   INGRESS_QUEUE,
   MODULE_SEND_OPTIONS,
+  resolveRoutableGraphKey,
 } from '@tekisho/orchestrator/src/routing/table.js';
 
 export type RoutedEnvelope = EventEnvelope & {
@@ -17,13 +16,13 @@ export type RoutedEnvelope = EventEnvelope & {
 
 /**
  * Router — reads orchestration.ingress, picks module queue, stamps graph version (D3).
+ * JD events prefer syntra.authored when active; otherwise seed syntra.jd.workflow.
  */
 export async function startIngressRouter(args: {
   boss: PgBoss;
   compiler: GraphCompiler;
 }): Promise<void> {
   const { boss, compiler } = args;
-  const resolver = new SimpleRunbookResolver(EVENT_TO_GRAPH);
 
   await boss.createQueue(INGRESS_QUEUE);
 
@@ -34,7 +33,11 @@ export async function startIngressRouter(args: {
         `[Router] ingress ${envelope.event_type} (${envelope.event_id})`,
       );
 
-      const graphKey = resolver.tryResolve(envelope.event_type);
+      const graphKey = await resolveRoutableGraphKey({
+        eventType: envelope.event_type,
+        organizationId: envelope.organization_id,
+        hasActive: (key, orgId) => compiler.hasActiveDefinition(key, orgId),
+      });
       if (!graphKey) {
         console.log(
           `[Router] terminal / no runbook for ${envelope.event_type} — acking`,

@@ -58,7 +58,7 @@ Producer (smoke | Syntra ORCH_API_URL | curl)
 ```
 
 **Retired:** API directly `boss.send(ingress)` after outbox insert.  
-**Deprecated:** `ENABLE_SYNTRA_BRIDGE=1` (Syntra + orch share `jd.uploaded` queues).
+**Deprecated / removed:** `ENABLE_SYNTRA_BRIDGE` — dual-queue bridge deleted; Syntra must use `ORCH_API_URL` → `/v1/events`.
 
 ### Bridge ON vs OFF
 

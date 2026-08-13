@@ -2,17 +2,14 @@ import * as PgBossModule from "pg-boss";
 import { env } from "./env.js";
 import pg from "pg";
 import { PostgresSaver } from "@langchain/langgraph-checkpoint-postgres";
-import { SimpleRunbookResolver } from "@tekisho/orchestrator/src/resolver/runbook.js";
 import { WorkflowRunner } from "@tekisho/orchestrator/src/workflow/runner.js";
 import { GraphCompiler } from "@tekisho/orchestrator/src/graphs/compiler.js";
-import { EVENT_TYPES } from "@tekisho/domain";
 import type { EventEnvelope } from "@tekisho/domain";
 import type { EventInput } from "@tekisho/orchestrator/src/types.js";
-import { v4 as uuidv4 } from "uuid";
 import {
-  EVENT_TO_GRAPH,
   DISPATCH_QUEUE,
   planForEvent,
+  resolveRoutableGraphKey,
 } from "@tekisho/orchestrator/src/routing/table.js";
 import { startOutboxRelay } from "./workers/outbox-relay.worker.js";
 import { startIngressRouter } from "./workers/ingress-router.worker.js";
@@ -23,10 +20,6 @@ import { ensureJobPinTable } from "./version-pin.js";
 import { ensureIngressEventSchemas } from "./ensure-event-schemas.js";
 import { ensureFailedWorkflowsTable } from "@tekisho/orchestrator/src/workflow/failed-workflows.js";
 import { runWorkflowWithOrgContext } from "./run-with-org.js";
-
-const SYNTRA_TEST_ORG_ID = "2b8e12b3-1745-4ae9-902c-5a249c28ba94";
-/** Off by default — Syntra already owns jd/resume/match queues; dual consumers exhaust Supabase pool. */
-const ENABLE_SYNTRA_BRIDGE = process.env.ENABLE_SYNTRA_BRIDGE === "1";
 
 const databaseUrl = new URL(env.DATABASE_MIGRATOR_URL);
 
@@ -39,11 +32,7 @@ console.log("Database connection target:", {
 });
 
 async function bootstrapPgBoss(): Promise<void> {
-  console.log(
-    "Starting pg-boss bootstrap (ingress + router + modules" +
-      (ENABLE_SYNTRA_BRIDGE ? " + Syntra bridge" : "") +
-      ")...",
-  );
+  console.log("Starting pg-boss bootstrap (ingress + router + modules)...");
 
   const boss = new PgBossModule.PgBoss({
     connectionString: env.DATABASE_MIGRATOR_URL,
@@ -58,8 +47,6 @@ async function bootstrapPgBoss(): Promise<void> {
 
   await boss.start();
   console.log("pg-boss started (schema ready)");
-
-  const resolver = new SimpleRunbookResolver(EVENT_TO_GRAPH);
 
   const pool = new pg.Pool({
     connectionString: env.DATABASE_MIGRATOR_URL,
@@ -89,17 +76,24 @@ async function bootstrapPgBoss(): Promise<void> {
   await startModuleWorkers({ boss, pool, compiler, runner });
   await startResumeThreadWorker({ boss, runner });
 
+  const resolveGraphKey = (eventType: string, organizationId?: string) =>
+    resolveRoutableGraphKey({
+      eventType,
+      organizationId,
+      hasActive: (key, orgId) => compiler.hasActiveDefinition(key, orgId),
+    });
+
   const stopOutboxRelay = await startOutboxRelay({
     boss,
     pool,
     resolvePin: async (eventType, organizationId) => {
-      const plan = planForEvent(eventType);
-      if (plan.kind !== "graph" || !plan.graphKey) return null;
+      const graphKey = await resolveGraphKey(eventType, organizationId);
+      if (!graphKey) return null;
       const graphVersion = await compiler.resolveActiveVersion(
-        plan.graphKey,
+        graphKey,
         organizationId,
       );
-      return { graphKey: plan.graphKey, graphVersion };
+      return { graphKey, graphVersion };
     },
   });
 
@@ -127,8 +121,10 @@ async function bootstrapPgBoss(): Promise<void> {
 
         const workflowName =
           envelope.__graphKey ??
-          plan.graphKey ??
-          resolver.tryResolve(envelope.event_type);
+          (await resolveGraphKey(
+            envelope.event_type,
+            envelope.organization_id,
+          ));
         if (!workflowName) {
           console.log(
             `[Dispatcher] no graph for ${envelope.event_type} — acking`,
@@ -174,63 +170,13 @@ async function bootstrapPgBoss(): Promise<void> {
     }
   });
 
-  if (ENABLE_SYNTRA_BRIDGE) {
-    console.warn(
-      "[Bootstrap] ENABLE_SYNTRA_BRIDGE=1 is DEPRECATED — dual consumers exhaust Supabase. " +
-        "Prefer Syntra ORCH_API_URL → POST /v1/events. Bridge kept only for emergency debugging.",
+  if (process.env.ENABLE_SYNTRA_BRIDGE === "1") {
+    console.error(
+      "[Bootstrap] ENABLE_SYNTRA_BRIDGE is removed. Point Syntra at ORCH_API_URL → POST /v1/events.",
     );
-    const SYNTRA_QUEUES = [
-      { queue: "jd.uploaded", eventType: EVENT_TYPES.JD_RECEIVED },
-      { queue: "resume.uploaded", eventType: EVENT_TYPES.RESUME_RECEIVED },
-      { queue: "match.requested", eventType: EVENT_TYPES.MATCH_REQUESTED },
-    ];
-
-    for (const { queue, eventType } of SYNTRA_QUEUES) {
-      await boss.createQueue(queue);
-      await boss.work(queue, async (jobs: any) => {
-        for (const job of jobs) {
-          console.log(`[Bridge] Received ${queue}:`, job.data);
-          try {
-            const eventInput: EventInput = {
-              event_id: uuidv4(),
-              event_type: eventType,
-              aggregate_id: job.data.jobId || job.data.resumeId || uuidv4(),
-              aggregate_type: "requirement",
-              organization_id: SYNTRA_TEST_ORG_ID,
-              correlation_id: uuidv4(),
-              payload: job.data,
-            };
-            const workflowName = resolver.resolve(eventInput.event_type, {
-              organization_id: eventInput.organization_id,
-              payload: eventInput.payload,
-            });
-            const result = await runWorkflowWithOrgContext({
-              pool,
-              compiler,
-              runner,
-              bossJobId: String(job.id),
-              workflowName,
-              event: eventInput,
-              payloadPin: {
-                graphKey: job.data.__graphKey,
-                graphVersion: job.data.__graphVersion,
-              },
-            });
-            if (result.status === "FAILED") throw new Error(result.error);
-            console.log(
-              `[Bridge] ${queue} → ${result.graphKey}@${result.graphVersion} ${result.status}`,
-            );
-          } catch (error) {
-            console.error(`[Bridge] Error on ${queue} job ${job.id}:`, error);
-            throw error;
-          }
-        }
-      });
-    }
   } else {
     console.log(
-      "[Bootstrap] Syntra bridge OFF (retired default). Syntra should set ORCH_API_URL → POST /v1/events. " +
-        "ENABLE_SYNTRA_BRIDGE=1 only for emergency dual-queue debugging.",
+      "[Bootstrap] Front door only — Syntra must set ORCH_API_URL → POST /v1/events (no jd.uploaded bridge).",
     );
   }
 

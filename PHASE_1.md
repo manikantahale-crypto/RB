@@ -299,10 +299,10 @@ Invoke-RestMethod -Method POST -Uri http://localhost:4100/v1/events `
 
 | Leftover | Meaning |
 |----------|---------|
-| Best-effort enqueue | Outbox write then queue send — not one shared DB transaction with pg-boss |
+| ~~Best-effort enqueue~~ | ✅ Fixed — relay uses pg-boss `{ db }` + `published_at` in one COMMIT |
 | Loose payloads | Envelope is validated; per-field payload Zod is light |
-| Syntra bridge | Syntra still uses direct queues until pointed at `/v1/events` |
-| `event_schemas` warning | Migrator can’t INSERT schemas; JD/resume already registered |
+| ~~Syntra bridge~~ | ✅ Removed — Syntra must use `ORCH_API_URL` → `/v1/events` |
+| ~~`event_schemas` warning~~ | ✅ `match.requested` in Flyway seeds; bootstrap ensure quiet when present |
 | Full JD AI finish | Needs Syntra + OpenRouter; front door itself is proven |
 
 ---

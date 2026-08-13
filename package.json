@@ -7,6 +7,7 @@
   ],
   "scripts": {
     "start": "npm run start -w @tekisho/worker",
+    "dev:admin": "concurrently -n api,ui -c blue,green \"npm run dev -w @tekisho/admin-api\" \"npm run dev -w @tekisho/admin\"",
     "smoke:e2e": "tsx scripts/smoke-e2e.ts",
     "demo:flow": "tsx scripts/demo-flow.ts"
   },
@@ -23,6 +24,7 @@
   },
   "devDependencies": {
     "@types/node": "*",
+    "concurrently": "^10.0.4",
     "tsx": "*",
     "typescript": "*",
     "vitest": "*"

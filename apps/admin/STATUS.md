@@ -1,6 +1,6 @@
 # Agent Authoring — Status
 
-**Updated:** 2026-08-12  
+**Updated:** 2026-08-13  
 **Design / plan (final):** [`agent-authoring-admin-design-final.md`](./agent-authoring-admin-design-final.md)  
 **LLM generator:** [`llm-graph-generator-design.md`](./llm-graph-generator-design.md)  
 **Stages:** [`PLAN.md`](./PLAN.md) · [`STAGE_1.md`](./STAGE_1.md) · [`STAGE_1_AUDIT.md`](./STAGE_1_AUDIT.md) · [`STAGE_2.md`](./STAGE_2.md) · [`STAGE_2_AUDIT.md`](./STAGE_2_AUDIT.md) · [`STAGE_3.md`](./STAGE_3.md) · [`STAGE_3_AUDIT.md`](./STAGE_3_AUDIT.md) · [`RUNTIME.md`](./RUNTIME.md)  
@@ -17,7 +17,7 @@ Legend: ✅ Done · 🟡 Partial · ❌ Not started · ⛔ Blocked
 | Stage 1 (Generate) | **Done** |
 | Stage 2 (Compile) | **Done** |
 | Stage 3 (Publish / activate / rollback) | **Done** (authored keyspace only) |
-| Runtime go-live for authored graphs | **Not done** — **held** (router remount); do not flip until asked |
+| Runtime go-live for authored graphs | **Done** — JD router prefers `syntra.authored` when active; falls back to `syntra.jd.workflow` |
 | LLM graph generator (Stage 1 evolution) | **Done** — steps 1–9 (engine + Generate API + Policy Editor UX + tests) |
 
 ---
@@ -47,7 +47,7 @@ Legend: ✅ Done · 🟡 Partial · ❌ Not started · ⛔ Blocked
 
 | Item | Why |
 |------|-----|
-| Point router at `syntra.authored` | **Held** — shared with runtime owner; do not remount yet |
+| Remount match / resume events onto authored keys | Separate event→key mapping; only JD remounted to `syntra.authored` today |
 | Invent remaining “12 products” templates | Product/data decision |
 | Teammate’s ~6 extra tools | Catalog-only when they land (§9 #5) |
 
@@ -60,6 +60,7 @@ Legend: ✅ Done · 🟡 Partial · ❌ Not started · ⛔ Blocked
 | 2026-08-11 | Stage 1 complete |
 | 2026-08-11 | Stage 2 Compile complete |
 | 2026-08-11 | Stage 3 Publish/Activate/Rollback + List active column + SPA actions |
+| 2026-08-13 | Router remount: `syntra.jd.received` → prefer `syntra.authored` when active (fallback seed `syntra.jd.workflow`) |
 | 2026-08-12 | Authoring tools aligned to runtime nodeRegistry only (3 Syntra process nodes) |
 | 2026-08-12 | LLM generator §9 locked; catalog + LLMClient + prompt builder landed |
 | 2026-08-12 | Generate API LLM path + Policy Editor UX (request + workflow summary) |

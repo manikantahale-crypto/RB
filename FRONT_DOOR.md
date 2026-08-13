@@ -52,6 +52,10 @@ If you see `permission denied for table event_schemas|agent_definitions|agent_ru
 
 Expect `202` + worker logs: `[Router]` then `[Module]`.
 
+After admin **Make this live** for the Syntra agent, JD events route to
+`syntra.authored` when that definition is active. If none is active, the router
+falls back to seed `syntra.jd.workflow`.
+
 ## Verified live (2026-08-10)
 
 - API returned **202** for `POST /v1/events`
@@ -59,8 +63,12 @@ Expect `202` + worker logs: `[Router]` then `[Module]`.
 - Job used: `b4cb2200-3aff-4f89-85a6-ec981f5b5ff7`
 - Syntra process may still need OpenRouter for a full AI finish — front door itself is proven
 
-## Soft leftovers (not blocking Phase 1)
+## Soft leftovers (Phase 1)
 
-- Outbox write + queue send are best-effort (not one shared DB transaction)
-- Migrator may warn on `event_schemas` (match.requested seed) — JD/resume OK
-- Syntra can keep using direct queues (bridge) until pointed at `/v1/events`
+_Resolved 2026-08-13:_
+
+- Outbox relay uses pg-boss `{ db }` so job insert + `published_at` commit together on the shared migrator pool
+- `syntra.match.requested` seeded in `R__seed_event_schemas` / `R__orch_runtime_grants`; bootstrap ensure is quiet when already present
+- Syntra dual-queue bridge removed — front door (`ORCH_API_URL` → `/v1/events`) only
+
+See [BRIDGE.md](./BRIDGE.md).

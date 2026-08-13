@@ -48,13 +48,15 @@ Activate / rollback **must**:
 
 ---
 
-## Decision #2 — Activate ≠ go-live for production traffic
+## Decision #2 — Activate + router remount = production go-live for JD
 
-Even after an authored row is `active` under `syntra.authored`:
+After an authored row is `active` under `syntra.authored`:
 
-- the runtime still resolves events to whatever key the **router / runbook** points at (today: `syntra.jd.workflow`, etc.);
-- pointing the router at `syntra.authored` is a **shared decision** with the runtime owner;
-- Stage 3 builds the **mechanism** (publish / activate / rollback) inside the authored keyspace only.
+- the **ingress router** prefers `syntra.authored` for `syntra.jd.received` when that key is active;
+- if no active authored definition exists, traffic falls back to seed `syntra.jd.workflow`;
+- match / resume events still use their seed keys (`syntra.match.workflow`, `resume.intake`).
+
+Stage 3 Activate still never retires runtime seed rows — remount is the router’s job.
 
 ---
 
