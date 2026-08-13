@@ -16,7 +16,7 @@ export async function ensureAuthoringSchema(pool: Pool): Promise<void> {
         agent_id      uuid NOT NULL,
         policy        jsonb NOT NULL,
         status        text NOT NULL DEFAULT 'draft'
-                      CHECK (status IN ('draft', 'generated', 'compiled', 'published', 'active')),
+                      CHECK (status IN ('draft', 'generated', 'pending_go_live', 'compiled', 'published', 'active')),
         version       int  NOT NULL,
         checksum      text,
         created_by    text NOT NULL,
@@ -35,6 +35,9 @@ export async function ensureAuthoringSchema(pool: Pool): Promise<void> {
         ON agent_policies (agent_id, status);
     `);
 
+    // Widen status CHECK if tables already existed without pending_go_live (local ensure).
+    await widenAuthoringStatusChecks(pool);
+
     await pool.query(`
       CREATE TABLE IF NOT EXISTS agent_versions (
         id              uuid PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -46,11 +49,19 @@ export async function ensureAuthoringSchema(pool: Pool): Promise<void> {
         artifact_source text NOT NULL,
         checksum        text NOT NULL,
         status          text NOT NULL
-                        CHECK (status IN ('draft', 'generated', 'compiled', 'published', 'active')),
+                        CHECK (status IN ('draft', 'generated', 'pending_go_live', 'compiled', 'published', 'active')),
         generated_by    text NOT NULL,
-        generated_at    timestamptz NOT NULL DEFAULT now()
+        generated_at    timestamptz NOT NULL DEFAULT now(),
+        meta            jsonb NOT NULL DEFAULT '{}'::jsonb
       )
     `);
+
+    await pool.query(`
+      ALTER TABLE agent_versions
+        ADD COLUMN IF NOT EXISTS meta jsonb NOT NULL DEFAULT '{}'::jsonb
+    `).catch(() => {
+      /* ignore */
+    });
 
     await pool.query(`
       CREATE UNIQUE INDEX IF NOT EXISTS agent_versions_key_version_scope
@@ -187,6 +198,38 @@ export async function ensureAuthoringSchema(pool: Pool): Promise<void> {
       return;
     }
     throw err;
+  }
+}
+
+/** Allow pending_go_live on existing DBs created before V16. */
+async function widenAuthoringStatusChecks(pool: Pool): Promise<void> {
+  try {
+    await pool.query(
+      `ALTER TABLE agent_policies DROP CONSTRAINT IF EXISTS agent_policies_status_check`,
+    );
+    await pool.query(`
+      ALTER TABLE agent_policies
+        ADD CONSTRAINT agent_policies_status_check
+        CHECK (status IN (
+          'draft', 'generated', 'pending_go_live', 'compiled', 'published', 'active'
+        ))
+    `);
+  } catch {
+    /* table may not exist yet / no permission */
+  }
+  try {
+    await pool.query(
+      `ALTER TABLE agent_versions DROP CONSTRAINT IF EXISTS agent_versions_status_check`,
+    );
+    await pool.query(`
+      ALTER TABLE agent_versions
+        ADD CONSTRAINT agent_versions_status_check
+        CHECK (status IN (
+          'draft', 'generated', 'pending_go_live', 'compiled', 'published', 'active'
+        ))
+    `);
+  } catch {
+    /* ignore */
   }
 }
 

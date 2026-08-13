@@ -20,6 +20,8 @@ export type PolicyFieldDesc = {
   label: string;
   kind: PolicyFieldKind;
   options?: string[];
+  /** Human labels for enum option values (admin-facing). */
+  optionLabels?: Record<string, string>;
   min?: number;
   max?: number;
   hint?: string;
@@ -36,37 +38,48 @@ export type ExtFieldKind = PolicyFieldKind;
 export const BASE_POLICY_UI: PolicyFieldDesc[] = [
   {
     key: "retry.max",
-    label: "Retry max",
+    label: "How many times to retry if something fails",
     kind: "number",
     min: 0,
     max: 10,
+    hint: "Usually 2 or 3 is enough",
     defaultValue: 3,
   },
   {
     key: "retry.fallback",
-    label: "Retry fallback",
+    label: "If retries still fail",
     kind: "enum",
     options: ["human_review", "skip", "fail"],
+    optionLabels: {
+      human_review: "Ask a person to review",
+      skip: "Skip and continue",
+      fail: "Stop with an error",
+    },
     defaultValue: "human_review",
   },
   {
     key: "escalation",
-    label: "Escalation",
+    label: "If the agent is stuck, hand off to",
     kind: "enum",
     options: ["none", "human", "other_agent"],
+    optionLabels: {
+      none: "Nobody (keep trying in place)",
+      human: "A person",
+      other_agent: "Another agent",
+    },
     defaultValue: "none",
   },
   {
     key: "guardrails.piiRedact",
-    label: "PII redact",
+    label: "Hide personal information (names, emails, phone numbers)",
     kind: "boolean",
     defaultValue: false,
   },
   {
     key: "guardrails.maxOutputTokens",
-    label: "Max output tokens",
+    label: "Limit how long answers can be (optional)",
     kind: "number",
-    hint: "Optional positive integer",
+    hint: "Leave blank for no limit",
     defaultValue: "",
   },
 ];
@@ -75,80 +88,40 @@ export const POLICY_EXT_UI: Record<string, PolicyFieldDesc[]> = {
   SyntraPolicyExt: [
     {
       key: "prompt",
-      label: "System prompt",
+      label: "Extra instructions for this agent (optional)",
       kind: "textarea",
-      hint: "Optional overlay instructions for SYNTRA",
+      hint: "Plain English is fine — e.g. “Be strict about visa requirements.”",
       defaultValue: "",
-    },
-    {
-      key: "matchThreshold",
-      label: "Match threshold (0–100)",
-      kind: "number",
-      min: 0,
-      max: 100,
-      defaultValue: 60,
-    },
-    {
-      key: "hardFilters",
-      label: "Hard filters",
-      kind: "multiEnum",
-      options: ["location", "visa", "availability", "experience"],
-      defaultValue: [],
-    },
-    {
-      key: "rerank",
-      label: "Rerank results",
-      kind: "boolean",
-      defaultValue: true,
-    },
-    {
-      key: "allowedTools",
-      label: "Allowed tools",
-      kind: "tools",
-      hint: "Optional override; empty = template node impls only at generate time",
-      defaultValue: [],
     },
   ],
   IntakePolicyExt: [
     {
       key: "prompt",
-      label: "System prompt",
+      label: "Extra instructions for this agent (optional)",
       kind: "textarea",
       defaultValue: "",
     },
     {
       key: "autoClassify",
-      label: "Auto-classify arrivals",
+      label: "Automatically sort incoming items",
       kind: "boolean",
       defaultValue: true,
-    },
-    {
-      key: "allowedTools",
-      label: "Allowed tools",
-      kind: "tools",
-      defaultValue: [],
     },
   ],
   CopilotPolicyExt: [
     {
       key: "prompt",
-      label: "System prompt",
+      label: "Extra instructions for this agent (optional)",
       kind: "textarea",
       defaultValue: "",
     },
     {
       key: "maxTurns",
-      label: "Max turns",
+      label: "Max back-and-forth messages in one chat",
       kind: "number",
       min: 1,
       max: 50,
       defaultValue: 12,
-    },
-    {
-      key: "allowedTools",
-      label: "Allowed tools",
-      kind: "tools",
-      defaultValue: [],
     },
   ],
 };

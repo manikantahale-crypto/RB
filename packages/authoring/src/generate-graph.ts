@@ -106,8 +106,8 @@ function applyConditionals(
 }
 
 /**
- * When hardFilters is a non-empty array, insert a filter node before `match`
- * (design §5A example).
+ * When hardFilters is a non-empty array, stamp them onto the `match` node
+ * config (no separate filter impl — authoring only uses runtime nodeRegistry).
  */
 function applyHardFilters(graph: MutableGraph, policy: AgentPolicy): void {
   const filters = policy.hardFilters;
@@ -115,42 +115,15 @@ function applyHardFilters(graph: MutableGraph, policy: AgentPolicy): void {
     return;
   }
 
-  const matchId = graph.nodes.find((n) => n.id === "match")?.id;
-  if (!matchId) {
-    // No match node — stamp filters onto first node config instead.
-    const first = graph.nodes[0];
-    if (first) {
-      first.config = { ...(first.config ?? {}), hardFilters: filters };
-    }
+  const matchNode = graph.nodes.find((n) => n.id === "match");
+  if (matchNode) {
+    matchNode.config = { ...(matchNode.config ?? {}), hardFilters: filters };
     return;
   }
 
-  if (graph.nodes.some((n) => n.id === "filter")) {
-    const existing = graph.nodes.find((n) => n.id === "filter")!;
-    existing.config = { ...(existing.config ?? {}), hardFilters: filters };
-    return;
+  const first = graph.nodes[0];
+  if (first) {
+    first.config = { ...(first.config ?? {}), hardFilters: filters };
   }
-
-  const matchNode = graph.nodes.find((n) => n.id === matchId)!;
-  graph.nodes.push({
-    id: "filter",
-    impl: "hard_filter",
-    config: {
-      ...(matchNode.config ?? {}),
-      hardFilters: filters,
-    },
-  });
-
-  // Rewire: any edge *→ match becomes *→ filter; add filter → match
-  const nextEdges: Array<[string, string]> = [];
-  for (const [from, to] of graph.edges) {
-    if (to === matchId) {
-      nextEdges.push([from, "filter"]);
-    } else {
-      nextEdges.push([from, to]);
-    }
-  }
-  nextEdges.push(["filter", matchId]);
-  graph.edges = nextEdges;
 }
 

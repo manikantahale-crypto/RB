@@ -106,6 +106,24 @@ code {
   background: rgba(255, 255, 255, 0.65);
 }
 
+.brand-nav {
+  display: flex;
+  gap: 1rem;
+  align-items: center;
+  margin-left: auto;
+}
+
+.brand-nav a {
+  color: var(--ink-soft);
+  text-decoration: none;
+  font-size: 0.92rem;
+  font-weight: 600;
+}
+
+.brand-nav a:hover {
+  color: var(--ink);
+}
+
 .page-head {
   margin-bottom: 1.75rem;
   animation: rise 500ms ease both;
@@ -514,6 +532,153 @@ code {
   font-size: 0.8rem;
 }
 
+.field-label {
+  font-weight: 650;
+  font-size: 0.86rem;
+}
+
+.workflow-summary {
+  display: grid;
+  gap: 0.65rem;
+}
+
+.workflow-empty {
+  margin: 0;
+}
+
+.workflow-line {
+  margin: 0 0 0.35rem;
+  font-size: 0.95rem;
+  font-weight: 650;
+  line-height: 1.4;
+  color: var(--ink);
+}
+
+.policy-snapshot {
+  display: grid;
+  gap: 0.55rem 1rem;
+  margin: 0;
+  grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+}
+
+.policy-snapshot > div {
+  padding: 0.55rem 0.7rem;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--surface-soft);
+}
+
+.policy-snapshot-wide {
+  grid-column: 1 / -1;
+}
+
+.policy-snapshot dt {
+  margin: 0 0 0.15rem;
+  font-size: 0.72rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--ink-soft);
+}
+
+.policy-snapshot dd {
+  margin: 0;
+  font-size: 0.9rem;
+  font-weight: 650;
+}
+
+.policy-snapshot-prompt {
+  font-weight: 500 !important;
+  line-height: 1.4;
+  white-space: pre-wrap;
+}
+
+.workflow-key {
+  margin: 0;
+  font-size: 0.82rem;
+  color: var(--ink-soft);
+}
+
+.workflow-steps {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 0.45rem;
+  counter-reset: wf-step;
+}
+
+.workflow-steps li {
+  counter-increment: wf-step;
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 0.15rem 0.75rem;
+  align-items: baseline;
+  padding: 0.55rem 0.7rem;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--surface-soft);
+}
+
+.workflow-steps li::before {
+  content: counter(wf-step);
+  font-family: ui-monospace, monospace;
+  font-size: 0.75rem;
+  font-weight: 700;
+  color: var(--ink-soft);
+  grid-row: 1 / span 2;
+  align-self: center;
+  width: 1.5rem;
+  height: 1.5rem;
+  display: grid;
+  place-items: center;
+  border-radius: 999px;
+  border: 1px solid var(--line);
+  background: var(--surface);
+}
+
+.workflow-step-label {
+  font-weight: 650;
+  font-size: 0.92rem;
+}
+
+.workflow-step-impl {
+  font-size: 0.78rem;
+  color: var(--ink-soft);
+}
+
+.workflow-step-detail {
+  font-size: 0.8rem;
+  color: var(--ink-soft);
+  font-weight: 500;
+}
+
+.workflow-steps--plain li {
+  grid-template-columns: auto 1fr;
+}
+
+.editor-layout--simple {
+  align-items: start;
+}
+
+.panel--simple h2 {
+  font-size: 1rem;
+}
+
+.policy-snapshot--sentences > div {
+  grid-column: 1 / -1;
+}
+
+.policy-snapshot--sentences dd {
+  font-weight: 500;
+  line-height: 1.45;
+}
+
+.generate-request {
+  min-height: 7rem;
+  font-size: 1rem;
+}
+
 .check-grid {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
@@ -756,9 +921,56 @@ code {
   border: none;
 }
 
-.rollback-input {
-  max-width: 9.5rem;
-  width: auto;
+.go-live-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+}
+
+.go-live-status {
+  margin: 0;
+  line-height: 1.45;
+  color: var(--ink-soft);
+}
+
+.rollback-label {
+  font-size: 0.85rem;
+  color: var(--ink-soft);
+  margin-right: 0.35rem;
+}
+
+.capability-line {
+  margin: 0 0 0.85rem;
+  padding: 0.65rem 0.8rem;
+  font-size: 0.92rem;
+  line-height: 1.45;
+  color: var(--ink-soft);
+  background: rgba(255, 255, 255, 0.55);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+}
+
+.gap-report {
+  margin-top: 1rem;
+  padding: 1rem 1.1rem;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: rgba(255, 252, 245, 0.9);
+  animation: rise 0.35s ease-out;
+}
+
+.gap-report-built,
+.gap-report-unsupported {
+  margin: 0.35rem 0;
+  line-height: 1.45;
+}
+
+.gap-report-unsupported {
+  color: #8a4b12;
+}
+
+.gap-report-steps {
+  margin: 0.75rem 0 1rem;
 }
 
 .loading,

@@ -14,11 +14,39 @@ function formatWhen(iso: string | undefined | null): string {
   }
 }
 
+function friendlyListStatus(status: string): string {
+  switch (status) {
+    case "draft":
+      return "Draft";
+    case "generated":
+    case "compiled":
+    case "published":
+    case "pending_go_live":
+      return "Ready to make live";
+    case "active":
+      return "Live";
+    default:
+      return status;
+  }
+}
+
+function friendlyAgentTitle(raw: string): string {
+  let t = raw.trim();
+  if (!t) return "Agent";
+  t = t.replace(/^SYNTRA\s*[—–-]\s*/i, "");
+  t = t.replace(/^matching-agent$/i, "Candidate matching");
+  t = t.replace(/^intake-agent$/i, "Intake");
+  t = t.replace(/^copilot$/i, "Recruiter assistant");
+  t = t.replace(/-agent$/i, "");
+  return t.trim() || "Agent";
+}
+
 function statusBadgeClass(status: string): string {
-  if (status === "generated") return "generated";
+  if (status === "generated" || status === "compiled" || status === "published") {
+    return "generated";
+  }
+  if (status === "pending_go_live") return "published";
   if (status === "active") return "active";
-  if (status === "published") return "published";
-  if (status === "compiled") return "compiled";
   return "";
 }
 
@@ -48,8 +76,7 @@ export function AgentListPage() {
       <div className="page-head">
         <h1>Agents</h1>
         <p>
-          Configure policy, generate a graph, then compile and publish. Active
-          is the authored one-active version — not production traffic.
+          Describe what each agent should do, then make it live when you’re ready.
         </p>
       </div>
 
@@ -58,13 +85,13 @@ export function AgentListPage() {
       {agents === null ? (
         <div className="loading">Loading agents…</div>
       ) : agents.length === 0 ? (
-        <div className="empty">No active agents found.</div>
+        <div className="empty">No agents found.</div>
       ) : (
         <div className="agent-list">
           {agents.map((a) => (
             <article key={a.id} className="agent-card">
               <div className="agent-card-main">
-                <h2 className="agent-name">{a.name}</h2>
+                <h2 className="agent-name">{friendlyAgentTitle(a.name)}</h2>
                 <p className="agent-purpose">{a.purpose}</p>
                 <div className="agent-meta">
                   <div className="agent-meta-item">
@@ -73,17 +100,17 @@ export function AgentListPage() {
                       <span
                         className={`badge ${statusBadgeClass(a.policy.status)}`}
                       >
-                        {a.policy.status}
+                        {friendlyListStatus(a.policy.status)}
                         {a.policy.version != null
                           ? ` · v${a.policy.version}`
                           : ""}
                       </span>
                     ) : (
-                      <span className="muted">no policy</span>
+                      <span className="muted">Not set up</span>
                     )}
                   </div>
                   <div className="agent-meta-item">
-                    <span className="agent-meta-label">Active</span>
+                    <span className="agent-meta-label">Live version</span>
                     {a.activeVersion != null ? (
                       <span className="badge active">v{a.activeVersion}</span>
                     ) : (
@@ -91,23 +118,19 @@ export function AgentListPage() {
                     )}
                   </div>
                   <div className="agent-meta-item">
-                    <span className="agent-meta-label">Last gen</span>
+                    <span className="agent-meta-label">Last saved</span>
                     <span>
                       {a.lastGenerated
-                        ? `v${a.lastGenerated.version} · ${formatWhen(a.lastGenerated.generatedAt)}`
+                        ? formatWhen(a.lastGenerated.generatedAt)
                         : "—"}
                     </span>
                   </div>
                 </div>
               </div>
               <div className="agent-card-actions">
-                {a.canEdit ? (
-                  <Link className="btn" to={`/agents/${a.id}`}>
-                    Open editor
-                  </Link>
-                ) : (
-                  <span className="muted">view only</span>
-                )}
+                <Link className="btn" to={`/agents/${a.id}`}>
+                  {a.canEdit ? "Open" : "View"}
+                </Link>
               </div>
             </article>
           ))}

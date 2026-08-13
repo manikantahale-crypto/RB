@@ -3,6 +3,9 @@
 -- Templates are data: nodes, wiring, policyExt key, conditionalOn.
 -- Generator loads the active row for agent_key; Zod schemas for policyExt live
 -- in @tekisho/authoring (named by template.policyExt).
+--
+-- Node impl keys MUST match runtime nodeRegistry
+-- (packages/orchestrator/src/nodes/registry.ts). No authoring-only tools.
 -- =============================================================================
 
 INSERT INTO agent_templates (
@@ -21,34 +24,25 @@ INSERT INTO agent_templates (
     "displayName": "SYNTRA — AI Candidate Matching",
     "policyExt": "SyntraPolicyExt",
     "nodes": [
-      { "id": "parse",     "impl": "parse_jd" },
-      { "id": "normalize", "impl": "normalize_skills" },
-      { "id": "embed",     "impl": "generate_embedding" },
-      { "id": "search",    "impl": "search_bench_hybrid" },
-      { "id": "dedupe",    "impl": "deduplicate_candidates" },
-      { "id": "match",     "impl": "calculate_match_score", "configFrom": ["matchThreshold", "rerank"] },
-      { "id": "explain",   "impl": "generate_match_explanation" },
-      { "id": "persist",   "impl": "persist_match_results" }
+      { "id": "jd",     "impl": "syntra.jd.process" },
+      { "id": "resume", "impl": "syntra.resume.process" },
+      { "id": "match",  "impl": "syntra.match.process", "configFrom": ["matchThreshold", "rerank"] }
     ],
     "wiring": [
-      ["__start__", "parse"],
-      ["parse", "normalize"],
-      ["normalize", "embed"],
-      ["embed", "search"],
-      ["search", "dedupe"],
-      ["dedupe", "match"],
-      ["match", "explain"],
-      ["explain", "persist"],
-      ["persist", "__end__"]
+      ["__start__", "jd"],
+      ["jd", "resume"],
+      ["resume", "match"],
+      ["match", "__end__"]
     ],
     "conditionalOn": {
-      "hardFilters": "insert filter node before match when non-empty"
+      "hardFilters": "stamp hardFilters onto match node config when non-empty"
     }
   }'::jsonb,
   true
 ),
 
 -- Intake — raw arrival → entities (maps to intake-agent)
+-- Reuses Syntra runtime nodes until dedicated intake nodes exist.
 (
   '01900000-0000-7000-8000-000000000602',
   'intake',
@@ -60,16 +54,13 @@ INSERT INTO agent_templates (
     "displayName": "Intake — Channel Arrival Interpreter",
     "policyExt": "IntakePolicyExt",
     "nodes": [
-      { "id": "extract", "impl": "extract_document_text" },
-      { "id": "parse",   "impl": "parse_jd" },
-      { "id": "resume",  "impl": "parse_resume" },
-      { "id": "record",  "impl": "record_activity" }
+      { "id": "jd",     "impl": "syntra.jd.process" },
+      { "id": "resume", "impl": "syntra.resume.process" }
     ],
     "wiring": [
-      ["__start__", "extract"],
-      ["extract", "parse"],
-      ["parse", "record"],
-      ["record", "__end__"]
+      ["__start__", "jd"],
+      ["jd", "resume"],
+      ["resume", "__end__"]
     ],
     "conditionalOn": {}
   }'::jsonb,
@@ -77,6 +68,7 @@ INSERT INTO agent_templates (
 ),
 
 -- Copilot — recruiter conversational surface
+-- Reuses Syntra match node until dedicated copilot nodes exist.
 (
   '01900000-0000-7000-8000-000000000603',
   'copilot',
@@ -88,17 +80,11 @@ INSERT INTO agent_templates (
     "displayName": "Copilot — Recruiter Assistant",
     "policyExt": "CopilotPolicyExt",
     "nodes": [
-      { "id": "search",  "impl": "search_bench_hybrid" },
-      { "id": "score",   "impl": "calculate_match_score" },
-      { "id": "draft",   "impl": "draft_communication" },
-      { "id": "record",  "impl": "record_activity" }
+      { "id": "match", "impl": "syntra.match.process" }
     ],
     "wiring": [
-      ["__start__", "search"],
-      ["search", "score"],
-      ["score", "draft"],
-      ["draft", "record"],
-      ["record", "__end__"]
+      ["__start__", "match"],
+      ["match", "__end__"]
     ],
     "conditionalOn": {}
   }'::jsonb,

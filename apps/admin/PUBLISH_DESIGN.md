@@ -60,19 +60,19 @@ Even after an authored row is `active` under `syntra.authored`:
 
 ## Gate before trusting Activate as “runnable”
 
-Authoring `TOOL_REGISTRY` and runtime `nodeRegistry` are **not the same set**.
+Authoring `TOOL_REGISTRY` matches runtime `nodeRegistry` **production** keys
+(`syntra.jd.process`, `syntra.resume.process`, `syntra.match.process`).
+Test-only `test.resume.*` nodes stay out of authoring.
 
-| Layer | Example keys |
-|-------|----------------|
-| Authoring (`packages/authoring` TOOL_REGISTRY) | `parse_jd`, `hard_filter`, `normalize_skills`, … |
-| Runtime (`packages/orchestrator` nodeRegistry) | `syntra.jd.process`, `syntra.match.process`, `syntra.resume.process`, … |
+| Layer | Keys |
+|-------|------|
+| Authoring (`packages/authoring` TOOL_REGISTRY) | `syntra.jd.process`, `syntra.resume.process`, `syntra.match.process` |
+| Runtime (`packages/orchestrator` nodeRegistry) | same three + `test.resume.a` / `test.resume.b` |
 
 Compile (Stage 2) checks `isRegisteredTool` (authoring registry).  
 Runtime hydrate checks `node.impl in nodeRegistry`.
 
-**Consequence:** an authored `syntra.authored` graph can be valid for Stage 2 and still be **non-runnable** if the router ever pointed at it today. Stage 3 Activate under `syntra.authored` is therefore **safe for the store**, but **not** a claim that the graph can execute.
-
-Activate may run as a status flip among authored keys. Declaring the graph production-runnable requires a later bridge (map authoring tools → runtime nodes, or register node factories) — **out of Stage 3 solo scope**.
+**Consequence:** an authored `syntra.authored` graph using these impls is **worker-executable**. Stage 3 Activate under `syntra.authored` still does **not** remount production traffic — pointing the router at that key remains a separate decision with the runtime owner.
 
 ---
 
@@ -145,7 +145,7 @@ Never touch runtime seed keys.
 |------------------|------------------------|
 | Publish design (this doc) | Router remapping to `syntra.authored` |
 | `POST /publish` | Retiring / replacing `syntra.*.workflow` |
-| Activate / rollback **within authored `graph_key`** | Claiming authored graphs are production-runnable without node bridge |
+| Activate / rollback **within authored `graph_key`** | Claiming Activate remounts live router traffic |
 | List UI “active version” for authored policy | |
 
 ---
@@ -163,4 +163,4 @@ Never touch runtime seed keys.
 2. **`POST /publish`** — status only; verify.  
 3. **Activate / rollback** — authored keyspace only; verify they never change `syntra.*.workflow`.  
 4. List UI active column.  
-5. Router / runnable-node bridge — **with runtime owner**, later.
+5. Router remount to `syntra.authored` — **with runtime owner**, later.

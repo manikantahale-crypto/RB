@@ -68,6 +68,16 @@ export type AgentDetail = {
     updatedAt: string;
     createdBy: string;
   } | null;
+  /** Latest stored graph artifact for this agent (if any). */
+  workflow?: {
+    definition: {
+      graphKey: string;
+      nodes: Array<{ id: string; impl: string; config?: Record<string, unknown> }>;
+      edges: Array<[string, string]>;
+    };
+    version: number;
+    checksum: string;
+  } | null;
 };
 
 export type FieldError = { path: string; message: string };
@@ -128,24 +138,125 @@ export function savePolicy(
   });
 }
 
+export type GenerateAgentOptions = {
+  request?: string;
+  mode?: "llm" | "template";
+  /** Layer 3: run LLM + validate, do not store. */
+  preview?: boolean;
+  /** Layer 3: persist a previously previewed definition. */
+  accept?: boolean;
+  definition?: unknown;
+  unsupported?: string[];
+};
+
+export type GenerateAgentResult = {
+  status: string;
+  agentId: string;
+  agentKey?: string;
+  graphKey?: string;
+  version: number;
+  checksum?: string;
+  generatedAt?: string;
+  artifactRef?: string;
+  definition?: unknown;
+  mode?: "llm" | "template";
+  model?: string | null;
+  request?: string | null;
+  preview?: boolean;
+  unsupported?: string[];
+  builtSummary?: string | null;
+  message?: string;
+};
+
 export function generateAgent(
   id: string,
   policy: unknown,
   expectedVersion?: number,
+  options?: GenerateAgentOptions,
 ) {
+  return request<GenerateAgentResult>(`/agents/${id}/generate`, {
+    method: "POST",
+    body: JSON.stringify({
+      policy,
+      expectedVersion,
+      request: options?.request,
+      mode: options?.mode,
+      preview: options?.preview,
+      accept: options?.accept,
+      definition: options?.definition,
+      unsupported: options?.unsupported,
+    }),
+  });
+}
+
+export function goLive(id: string, expectedVersion?: number) {
   return request<{
     status: string;
     agentId: string;
-    agentKey?: string;
+    version?: number;
+    checksum?: string | null;
     graphKey?: string;
-    version: number;
-    checksum: string;
-    generatedAt: string;
-    artifactRef: string;
-    definition?: unknown;
-  }>(`/agents/${id}/generate`, {
+    message?: string;
+    checks?: Array<{ id: string; ok: boolean; message: string }>;
+    blockedBy?: string[];
+    failedStep?: string;
+  }>(`/agents/${id}/go-live`, {
     method: "POST",
-    body: JSON.stringify({ policy, expectedVersion }),
+    body: JSON.stringify({ expectedVersion }),
+  });
+}
+
+export function requestGoLive(id: string, expectedVersion?: number) {
+  return request<{
+    status: string;
+    agentId: string;
+    version: number;
+    message?: string;
+    alreadyPending?: boolean;
+  }>(`/agents/${id}/request-go-live`, {
+    method: "POST",
+    body: JSON.stringify({ expectedVersion }),
+  });
+}
+
+export function cancelGoLiveRequest(id: string, expectedVersion?: number) {
+  return request<{
+    status: string;
+    agentId: string;
+    version: number;
+    message?: string;
+  }>(`/agents/${id}/cancel-go-live-request`, {
+    method: "POST",
+    body: JSON.stringify({ expectedVersion }),
+  });
+}
+
+export function listGoLiveRequests() {
+  return request<{
+    requests: Array<{
+      agentId: string;
+      name: string;
+      purpose: string;
+      version: number;
+      status: string;
+      requestedAt: string;
+      requestedBy: string;
+      checksum: string | null;
+    }>;
+  }>("/go-live-requests");
+}
+
+export function approveGoLive(id: string, expectedVersion?: number) {
+  return request<{
+    status: string;
+    agentId: string;
+    version?: number;
+    checksum?: string | null;
+    message?: string;
+    failedStep?: string;
+  }>(`/agents/${id}/approve-go-live`, {
+    method: "POST",
+    body: JSON.stringify({ expectedVersion }),
   });
 }
 

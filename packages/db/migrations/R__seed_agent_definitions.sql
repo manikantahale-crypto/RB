@@ -61,18 +61,9 @@ INSERT INTO agent_definitions (
  'Turn a requirement into a ranked, deduplicated, evidence-explained shortlist of bench consultants.',
  'prompts/matching-agent@1.0.0',
  '[
-    { "name": "extract_document_text",       "min_version": "1.0.0" },
-    { "name": "parse_jd",                    "min_version": "1.0.0" },
-    { "name": "normalize_skills",            "min_version": "1.0.0" },
-    { "name": "generate_embedding",          "min_version": "1.0.0" },
-    { "name": "upsert_embedding",            "min_version": "1.0.0" },
-    { "name": "search_bench_hybrid",         "min_version": "1.0.0" },
-    { "name": "deduplicate_candidates",      "min_version": "1.0.0" },
-    { "name": "calculate_match_score",       "min_version": "1.0.0" },
-    { "name": "generate_match_explanation",  "min_version": "1.0.0" },
-    { "name": "persist_match_results",       "min_version": "1.0.0" },
-    { "name": "record_activity",             "min_version": "1.0.0" },
-    { "name": "request_approval",            "min_version": "1.0.0" }
+    { "name": "syntra.jd.process",     "min_version": "1.0.0" },
+    { "name": "syntra.resume.process", "min_version": "1.0.0" },
+    { "name": "syntra.match.process",  "min_version": "1.0.0" }
   ]'::jsonb,
  '{
     "READ":           "AUTO",
@@ -108,15 +99,8 @@ INSERT INTO agent_definitions (
  'Interpret a raw channel arrival into a requirement, a candidate profile, or a review item.',
  'prompts/intake-agent@1.0.0',
  '[
-    { "name": "extract_document_text",  "min_version": "1.0.0" },
-    { "name": "parse_jd",               "min_version": "1.0.0" },
-    { "name": "parse_resume",           "min_version": "1.0.0" },
-    { "name": "normalize_skills",       "min_version": "1.0.0" },
-    { "name": "generate_embedding",     "min_version": "1.0.0" },
-    { "name": "upsert_embedding",       "min_version": "1.0.0" },
-    { "name": "deduplicate_candidates", "min_version": "1.0.0" },
-    { "name": "record_activity",        "min_version": "1.0.0" },
-    { "name": "request_approval",       "min_version": "1.0.0" }
+    { "name": "syntra.jd.process",     "min_version": "1.0.0" },
+    { "name": "syntra.resume.process", "min_version": "1.0.0" }
   ]'::jsonb,
  '{
     "READ":           "AUTO",
@@ -152,12 +136,7 @@ INSERT INTO agent_definitions (
  'Answer recruiter questions over their own bench and pipeline, and take policy-bounded actions on request.',
  'prompts/copilot@1.0.0',
  '[
-    { "name": "search_bench_hybrid",        "min_version": "1.0.0" },
-    { "name": "calculate_match_score",      "min_version": "1.0.0" },
-    { "name": "generate_match_explanation", "min_version": "1.0.0" },
-    { "name": "draft_communication",        "min_version": "1.0.0" },
-    { "name": "record_activity",            "min_version": "1.0.0" },
-    { "name": "request_approval",           "min_version": "1.0.0" }
+    { "name": "syntra.match.process", "min_version": "1.0.0" }
   ]'::jsonb,
  -- Stricter than the autonomous agents on data shaping: a merge asked for in
  -- conversation is far more likely to be a misunderstanding than one derived

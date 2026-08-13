@@ -1,26 +1,25 @@
 /**
- * Agent Authoring Admin API — Stage 1.
+ * Agent Authoring Admin API — Stage 1–3 + LLM Generate.
  *
- * Routes (design §5.3 / §8):
+ * Routes:
  * - GET  /agents
  * - GET  /agents/:id
- * - PUT  /agents/:id/policy     (Save → draft)
- * - POST /agents/:id/generate   (Validate → graph.json → generated)
- * - POST /agents/:id/compile    (generated → compiled)
- * - POST /agents/:id/publish    (compiled → published)
- * - POST /agents/:id/activate   (published → active; authored key only)
- * - POST /agents/:id/rollback   (prior published → active; authored key only)
+ * - PUT  /agents/:id/policy
+ * - POST /agents/:id/generate   (template or LLM via `request`)
+ * - POST /agents/:id/compile | publish | activate | rollback
  *
- * Writes agent_policies / agent_versions only. Never calls the runtime worker.
- *
- * DB roles: migrator creates authoring tables; syntra_relay reads
- * agent_definitions (owned by postgres) and DML on authoring tables.
+ * Writes agent_policies / agent_versions / graph store only. Never calls the worker.
+ * Router remount to authored keys is held — do not flip here.
  */
 import Fastify from "fastify";
 import pg from "pg";
 import { config as loadEnv } from "dotenv";
 import { resolve } from "node:path";
-import { ensureAuthoringSchema } from "@tekisho/authoring";
+import {
+  createLlmClientFromEnv,
+  ensureAuthoringSchema,
+  type LLMClient,
+} from "@tekisho/authoring";
 import { registerAgentRoutes } from "./routes/agents.js";
 
 loadEnv({ path: resolve(process.cwd(), "../../.env") });
@@ -45,6 +44,18 @@ function poolOpts(connectionString: string) {
   };
 }
 
+function tryCreateLlm(): LLMClient | undefined {
+  try {
+    return createLlmClientFromEnv();
+  } catch (err: any) {
+    console.error(
+      "[admin-api] LLM config invalid — description-driven Generate returns 503 until fixed:",
+      err?.message ?? err,
+    );
+    return undefined;
+  }
+}
+
 async function main(): Promise<void> {
   const schemaUrl = migratorUrl as string;
   const migratorPool = new pg.Pool(poolOpts(schemaUrl));
@@ -52,6 +63,12 @@ async function main(): Promise<void> {
   await migratorPool.end();
 
   const pool = new pg.Pool(poolOpts(dataUrl));
+  const llm = tryCreateLlm();
+  if (llm) {
+    console.log(
+      `[admin-api] LLM client ready (provider=${process.env.LLM_PROVIDER})`,
+    );
+  }
 
   const app = Fastify({ logger: true });
 
@@ -63,9 +80,10 @@ async function main(): Promise<void> {
     ok: true,
     service: "admin-api",
     stage: "authoring-stage-1",
+    llmConfigured: Boolean(llm),
   }));
 
-  registerAgentRoutes(app, pool);
+  registerAgentRoutes(app, pool, { llm });
 
   const shutdown = async () => {
     await app.close();

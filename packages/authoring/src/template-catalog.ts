@@ -1,7 +1,10 @@
 import type { AgentTemplate } from "./agent-template.js";
 import { AgentTemplateSchema } from "./agent-template.js";
 
-/** In-repo seed catalog (mirrors R__seed_agent_templates.sql). */
+/**
+ * In-repo seed catalog (mirrors R__seed_agent_templates.sql).
+ * Node `impl` keys must exist in TOOL_REGISTRY (= runtime nodeRegistry).
+ */
 export const TEMPLATE_SEED_CATALOG: Array<{
   id: string;
   agentKey: string;
@@ -21,32 +24,22 @@ export const TEMPLATE_SEED_CATALOG: Array<{
       displayName: "SYNTRA — AI Candidate Matching",
       policyExt: "SyntraPolicyExt",
       nodes: [
-        { id: "parse", impl: "parse_jd" },
-        { id: "normalize", impl: "normalize_skills" },
-        { id: "embed", impl: "generate_embedding" },
-        { id: "search", impl: "search_bench_hybrid" },
-        { id: "dedupe", impl: "deduplicate_candidates" },
+        { id: "jd", impl: "syntra.jd.process" },
+        { id: "resume", impl: "syntra.resume.process" },
         {
           id: "match",
-          impl: "calculate_match_score",
+          impl: "syntra.match.process",
           configFrom: ["matchThreshold", "rerank"],
         },
-        { id: "explain", impl: "generate_match_explanation" },
-        { id: "persist", impl: "persist_match_results" },
       ],
       wiring: [
-        ["__start__", "parse"],
-        ["parse", "normalize"],
-        ["normalize", "embed"],
-        ["embed", "search"],
-        ["search", "dedupe"],
-        ["dedupe", "match"],
-        ["match", "explain"],
-        ["explain", "persist"],
-        ["persist", "__end__"],
+        ["__start__", "jd"],
+        ["jd", "resume"],
+        ["resume", "match"],
+        ["match", "__end__"],
       ],
       conditionalOn: {
-        hardFilters: "insert filter node before match when non-empty",
+        hardFilters: "stamp hardFilters onto match node config when non-empty",
       },
     }),
   },
@@ -60,17 +53,15 @@ export const TEMPLATE_SEED_CATALOG: Array<{
       agentKey: "intake",
       displayName: "Intake — Channel Arrival Interpreter",
       policyExt: "IntakePolicyExt",
+      // No dedicated intake runtime nodes yet — reuse Syntra process nodes.
       nodes: [
-        { id: "extract", impl: "extract_document_text" },
-        { id: "parse", impl: "parse_jd" },
-        { id: "resume", impl: "parse_resume" },
-        { id: "record", impl: "record_activity" },
+        { id: "jd", impl: "syntra.jd.process" },
+        { id: "resume", impl: "syntra.resume.process" },
       ],
       wiring: [
-        ["__start__", "extract"],
-        ["extract", "parse"],
-        ["parse", "record"],
-        ["record", "__end__"],
+        ["__start__", "jd"],
+        ["jd", "resume"],
+        ["resume", "__end__"],
       ],
       conditionalOn: {},
     }),
@@ -85,18 +76,11 @@ export const TEMPLATE_SEED_CATALOG: Array<{
       agentKey: "copilot",
       displayName: "Copilot — Recruiter Assistant",
       policyExt: "CopilotPolicyExt",
-      nodes: [
-        { id: "search", impl: "search_bench_hybrid" },
-        { id: "score", impl: "calculate_match_score" },
-        { id: "draft", impl: "draft_communication" },
-        { id: "record", impl: "record_activity" },
-      ],
+      // No dedicated copilot runtime nodes yet — reuse Syntra match node.
+      nodes: [{ id: "match", impl: "syntra.match.process" }],
       wiring: [
-        ["__start__", "search"],
-        ["search", "score"],
-        ["score", "draft"],
-        ["draft", "record"],
-        ["record", "__end__"],
+        ["__start__", "match"],
+        ["match", "__end__"],
       ],
       conditionalOn: {},
     }),

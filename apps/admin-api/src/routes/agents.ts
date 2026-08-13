@@ -4,14 +4,23 @@ import {
   baseFieldsFor,
   extFieldsFor,
   generateGraphFromTemplate,
+  generateGraphFromLlm,
+  GenerationFailedError,
+  loadEventCatalog,
   GraphDefinitionSchema,
-  isRegisteredTool,
-  validateGraphTopology,
+  validateAuthoredGraphForGoLive,
+  evaluateGoLiveGate,
+  buildGapAckMeta,
+  readGapAckFromMeta,
+  oneActiveIndexIsPerGraphKey,
   listActiveTemplates,
+  parseStoredGraphArtifact,
+  summarizeGraphWorkflow,
   templateForAgentId,
   validateAgentPolicy,
   type GraphDefinition,
   type AgentPolicy,
+  type LLMClient,
 } from "@tekisho/authoring";
 import { canEditAgent, editableAgentIds } from "../entitlement.js";
 import { withOrgScope, type DbQueryable } from "../with-org-scope.js";
@@ -20,6 +29,13 @@ type FastifyLike = {
   get: (path: string, handler: any) => void;
   put: (path: string, handler: any) => void;
   post: (path: string, handler: any) => void;
+  /** Present on real Fastify — used by approve-go-live to chain Stage 2–3. */
+  inject?: (opts: {
+    method: string;
+    url: string;
+    headers?: Record<string, string>;
+    payload?: unknown;
+  }) => Promise<{ statusCode: number; json: () => unknown }>;
 };
 
 type PolicyRow = {
@@ -45,6 +61,7 @@ type GeneratedArtifactRow = {
   artifact_source: string;
   checksum: string;
   policy_id: string;
+  meta: unknown;
 };
 
 function readOrgId(headers: Record<string, unknown>): string | null {
@@ -105,7 +122,7 @@ async function latestGeneratedArtifact(
   const { rows } =
     orgId === null
       ? await client.query<GeneratedArtifactRow & QueryResultRow>(
-          `SELECT id, version, artifact_source, checksum, policy_id
+          `SELECT id, version, artifact_source, checksum, policy_id, meta
              FROM agent_versions
             WHERE agent_id = $1
               AND org_id IS NULL
@@ -115,7 +132,7 @@ async function latestGeneratedArtifact(
           [agentId],
         )
       : await client.query<GeneratedArtifactRow & QueryResultRow>(
-          `SELECT id, version, artifact_source, checksum, policy_id
+          `SELECT id, version, artifact_source, checksum, policy_id, meta
              FROM agent_versions
             WHERE agent_id = $1
               AND (org_id = $2 OR org_id IS NULL)
@@ -254,7 +271,19 @@ async function validatePolicyForAgent(
   };
 }
 
-export function registerAgentRoutes(app: FastifyLike, pool: Pool): void {
+export type AgentRouteOptions = {
+  /**
+   * LLM client for description-driven Generate (llm-graph-generator-design).
+   * Required when the client sends a non-empty `request` body field.
+   */
+  llm?: LLMClient;
+};
+
+export function registerAgentRoutes(
+  app: FastifyLike,
+  pool: Pool,
+  opts: AgentRouteOptions = {},
+): void {
   app.get("/templates", async (req: any, reply: any) => {
     const orgId = readOrgId(req.headers);
     return withOrgScope(pool, orgId, async (client) => {
@@ -292,7 +321,7 @@ export function registerAgentRoutes(app: FastifyLike, pool: Pool): void {
         `
         SELECT
           d.id,
-          d.name,
+          COALESCE(t.display_name, d.name) AS name,
           d.purpose,
           d.is_active,
           p.status AS policy_status,
@@ -307,6 +336,14 @@ export function registerAgentRoutes(app: FastifyLike, pool: Pool): void {
           g.generated_by AS last_generated_by,
           g.status AS last_generated_status
         FROM agent_definitions d
+        LEFT JOIN LATERAL (
+          SELECT display_name
+            FROM agent_templates
+           WHERE agent_id = d.id
+             AND is_active = true
+           ORDER BY version DESC
+           LIMIT 1
+        ) t ON true
         LEFT JOIN LATERAL (
           SELECT status, version, updated_at, created_by, checksum
             FROM agent_policies
@@ -333,7 +370,7 @@ export function registerAgentRoutes(app: FastifyLike, pool: Pool): void {
            LIMIT 1
         ) g ON true
         WHERE d.is_active = true
-        ORDER BY d.name
+        ORDER BY COALESCE(t.display_name, d.name)
         `,
         params,
       );
@@ -393,6 +430,47 @@ export function registerAgentRoutes(app: FastifyLike, pool: Pool): void {
       const tmpl = await templateForAgentId(client, agentId);
       const canEdit = await canEditAgent(client, { adminId, agentId, orgId });
 
+      let workflow: {
+        definition: unknown;
+        version: number;
+        checksum: string;
+      } | null = null;
+      // Latest generated graph for this agent — not tied to current draft version
+      // (a new Save draft bumps version without clearing the prior workflow).
+      {
+        const verRows = await client.query(
+          orgId === null
+            ? `SELECT version, artifact_source, checksum
+                 FROM agent_versions
+                WHERE agent_id = $1 AND org_id IS NULL
+                  AND artifact_source IS NOT NULL
+                  AND artifact_source <> ''
+                ORDER BY generated_at DESC NULLS LAST, version DESC
+                LIMIT 1`
+            : `SELECT version, artifact_source, checksum
+                 FROM agent_versions
+                WHERE agent_id = $1 AND org_id = $2
+                  AND artifact_source IS NOT NULL
+                  AND artifact_source <> ''
+                ORDER BY generated_at DESC NULLS LAST, version DESC
+                LIMIT 1`,
+          orgId === null ? [agentId] : [agentId, orgId],
+        );
+        const vrow = verRows.rows[0] as
+          | { version: number; artifact_source: string; checksum: string }
+          | undefined;
+        if (vrow?.artifact_source) {
+          const definition = parseStoredGraphArtifact(vrow.artifact_source);
+          if (definition) {
+            workflow = {
+              definition,
+              version: vrow.version,
+              checksum: vrow.checksum,
+            };
+          }
+        }
+      }
+
       return reply.send({
         id: def.id,
         name: def.name,
@@ -422,6 +500,7 @@ export function registerAgentRoutes(app: FastifyLike, pool: Pool): void {
               createdBy: latest.created_by,
             }
           : null,
+        workflow,
       });
     });
   });
@@ -540,8 +619,34 @@ export function registerAgentRoutes(app: FastifyLike, pool: Pool): void {
     const body = (req.body ?? {}) as {
       policy?: unknown;
       expectedVersion?: number;
+      /** Plain-English workflow request (LLM path). */
+      request?: string;
+      /**
+       * `llm` — description-driven (default when `request` is non-empty).
+       * `template` — legacy snap-together (default when `request` is empty).
+       */
+      mode?: "llm" | "template";
+      /**
+       * Layer 3: preview only — run LLM + validate, do not store.
+       * Admin must Accept with definition + accept:true to persist.
+       */
+      preview?: boolean;
+      /** Layer 3: persist a previously previewed (and re-validated) definition. */
+      accept?: boolean;
+      /** Graph definition from preview; required when accept=true. */
+      definition?: unknown;
     };
 
+    const userRequest =
+      typeof body.request === "string" ? body.request.trim() : "";
+    const mode: "llm" | "template" =
+      body.mode === "llm" || body.mode === "template"
+        ? body.mode
+        : userRequest
+          ? "llm"
+          : "template";
+    const preview = body.preview === true;
+    const accept = body.accept === true;
     return withOrgScope(pool, orgId, async (client) => {
       if (!(await canEditAgent(client, { adminId, agentId, orgId }))) {
         return reply.code(403).send({ error: "FORBIDDEN" });
@@ -592,7 +697,17 @@ export function registerAgentRoutes(app: FastifyLike, pool: Pool): void {
         });
       }
 
-      if (latest.status !== "draft") {
+      // First generate requires draft; LLM preview/accept/regenerate allowed while
+      // generated or pending_go_live (tweak English — withdraws the go-live request on accept).
+      if (latest.status === "draft") {
+        // ok
+      } else if (
+        (latest.status === "generated" || latest.status === "pending_go_live") &&
+        mode === "llm" &&
+        (accept || preview || Boolean(userRequest))
+      ) {
+        // preview / accept / regenerate
+      } else if (latest.status !== "draft") {
         return reply.code(409).send({
           error: "NOT_DRAFT",
           message:
@@ -615,17 +730,149 @@ export function registerAgentRoutes(app: FastifyLike, pool: Pool): void {
         checksum: string;
         graphKey: string;
         definition: unknown;
+        model?: string;
+        mode: "llm" | "template";
+        unsupported?: string[];
+        builtSummary?: string;
       };
-      try {
-        artifact = generateGraphFromTemplate(validated.policy, tmpl.template);
-      } catch (err: any) {
-        return reply.code(500).send({
-          error: "GENERATION_FAILED",
-          message: err?.message ?? String(err),
-        });
+
+      if (mode === "llm" && accept) {
+        if (!body.definition || typeof body.definition !== "object") {
+          return reply.code(400).send({
+            error: "DEFINITION_REQUIRED",
+            message: "Accept requires the previewed graph definition.",
+          });
+        }
+        try {
+          const def = validateAuthoredGraphForGoLive(body.definition, {
+            defaultGraphKey: `${validated.agentKey}.authored`,
+          });
+          const locked = {
+            ...def,
+            graphKey: `${validated.agentKey}.authored`,
+          };
+          const source = `${JSON.stringify(locked, null, 2)}\n`;
+          const unsupported = Array.isArray((body as { unsupported?: unknown })
+            .unsupported)
+            ? (
+                (body as { unsupported: unknown[] }).unsupported as unknown[]
+              ).filter((x): x is string => typeof x === "string")
+            : [];
+          artifact = {
+            source,
+            checksum: createHash("sha256").update(source).digest("hex"),
+            graphKey: locked.graphKey,
+            definition: locked,
+            mode: "llm",
+            unsupported,
+            builtSummary: summarizeGraphWorkflow(locked).line,
+          };
+        } catch (err: any) {
+          const message = err?.message ?? String(err);
+          return reply.code(422).send({
+            error: "GENERATION_FAILED",
+            message,
+          });
+        }
+      } else if (mode === "llm") {
+        if (!userRequest) {
+          return reply.code(400).send({
+            error: "REQUEST_REQUIRED",
+            message:
+              "LLM generate requires a non-empty `request` (plain-English description).",
+          });
+        }
+        if (!opts.llm) {
+          return reply.code(503).send({
+            error: "LLM_NOT_CONFIGURED",
+            message:
+              "Set LLM_PROVIDER, LLM_API_KEY, and LLM_MODEL to use description-driven Generate.",
+          });
+        }
+
+        let events: Awaited<ReturnType<typeof loadEventCatalog>> = [];
+        try {
+          events = await loadEventCatalog(client);
+        } catch (err: any) {
+          req.log?.warn?.(
+            { err: err?.message ?? err },
+            "loadEventCatalog failed; continuing without event descriptions",
+          );
+        }
+
+        try {
+          const llmResult = await generateGraphFromLlm({
+            llm: opts.llm,
+            userRequest,
+            events,
+            graphKey: `${validated.agentKey}.authored`,
+          });
+          artifact = {
+            source: llmResult.source,
+            checksum: llmResult.checksum,
+            graphKey: llmResult.graphKey,
+            definition: llmResult.definition,
+            model: llmResult.model,
+            mode: "llm",
+            unsupported: llmResult.unsupported,
+            builtSummary: llmResult.builtSummary,
+          };
+        } catch (err: any) {
+          const message = err?.message ?? String(err);
+          const code =
+            err instanceof GenerationFailedError ||
+            message.startsWith("GENERATION_FAILED")
+              ? 422
+              : 500;
+          return reply.code(code).send({
+            error: "GENERATION_FAILED",
+            message,
+          });
+        }
+
+        if (preview) {
+          return reply.send({
+            status: "preview",
+            preview: true,
+            agentId,
+            agentKey: validated.agentKey,
+            graphKey: artifact.graphKey,
+            version: latest.version,
+            definition: artifact.definition,
+            mode: "llm",
+            model: artifact.model ?? null,
+            request: userRequest,
+            unsupported: artifact.unsupported ?? [],
+            builtSummary: artifact.builtSummary ?? null,
+            message:
+              (artifact.unsupported?.length ?? 0) > 0
+                ? `Built: ${artifact.builtSummary}. Could NOT add: ${(artifact.unsupported ?? []).join(", ")} (no tool available yet).`
+                : `Built: ${artifact.builtSummary}. Review and Accept to save.`,
+          });
+        }
+      } else {
+        try {
+          const templated = generateGraphFromTemplate(
+            validated.policy,
+            tmpl.template,
+          );
+          artifact = {
+            source: templated.source,
+            checksum: templated.checksum,
+            graphKey: templated.graphKey,
+            definition: templated.definition,
+            mode: "template",
+          };
+        } catch (err: any) {
+          return reply.code(500).send({
+            error: "GENERATION_FAILED",
+            message: err?.message ?? String(err),
+          });
+        }
       }
 
       const artifactRef = `agents/${validated.agentKey}/v${latest.version}/graph.json`;
+      const gapMeta = buildGapAckMeta(artifact.unsupported ?? []);
 
       const { rows: policyRows } = await client.query(
         `UPDATE agent_policies
@@ -645,24 +892,66 @@ export function registerAgentRoutes(app: FastifyLike, pool: Pool): void {
       );
       const policyRow = policyRows[0];
 
-      const { rows: versionRows } = await client.query(
-        `INSERT INTO agent_versions
-           (agent_id, org_id, policy_id, version, artifact_ref, artifact_source,
-            checksum, status, generated_by)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, 'generated', $8)
-         RETURNING id, generated_at, checksum, version`,
-        [
-          agentId,
-          orgId,
-          policyRow.id,
-          policyRow.version,
-          artifactRef,
-          artifact.source,
-          artifact.checksum,
-          adminId,
-        ],
+      // Upsert version row: regenerate updates the same version artifact.
+      const existingVer = await client.query(
+        orgId === null
+          ? `SELECT id FROM agent_versions
+              WHERE agent_id = $1 AND org_id IS NULL AND version = $2
+              LIMIT 1`
+          : `SELECT id FROM agent_versions
+              WHERE agent_id = $1 AND org_id = $2 AND version = $3
+              LIMIT 1`,
+        orgId === null
+          ? [agentId, policyRow.version]
+          : [agentId, orgId, policyRow.version],
       );
-      const ver = versionRows[0];
+
+      let ver: QueryResultRow;
+      if (existingVer.rows[0]) {
+        const { rows: versionRows } = await client.query(
+          `UPDATE agent_versions
+              SET artifact_ref = $1,
+                  artifact_source = $2,
+                  checksum = $3,
+                  status = 'generated',
+                  generated_by = $4,
+                  generated_at = now(),
+                  policy_id = $5,
+                  meta = $6::jsonb
+            WHERE id = $7
+            RETURNING id, generated_at, checksum, version`,
+          [
+            artifactRef,
+            artifact.source,
+            artifact.checksum,
+            adminId,
+            policyRow.id,
+            JSON.stringify(gapMeta),
+            existingVer.rows[0].id,
+          ],
+        );
+        ver = versionRows[0];
+      } else {
+        const { rows: versionRows } = await client.query(
+          `INSERT INTO agent_versions
+             (agent_id, org_id, policy_id, version, artifact_ref, artifact_source,
+              checksum, status, generated_by, meta)
+           VALUES ($1, $2, $3, $4, $5, $6, $7, 'generated', $8, $9::jsonb)
+           RETURNING id, generated_at, checksum, version`,
+          [
+            agentId,
+            orgId,
+            policyRow.id,
+            policyRow.version,
+            artifactRef,
+            artifact.source,
+            artifact.checksum,
+            adminId,
+            JSON.stringify(gapMeta),
+          ],
+        );
+        ver = versionRows[0];
+      }
 
       return reply.send({
         status: "generated",
@@ -677,7 +966,612 @@ export function registerAgentRoutes(app: FastifyLike, pool: Pool): void {
         definition: artifact.definition,
         policyId: policyRow.id,
         versionId: ver.id,
+        mode: artifact.mode,
+        model: artifact.model ?? null,
+        request: mode === "llm" ? userRequest : null,
+        unsupported: artifact.unsupported ?? [],
+        builtSummary: artifact.builtSummary ?? null,
+        preview: false,
       });
+    });
+  });
+
+  /**
+   * Auto go-live — deterministic gate (6 checks), then compile → publish → activate.
+   * No human approval. Any check fail → 422 with a plain "Can't go live yet" message.
+   */
+  app.post("/agents/:id/go-live", async (req: any, reply: any) => {
+    const agentId = String(req.params.id);
+    const orgId = readOrgId(req.headers);
+    const adminId = readAdminId(req.headers);
+    const body = (req.body ?? {}) as { expectedVersion?: number };
+
+    if (typeof app.inject !== "function") {
+      return reply.code(500).send({
+        error: "GO_LIVE_UNAVAILABLE",
+        message: "Go-live requires the full API server.",
+      });
+    }
+
+    const prep = await withOrgScope(pool, orgId, async (client) => {
+      if (!(await canEditAgent(client, { adminId, agentId, orgId }))) {
+        return { ok: false as const, status: 403, body: { error: "FORBIDDEN" } };
+      }
+
+      const tmpl = await templateForAgentId(client, agentId);
+      if (!tmpl) {
+        return {
+          ok: false as const,
+          status: 404,
+          body: {
+            error: "TEMPLATE_NOT_FOUND",
+            message: "No active template for this agent.",
+          },
+        };
+      }
+
+      const latest = await latestPolicy(client, agentId, orgId);
+      if (!latest) {
+        return {
+          ok: false as const,
+          status: 404,
+          body: {
+            error: "NO_POLICY",
+            message: "Save a workflow before making it live.",
+          },
+        };
+      }
+      if (
+        body.expectedVersion !== undefined &&
+        latest.version !== body.expectedVersion
+      ) {
+        return {
+          ok: false as const,
+          status: 409,
+          body: {
+            error: "STALE_POLICY",
+            currentVersion: latest.version,
+          },
+        };
+      }
+      if (latest.status === "active") {
+        return {
+          ok: false as const,
+          status: 409,
+          body: {
+            error: "ALREADY_LIVE",
+            message: "This agent is already live.",
+            status: latest.status,
+          },
+        };
+      }
+      if (
+        latest.status !== "generated" &&
+        latest.status !== "pending_go_live" &&
+        latest.status !== "compiled" &&
+        latest.status !== "published"
+      ) {
+        return {
+          ok: false as const,
+          status: 409,
+          body: {
+            error: "NOT_READY",
+            message:
+              "Accept & save a workflow first, then you can make it live.",
+            status: latest.status,
+          },
+        };
+      }
+
+      const ver = await client.query(
+        orgId === null
+          ? `SELECT id, version, artifact_source, checksum, policy_id, meta, status
+               FROM agent_versions
+              WHERE agent_id = $1 AND org_id IS NULL AND version = $2
+              LIMIT 1`
+          : `SELECT id, version, artifact_source, checksum, policy_id, meta, status
+               FROM agent_versions
+              WHERE agent_id = $1 AND org_id = $2 AND version = $3
+              LIMIT 1`,
+        orgId === null
+          ? [agentId, latest.version]
+          : [agentId, orgId, latest.version],
+      );
+      const row = ver.rows[0] as
+        | (GeneratedArtifactRow & { status: string })
+        | undefined;
+      if (!row?.artifact_source) {
+        return {
+          ok: false as const,
+          status: 404,
+          body: {
+            error: "NO_ARTIFACT",
+            message:
+              "No saved workflow found. Create and Accept a workflow first.",
+          },
+        };
+      }
+
+      let oneActiveIndexPerGraphKey = false;
+      try {
+        const idx = await client.query(
+          `SELECT indexdef FROM pg_indexes
+            WHERE indexname = 'graph_definitions_one_active'
+            LIMIT 1`,
+        );
+        oneActiveIndexPerGraphKey = oneActiveIndexIsPerGraphKey(
+          idx.rows[0]?.indexdef as string | undefined,
+        );
+      } catch {
+        oneActiveIndexPerGraphKey = false;
+      }
+
+      const gate = evaluateGoLiveGate({
+        artifactSource: row.artifact_source,
+        storedChecksum: row.checksum,
+        expectedGraphKey: `${tmpl.agentKey}.authored`,
+        gapAck: readGapAckFromMeta(row.meta),
+        oneActiveIndexPerGraphKey,
+      });
+
+      if (!gate.ok) {
+        return {
+          ok: false as const,
+          status: 422,
+          body: {
+            error: "GO_LIVE_BLOCKED",
+            message: gate.message,
+            checks: gate.checks,
+            blockedBy: gate.blockedBy,
+          },
+        };
+      }
+
+      return {
+        ok: true as const,
+        version: latest.version,
+        artifactStatus: row.status,
+        checks: gate.checks,
+        agentKey: tmpl.agentKey,
+      };
+    });
+
+    if (!prep.ok) {
+      return reply.code(prep.status).send(prep.body);
+    }
+
+    const headers: Record<string, string> = {
+      "content-type": "application/json",
+      "x-admin-id": adminId,
+    };
+    if (orgId) headers["x-org-id"] = orgId;
+    const payload = { expectedVersion: body.expectedVersion ?? prep.version };
+
+    const steps =
+      prep.artifactStatus === "published"
+        ? (["activate"] as const)
+        : prep.artifactStatus === "compiled"
+          ? (["publish", "activate"] as const)
+          : (["compile", "publish", "activate"] as const);
+
+    // If policy is pending_go_live, move to generated so compile can advance status.
+    if (steps[0] === "compile") {
+      await withOrgScope(pool, orgId, async (client) => {
+        if (orgId === null) {
+          await client.query(
+            `UPDATE agent_policies
+                SET status = 'generated', updated_at = now()
+              WHERE agent_id = $1
+                AND version = $2
+                AND status = 'pending_go_live'
+                AND org_id IS NULL`,
+            [agentId, prep.version],
+          );
+        } else {
+          await client.query(
+            `UPDATE agent_policies
+                SET status = 'generated', updated_at = now()
+              WHERE agent_id = $1
+                AND version = $2
+                AND status = 'pending_go_live'
+                AND org_id = $3`,
+            [agentId, prep.version, orgId],
+          );
+        }
+      });
+    }
+
+    let lastJson: Record<string, unknown> = {};
+    for (const step of steps) {
+      const res = await app.inject!({
+        method: "POST",
+        url: `/agents/${agentId}/${step}`,
+        headers,
+        payload,
+      });
+      lastJson = res.json() as Record<string, unknown>;
+      if (res.statusCode >= 400) {
+        return reply.code(res.statusCode).send({
+          error: "GO_LIVE_FAILED",
+          failedStep: step,
+          message:
+            (typeof lastJson.message === "string" && lastJson.message) ||
+            `Couldn't finish going live (${step}).`,
+          details: lastJson,
+          checks: prep.checks,
+        });
+      }
+    }
+
+    // Check 6 post-condition: exactly one active authored definition for this key.
+    const graphKey = `${prep.agentKey}.authored`;
+    const activeCount = await withOrgScope(pool, orgId, async (client) => {
+      const { rows } = await client.query(
+        `SELECT count(*)::int AS n FROM graph_definitions
+          WHERE graph_key = $1
+            AND status = 'active'
+            AND org_id IS NOT DISTINCT FROM $2::text`,
+        [graphKey, orgId],
+      );
+      return rows[0]?.n as number;
+    });
+    if (activeCount !== 1) {
+      return reply.code(500).send({
+        error: "ONE_ACTIVE_INTEGRITY",
+        message: `Can't go live yet: expected exactly one live version for this agent, found ${activeCount}.`,
+        checks: prep.checks,
+      });
+    }
+
+    return reply.send({
+      status: lastJson.status ?? "active",
+      agentId,
+      version: lastJson.version ?? prep.version,
+      checksum: lastJson.checksum ?? null,
+      graphKey,
+      message: `This agent is now live (version ${lastJson.version ?? prep.version}).`,
+      checks: prep.checks,
+    });
+  });
+
+  /**
+   * Business "Request to go live" — pending only. Does NOT compile/publish/activate.
+   * Prefer POST /go-live (deterministic auto gate). Kept for backlog / manual review.
+   */
+  app.post("/agents/:id/request-go-live", async (req: any, reply: any) => {
+    const agentId = String(req.params.id);
+    const orgId = readOrgId(req.headers);
+    const adminId = readAdminId(req.headers);
+    const body = (req.body ?? {}) as { expectedVersion?: number };
+
+    return withOrgScope(pool, orgId, async (client) => {
+      if (!(await canEditAgent(client, { adminId, agentId, orgId }))) {
+        return reply.code(403).send({ error: "FORBIDDEN" });
+      }
+
+      const def = await agentExists(client, agentId);
+      if (!def) {
+        return reply.code(404).send({ error: "AGENT_NOT_FOUND" });
+      }
+
+      const latest = await latestPolicy(client, agentId, orgId);
+      if (!latest) {
+        return reply.code(404).send({
+          error: "NO_POLICY",
+          message: "Save a workflow before requesting to go live.",
+        });
+      }
+
+      if (
+        body.expectedVersion !== undefined &&
+        latest.version !== body.expectedVersion
+      ) {
+        return reply.code(409).send({
+          error: "STALE_POLICY",
+          currentVersion: latest.version,
+        });
+      }
+
+      if (latest.status === "pending_go_live") {
+        return reply.send({
+          status: "pending_go_live",
+          agentId,
+          version: latest.version,
+          message: "Already waiting for go-live review.",
+          alreadyPending: true,
+        });
+      }
+
+      if (latest.status === "active") {
+        return reply.code(409).send({
+          error: "ALREADY_LIVE",
+          message: "This agent is already live.",
+          status: latest.status,
+        });
+      }
+
+      if (
+        latest.status !== "generated" &&
+        latest.status !== "compiled" &&
+        latest.status !== "published"
+      ) {
+        return reply.code(409).send({
+          error: "NOT_READY",
+          message:
+            "Save a workflow first, then you can request to go live.",
+          status: latest.status,
+        });
+      }
+
+      // Keep agent_versions at generated/compiled/published so Approve can still
+      // find an artifact — only the policy status signals the pending request.
+      await client.query(
+        `UPDATE agent_policies
+            SET status = 'pending_go_live',
+                created_by = $1,
+                updated_at = now()
+          WHERE id = $2`,
+        [adminId, latest.id],
+      );
+
+      return reply.send({
+        status: "pending_go_live",
+        agentId,
+        version: latest.version,
+        message:
+          "Request sent. A technical reviewer will make it live after checking it is safe.",
+        alreadyPending: false,
+      });
+    });
+  });
+
+  /** Withdraw a go-live request (back to generated — not live). */
+  app.post("/agents/:id/cancel-go-live-request", async (req: any, reply: any) => {
+    const agentId = String(req.params.id);
+    const orgId = readOrgId(req.headers);
+    const adminId = readAdminId(req.headers);
+    const body = (req.body ?? {}) as { expectedVersion?: number };
+
+    return withOrgScope(pool, orgId, async (client) => {
+      if (!(await canEditAgent(client, { adminId, agentId, orgId }))) {
+        return reply.code(403).send({ error: "FORBIDDEN" });
+      }
+
+      const latest = await latestPolicy(client, agentId, orgId);
+      if (!latest) {
+        return reply.code(404).send({ error: "NO_POLICY" });
+      }
+      if (
+        body.expectedVersion !== undefined &&
+        latest.version !== body.expectedVersion
+      ) {
+        return reply.code(409).send({
+          error: "STALE_POLICY",
+          currentVersion: latest.version,
+        });
+      }
+      if (latest.status !== "pending_go_live") {
+        return reply.code(409).send({
+          error: "NOT_PENDING",
+          message: "No go-live request is waiting.",
+          status: latest.status,
+        });
+      }
+
+      await client.query(
+        `UPDATE agent_policies
+            SET status = 'generated',
+                updated_at = now()
+          WHERE id = $1`,
+        [latest.id],
+      );
+
+      return reply.send({
+        status: "generated",
+        agentId,
+        version: latest.version,
+        message: "Go-live request withdrawn.",
+      });
+    });
+  });
+
+  /**
+   * Technical review queue — workflows waiting to go live.
+   * Nothing here has hit production yet.
+   */
+  app.get("/go-live-requests", async (req: any, reply: any) => {
+    const orgId = readOrgId(req.headers);
+    const adminId = readAdminId(req.headers);
+
+    return withOrgScope(pool, orgId, async (client) => {
+      const scopePred =
+        orgId === null ? "p.org_id IS NULL" : "(p.org_id = $1 OR p.org_id IS NULL)";
+      const params = orgId === null ? [] : [orgId];
+
+      const { rows } = await client.query(
+        `
+        SELECT
+          d.id AS agent_id,
+          COALESCE(t.display_name, d.name) AS name,
+          d.purpose,
+          p.version,
+          p.status,
+          p.updated_at,
+          p.created_by AS requested_by,
+          p.checksum
+        FROM agent_policies p
+        INNER JOIN agent_definitions d ON d.id = p.agent_id AND d.is_active = true
+        LEFT JOIN LATERAL (
+          SELECT display_name
+            FROM agent_templates
+           WHERE agent_id = d.id AND is_active = true
+           ORDER BY version DESC
+           LIMIT 1
+        ) t ON true
+        WHERE p.status = 'pending_go_live'
+          AND (${scopePred})
+          AND p.version = (
+            SELECT MAX(p2.version)
+              FROM agent_policies p2
+             WHERE p2.agent_id = p.agent_id
+               AND p2.org_id IS NOT DISTINCT FROM p.org_id
+          )
+        ORDER BY p.updated_at ASC
+        `,
+        params,
+      );
+
+      const editable = await editableAgentIds(
+        client,
+        adminId,
+        orgId,
+        rows.map((r: { agent_id: string }) => r.agent_id),
+      );
+
+      return reply.send({
+        requests: rows
+          .filter((r: { agent_id: string }) => editable.has(r.agent_id))
+          .map((r: any) => ({
+            agentId: r.agent_id,
+            name: r.name,
+            purpose: r.purpose,
+            version: r.version,
+            status: r.status,
+            requestedAt: r.updated_at,
+            requestedBy: r.requested_by,
+            checksum: r.checksum,
+          })),
+      });
+    });
+  });
+
+  /**
+   * Technical Approve — runs compile → publish → activate under the hood.
+   * Business admins never call this; reviewers do after checking the request.
+   */
+  app.post("/agents/:id/approve-go-live", async (req: any, reply: any) => {
+    const agentId = String(req.params.id);
+    const orgId = readOrgId(req.headers);
+    const adminId = readAdminId(req.headers);
+    const body = (req.body ?? {}) as { expectedVersion?: number };
+
+    if (typeof app.inject !== "function") {
+      return reply.code(500).send({
+        error: "APPROVE_UNAVAILABLE",
+        message: "Approve requires the full API server.",
+      });
+    }
+
+    const prep = await withOrgScope(pool, orgId, async (client) => {
+      if (!(await canEditAgent(client, { adminId, agentId, orgId }))) {
+        return { ok: false as const, status: 403, body: { error: "FORBIDDEN" } };
+      }
+
+      const latest = await latestPolicy(client, agentId, orgId);
+      if (!latest) {
+        return {
+          ok: false as const,
+          status: 404,
+          body: { error: "NO_POLICY" },
+        };
+      }
+      if (
+        body.expectedVersion !== undefined &&
+        latest.version !== body.expectedVersion
+      ) {
+        return {
+          ok: false as const,
+          status: 409,
+          body: {
+            error: "STALE_POLICY",
+            currentVersion: latest.version,
+          },
+        };
+      }
+      if (latest.status !== "pending_go_live") {
+        return {
+          ok: false as const,
+          status: 409,
+          body: {
+            error: "NOT_PENDING",
+            message: `Nothing to approve (status is "${latest.status}").`,
+            status: latest.status,
+          },
+        };
+      }
+
+      // agent_versions stays at generated/compiled/published so Stage 2–3
+      // endpoints still find the artifact. Policy pending_go_live is overwritten
+      // as compile → publish → activate advance status.
+      const ver = await client.query(
+        orgId === null
+          ? `SELECT status FROM agent_versions
+              WHERE agent_id = $1 AND org_id IS NULL AND version = $2
+              LIMIT 1`
+          : `SELECT status FROM agent_versions
+              WHERE agent_id = $1 AND org_id = $2 AND version = $3
+              LIMIT 1`,
+        orgId === null
+          ? [agentId, latest.version]
+          : [agentId, orgId, latest.version],
+      );
+      const artifactStatus = (ver.rows[0]?.status as string | undefined) ?? "generated";
+
+      return {
+        ok: true as const,
+        version: latest.version,
+        artifactStatus,
+      };
+    });
+
+    if (!prep.ok) {
+      return reply.code(prep.status).send(prep.body);
+    }
+
+    const headers: Record<string, string> = {
+      "content-type": "application/json",
+      "x-admin-id": adminId,
+    };
+    if (orgId) headers["x-org-id"] = orgId;
+
+    const payload = { expectedVersion: body.expectedVersion ?? prep.version };
+
+    const steps =
+      prep.artifactStatus === "published"
+        ? (["activate"] as const)
+        : prep.artifactStatus === "compiled"
+          ? (["publish", "activate"] as const)
+          : (["compile", "publish", "activate"] as const);
+
+    let lastJson: Record<string, unknown> = {};
+    for (const step of steps) {
+      const res = await app.inject!({
+        method: "POST",
+        url: `/agents/${agentId}/${step}`,
+        headers,
+        payload,
+      });
+      lastJson = res.json() as Record<string, unknown>;
+      if (res.statusCode >= 400) {
+        return reply.code(res.statusCode).send({
+          error: "APPROVE_FAILED",
+          failedStep: step,
+          message:
+            (typeof lastJson.message === "string" && lastJson.message) ||
+            (typeof lastJson.error === "string" && lastJson.error) ||
+            `Could not finish go-live (${step}).`,
+          details: lastJson,
+        });
+      }
+    }
+
+    return reply.send({
+      status: lastJson.status ?? "active",
+      agentId,
+      version: lastJson.version ?? prep.version,
+      checksum: lastJson.checksum ?? null,
+      graphKey: lastJson.graphKey ?? null,
+      message: `Approved — this agent is now live (version ${lastJson.version ?? prep.version}).`,
     });
   });
 
@@ -751,39 +1645,20 @@ export function registerAgentRoutes(app: FastifyLike, pool: Pool): void {
         });
       }
 
-      // Parse + validate the graph artifact produced by Stage 1.
+      // Full authored-graph gate (same as Generate): tools + schema + topology + config.
       let parsedGraph: GraphDefinition;
       try {
-        parsedGraph = GraphDefinitionSchema.parse(
-          JSON.parse(latest.artifact_source),
-        );
-      } catch (err: any) {
-        return reply.code(500).send({
-          error: "ARTIFACT_PARSE_FAILED",
-          message: err?.message ?? String(err),
+        parsedGraph = validateAuthoredGraphForGoLive(latest.artifact_source, {
+          defaultGraphKey: `${validated.policy.agentKey}.authored`,
         });
-      }
-      try {
-        validateGraphTopology(parsedGraph);
       } catch (err: any) {
-        return reply.code(500).send({
+        const message = err?.message ?? String(err);
+        return reply.code(422).send({
           error: "GRAPH_INVALID",
-          message: err?.message ?? String(err),
+          message:
+            message.replace(/^GENERATION_FAILED:\s*/i, "") ||
+            "Graph failed validation; fix via Update workflow before Prepare.",
         });
-      }
-
-      // Resolve deps (cheap): each graph node impl must exist in the tool registry.
-      // This catches the most common "graph changes but Stage 2 still compiles"
-      // misconfiguration where node.impl is unknown.
-      for (const node of parsedGraph.nodes) {
-        if (!isRegisteredTool(node.impl)) {
-          return reply.code(400).send({
-            error: "GRAPH_DEPENDENCY_MISSING",
-            message: `Unknown node impl "${node.impl}" for node "${node.id}"`,
-            nodeId: node.id,
-            impl: node.impl,
-          });
-        }
       }
 
       // Checksum audit: refuse compile if Stage 1 artifact doesn't match checksum.
