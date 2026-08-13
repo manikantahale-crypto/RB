@@ -2,6 +2,10 @@
   "name": "@tekisho/agent-runtime",
   "version": "0.0.0",
   "private": true,
-  "main": "./src/tools/tool-registry.ts",
-  "types": "./src/tools/tool-registry.ts"
+  "type": "module",
+  "main": "./src/index.ts",
+  "types": "./src/index.ts",
+  "dependencies": {
+    "zod": "*"
+  }
 }

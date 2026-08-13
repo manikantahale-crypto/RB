@@ -6,7 +6,9 @@
     "packages/*"
   ],
   "scripts": {
-    "start": "npm run start -w @tekisho/worker"
+    "start": "npm run start -w @tekisho/worker",
+    "smoke:e2e": "tsx scripts/smoke-e2e.ts",
+    "demo:flow": "tsx scripts/demo-flow.ts"
   },
   "dependencies": {
     "@langchain/langgraph": "^1.4.9",

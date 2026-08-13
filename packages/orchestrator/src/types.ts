@@ -9,10 +9,13 @@ export interface EventInput {
 }
 
 export interface WorkflowResult {
-  status: 'COMPLETED' | 'FAILED';
+  status: 'COMPLETED' | 'FAILED' | 'PARKED';
   events: EventInput[];
   finalState: any;
   error?: string;
+  errorClass?: 'transient' | 'permanent-input' | 'permanent-system';
+  /** Present on COMPLETED / PARKED — orgId:eventId or orgId:bossJobId */
+  threadId?: string;
 }
 
 export interface WorkflowContext {

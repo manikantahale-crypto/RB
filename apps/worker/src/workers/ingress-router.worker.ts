@@ -1,12 +1,14 @@
-import type { PgBoss } from "pg-boss";
-import type { EventEnvelope } from "@tekisho/domain";
-import { SimpleRunbookResolver } from "@tekisho/orchestrator/src/resolver/runbook.js";
-import type { GraphCompiler } from "@tekisho/orchestrator/src/graphs/compiler.js";
+import type { PgBoss } from 'pg-boss';
+import type { EventEnvelope } from '@tekisho/domain';
+import { SimpleRunbookResolver } from '@tekisho/orchestrator/src/resolver/runbook.js';
+import type { GraphCompiler } from '@tekisho/orchestrator/src/graphs/compiler.js';
 import {
   EVENT_TO_GRAPH,
   EVENT_TO_MODULE_QUEUE,
+  GRAPH_TO_MODULE_QUEUE,
   INGRESS_QUEUE,
-} from "@tekisho/orchestrator/src/routing/table.js";
+  MODULE_SEND_OPTIONS,
+} from '@tekisho/orchestrator/src/routing/table.js';
 
 export type RoutedEnvelope = EventEnvelope & {
   __graphKey: string;
@@ -40,7 +42,9 @@ export async function startIngressRouter(args: {
         continue;
       }
 
-      const moduleQueue = EVENT_TO_MODULE_QUEUE[envelope.event_type];
+      const moduleQueue =
+        EVENT_TO_MODULE_QUEUE[envelope.event_type] ??
+        GRAPH_TO_MODULE_QUEUE[graphKey];
       if (!moduleQueue) {
         throw new Error(
           `[Router] graph ${graphKey} has no module queue for ${envelope.event_type}`,
@@ -58,9 +62,12 @@ export async function startIngressRouter(args: {
         __graphVersion: graphVersion,
       };
 
-      await boss.send(moduleQueue, routed);
+      await boss.send(moduleQueue, routed, {
+        ...MODULE_SEND_OPTIONS,
+        singletonKey: envelope.event_id,
+      });
       console.log(
-        `[Router] → ${moduleQueue} ${graphKey}@${graphVersion}`,
+        `[Router] ${envelope.event_type} → ${moduleQueue} ${graphKey}@${graphVersion} (${envelope.event_id})`,
       );
     }
   });

@@ -1,14 +1,21 @@
-import type { Pool } from "pg";
-import type { PgBoss } from "pg-boss";
-import type { GraphCompiler } from "@tekisho/orchestrator/src/graphs/compiler.js";
-import type { WorkflowRunner } from "@tekisho/orchestrator/src/workflow/runner.js";
-import type { EventInput } from "@tekisho/orchestrator/src/types.js";
-import { MODULE_QUEUES } from "@tekisho/orchestrator/src/routing/table.js";
-import { runWorkflowWithOrgContext } from "../run-with-org.js";
-import type { RoutedEnvelope } from "./ingress-router.worker.js";
+import type { Pool } from 'pg';
+import type { PgBoss } from 'pg-boss';
+import type { GraphCompiler } from '@tekisho/orchestrator/src/graphs/compiler.js';
+import type { WorkflowRunner } from '@tekisho/orchestrator/src/workflow/runner.js';
+import type { EventInput } from '@tekisho/orchestrator/src/types.js';
+import {
+  MODULE_QUEUES,
+  MODULE_SEND_OPTIONS,
+} from '@tekisho/orchestrator/src/routing/table.js';
+import { classifyError } from '@tekisho/orchestrator/src/workflow/errors.js';
+import { recordFailedWorkflow } from '@tekisho/orchestrator/src/workflow/failed-workflows.js';
+import { runWorkflowWithOrgContext } from '../run-with-org.js';
+import type { RoutedEnvelope } from './ingress-router.worker.js';
 
 /**
  * Module workers — consume module.* queues stamped by the ingress router.
+ * Design §10: retryLimit 5 + backoff; permanent-input acks; permanent-system
+ * records failed_workflows without spinning retries forever.
  */
 export async function startModuleWorkers(args: {
   boss: PgBoss;
@@ -42,26 +49,87 @@ export async function startModuleWorkers(args: {
           payload: envelope.payload_ref as Record<string, unknown>,
         };
 
-        const result = await runWorkflowWithOrgContext({
-          pool,
-          compiler,
-          runner,
-          bossJobId: String(job.id),
-          workflowName,
-          event: eventInput,
-          payloadPin: {
-            graphKey: envelope.__graphKey,
-            graphVersion: envelope.__graphVersion,
-          },
-        });
+        const threadId = `${envelope.organization_id}:${job.id}`;
 
-        if (result.status === "FAILED") {
+        try {
+          const result = await runWorkflowWithOrgContext({
+            pool,
+            compiler,
+            runner,
+            bossJobId: String(job.id),
+            workflowName,
+            event: eventInput,
+            payloadPin: {
+              graphKey: envelope.__graphKey,
+              graphVersion: envelope.__graphVersion,
+            },
+          });
+
+          if (result.status === 'COMPLETED' || result.status === 'PARKED') {
+            const emitted = Array.isArray(result.events)
+              ? result.events.map((e) => e.event_type).join(', ')
+              : '';
+            console.log(
+              `[Module] ${queue} → ${result.graphKey}@${result.graphVersion} ${result.status}` +
+                (result.threadId ? ` thread=${result.threadId}` : '') +
+                (emitted ? ` emitted=[${emitted}]` : ''),
+            );
+            continue;
+          }
+
+          const errorClass =
+            result.errorClass ?? classifyError(new Error(result.error ?? ''));
+
+          // Permanent-input: product terminal — ack job (do not retry)
+          if (errorClass === 'permanent-input') {
+            console.warn(
+              `[Module] permanent-input on ${envelope.event_id}: ${result.error}`,
+            );
+            continue;
+          }
+
+          // Permanent-system: record + fail without useful retry
+          if (errorClass === 'permanent-system') {
+            await recordFailedWorkflow(pool, {
+              organization_id: envelope.organization_id,
+              event_id: envelope.event_id,
+              thread_id: threadId,
+              graph_key: envelope.__graphKey,
+              graph_version: envelope.__graphVersion ?? null,
+              queue,
+              error_class: errorClass,
+              error_message: result.error ?? 'permanent-system',
+              pinned_payload: envelope as unknown as Record<string, unknown>,
+            });
+            throw new Error(result.error);
+          }
+
+          // Transient: throw → pg-boss retry; on final attempt mirror DLQ
+          const attempt = Number(job.retrycount ?? job.retryCount ?? 0);
+          const limit = MODULE_SEND_OPTIONS.retryLimit;
+          if (attempt >= limit) {
+            await recordFailedWorkflow(pool, {
+              organization_id: envelope.organization_id,
+              event_id: envelope.event_id,
+              thread_id: threadId,
+              graph_key: envelope.__graphKey,
+              graph_version: envelope.__graphVersion ?? null,
+              queue,
+              error_class: errorClass,
+              error_message: result.error ?? 'exhausted retries',
+              pinned_payload: envelope as unknown as Record<string, unknown>,
+            });
+          }
           throw new Error(result.error);
+        } catch (err) {
+          const msg = err instanceof Error ? err.message : String(err);
+          const errorClass = classifyError(err);
+          if (errorClass === 'permanent-input') {
+            console.warn(`[Module] permanent-input caught: ${msg}`);
+            continue;
+          }
+          throw err;
         }
-
-        console.log(
-          `[Module] ${queue} → ${result.graphKey}@${result.graphVersion} completed`,
-        );
       }
     });
     console.log(`Module worker listening on ${queue}`);
