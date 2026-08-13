@@ -1,62 +1,54 @@
-# Front door (ingress + router) — simple guide
+# Front door (ingress + router)
 
-**Updated:** 2026-08-10
+**Updated:** 2026-08-11
 
-## What we built
+## Path (transactional outbox)
 
 ```text
-POST /v1/events  (API)
+POST /v1/events  (API :4100)  or  Syntra ORCH_API_URL publisher
       │
       ▼
-validate envelope (Zod)
+event_outbox  (published_at NULL)     ← ingress write only
       │
       ▼
-write event_outbox  (company id set; marked published so relay won't double-send)
+outbox-relay  (sole pg-boss publisher)
+      ├─ graph events  → orchestration.ingress → [Router] → module.*
+      └─ terminal/resume/fail → orchestration.dispatch
       │
       ▼
-queue: orchestration.ingress
-      │
-      ▼
-ROUTER  → pick workflow + version → module.syntra.*
-      │
-      ▼
-MODULE WORKER → run graph (same as before)
+LangGraph + orch.runs/orch.steps (+ agent_runs when GRANTed)
+GET /v1/trace/:eventId
 ```
 
-## Syntra bridge (still works)
+See also [BRIDGE.md](./BRIDGE.md) for bridge ON/OFF.
 
-Syntra can still publish to `jd.uploaded` / `resume.uploaded` / `match.requested`.  
-That path skips the front door and goes straight to the runner (`[Bridge]` logs).
-
-New producers should use **`POST /v1/events`**.
-
-## How to run
+## Run
 
 ```powershell
-# Terminal 1 — worker (router + modules + bridge + relay)
-cd C:\Users\Digi\Documents\orchaestration\orchaestration
+cd ...\orchaestration
+
+# One-time as postgres (Supabase SQL): packages/db/scripts/grant-orch-runtime.sql
+
+# Terminal 1 — worker
+$env:ORCH_STUB_SYNTRA="1"   # optional without Syntra :4000
 npm start
 
-# Terminal 2 — ingress API
+# Terminal 2 — API
 npm run start -w @tekisho/api
+
+# Terminal 3a — smoke (no Syntra)
+npm run smoke:e2e -- --jd
+
+# OR Terminal 3b — Syntra with orch publish
+# In Syntra .env: ORCH_API_URL=http://localhost:4100
+# Then Syntra UI upload → orch logs [Router]/[Module]
 ```
 
-## Example request
+## Permissions
 
-```powershell
-curl -X POST http://localhost:4100/v1/events -H "Content-Type: application/json" -d "{
-  \"event_id\": \"11111111-1111-4111-8111-111111111111\",
-  \"event_type\": \"syntra.jd.received\",
-  \"schema_version\": \"1.0\",
-  \"occurred_at\": \"2026-08-10T10:00:00.000Z\",
-  \"correlation_id\": \"22222222-2222-4222-8222-222222222222\",
-  \"causation_id\": null,
-  \"organization_id\": \"2b8e12b3-1745-4ae9-902c-5a249c28ba94\",
-  \"aggregate\": { \"type\": \"requirement\", \"id\": \"33333333-3333-4333-8333-333333333333\" },
-  \"payload_ref\": { \"jobId\": \"YOUR-JOB-UUID\" },
-  \"producer\": \"manual-test\"
-}"
-```
+If you see `permission denied for table event_schemas|agent_definitions|agent_runs`, run as **postgres**:
+
+`packages/db/scripts/grant-orch-runtime.sql`
 
 Expect `202` + worker logs: `[Router]` then `[Module]`.
 

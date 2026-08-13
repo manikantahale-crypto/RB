@@ -7,39 +7,63 @@ export type NodeLogger = {
   error: (...args: unknown[]) => void;
 };
 
-/** Org-scoped DB access — always runs under `app.org_id` (design §4.1 / §11). */
 export type NodeDb = {
   withOrg: <T>(fn: (client: PoolClient) => Promise<T>) => Promise<T>;
 };
 
-/** Collect outbound domain events; runner persists to event_outbox. */
 export type NodeEvents = {
   emit: (event: EventInput) => void;
 };
 
 /**
- * Cross-cutting deps injected into every node (design §4.1).
- * `llm` is Noop until a real client is wired; Syntra nodes use HTTP today.
+ * Deps injected per node (design §4.1).
+ * `llm` is an optional seam only — resume-intake nodes must NOT call it.
+ * Syntra peer work uses HTTP; persistence uses `db`.
  */
 export type NodeCtx = {
   orgId: string;
   config: Record<string, unknown>;
   logger: NodeLogger;
-  llm: LLMClient;
+  /** Optional future seam. Do not require for backbone / resume-intake. */
+  llm?: LLMClient;
   db: NodeDb;
   events: NodeEvents;
 };
 
-/** Shared LangGraph state for Syntra (and similar) workflows. */
+export type CandidateProfile = {
+  candidateId: string;
+  documentId?: string;
+  resumeId?: string;
+  summary: string;
+  skills: string[];
+  yearsExperience: number | null;
+  parserVersion: string;
+};
+
+export type MatchHit = {
+  jobId: string;
+  resumeId: string;
+  candidateId?: string;
+  score: number;
+  matchedSkills: string[];
+  missingSkills: string[];
+};
+
+/** Shared LangGraph state for Syntra adapters + resume.intake. */
 export type SyntraGraphState = {
   result: string;
   _emittedEvents: EventInput[];
   trigger_event: EventInput | null;
+  profile: CandidateProfile | null;
+  matches: MatchHit[];
+  /** Set by WorkflowRunner when agent_runs insert succeeds. */
+  agent_run_id: string | null;
+  errorsSoft?: Array<{ nodeId: string; class: string; message: string }>;
 };
 
 export type NodeImpl = (
   state: SyntraGraphState,
-  ctx: NodeCtx
+  ctx: NodeCtx,
 ) => Promise<Partial<SyntraGraphState>>;
 
 export type NodeFactory = () => NodeImpl;

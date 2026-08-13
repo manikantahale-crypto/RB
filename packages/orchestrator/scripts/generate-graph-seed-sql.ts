@@ -6,7 +6,7 @@
 import { writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { graphSeedCatalog } from '../src/graphs/defs/catalog.js';
+import { graphSeedCatalog } from '../src/graphs/catalog.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const outPath = join(
@@ -40,7 +40,7 @@ const valueBlocks = graphSeedCatalog.map((s) => {
 )`;
 });
 
-const sql = `-- AUTO-GENERATED from packages/orchestrator/src/graphs/defs/*.def.ts
+const sql = `-- AUTO-GENERATED from packages/orchestrator/src/graphs/catalog.ts
 -- Do not edit by hand. Regenerate with:
 --   npm run generate:graph-seeds -w @tekisho/orchestrator
 --

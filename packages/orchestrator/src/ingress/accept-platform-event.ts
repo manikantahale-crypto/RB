@@ -1,31 +1,30 @@
-import type { Pool } from "pg";
-import type { EventEnvelope } from "@tekisho/domain";
-import { withOrgConnection } from "../db/with-org-connection.js";
-import { parseEventEnvelope } from "./envelope-schema.js";
-import { INGRESS_QUEUE } from "../routing/table.js";
+/**
+ * Front door — ingress (design §6 / §9).
+ *
+ * Transactional outbox (single DB story):
+ * 1. Validate wire envelope + per-type payload (Zod)
+ * 2. INSERT event_outbox with published_at IS NULL (same org TX)
+ * 3. Outbox relay is the only pg-boss publisher → ingress or dispatch
+ *
+ * Do NOT enqueue pg-boss here — that would split outbox write + queue send.
+ */
+import type { Pool } from 'pg';
+import type { EventEnvelope } from '@tekisho/domain';
+import { withOrgConnection } from '../db/with-org-connection.js';
+import { parseEventEnvelope } from './envelope-schema.js';
 
 export type AcceptPlatformEventResult = {
   event_id: string;
-  queue: typeof INGRESS_QUEUE;
+  /** Logical next hop after outbox (relay publishes). */
+  queue: 'event_outbox';
   /** false when event_id was already in event_outbox (idempotent). */
   inserted: boolean;
 };
 
 export type AcceptPlatformEventDeps = {
   pool: Pool;
-  /** Enqueue after the outbox write (pg-boss send). */
-  enqueue: (queue: string, data: EventEnvelope) => Promise<unknown>;
 };
 
-/**
- * Front door — ingress (design §6 / §9).
- *
- * 1. Validate wire envelope (Zod)
- * 2. Insert event_outbox under app.org_id (published_at set so relay won't double-send)
- * 3. Enqueue orchestration.ingress for the router
- *
- * Syntra may still publish direct queues (bridge); new producers should use this.
- */
 export async function acceptPlatformEvent(
   raw: unknown,
   deps: AcceptPlatformEventDeps,
@@ -42,7 +41,7 @@ export async function acceptPlatformEvent(
            aggregate_type, aggregate_id, correlation_id, causation_id,
            producer, payload_ref, published_at
          ) VALUES (
-           $1, $2, $3, $4, $5, $6, $7, $8, $9, $10::jsonb, now()
+           $1, $2, $3, $4, $5, $6, $7, $8, $9, $10::jsonb, NULL
          )
          ON CONFLICT (event_id) DO NOTHING
          RETURNING id`,
@@ -64,8 +63,18 @@ export async function acceptPlatformEvent(
   );
 
   if (inserted) {
-    await deps.enqueue(INGRESS_QUEUE, envelope);
+    console.log(
+      `[Ingress] ACCEPTED ${envelope.event_type} event_id=${envelope.event_id}` +
+        ` org=${envelope.organization_id} → event_outbox (await relay)`,
+    );
+  } else {
+    console.log(
+      `[Ingress] DUPLICATE ${envelope.event_type} event_id=${envelope.event_id}`,
+    );
   }
 
-  return { event_id: envelope.event_id, queue: INGRESS_QUEUE, inserted };
+  return { event_id: envelope.event_id, queue: 'event_outbox', inserted };
 }
+
+/** @deprecated kept for type imports; enqueue is no longer part of accept. */
+export type { EventEnvelope };

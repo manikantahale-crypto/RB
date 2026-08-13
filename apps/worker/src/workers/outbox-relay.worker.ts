@@ -9,10 +9,14 @@ import { Pool } from "pg";
 import type { PgBoss } from "pg-boss";
 import { env } from "../env.js";
 import type { EventEnvelope, EventType } from "@tekisho/domain";
+import {
+  planForEvent,
+  INGRESS_QUEUE,
+  DISPATCH_QUEUE,
+  MODULE_SEND_OPTIONS,
+} from "@tekisho/orchestrator/src/routing/table.js";
 
-// The queue the orchestrator's dispatcher consumes from. Must match exactly
-// on the consumer side.
-export const DISPATCH_QUEUE = "orchestration.dispatch";
+export { DISPATCH_QUEUE };
 export const DISPATCH_DLQ = "orchestration.dispatch.dlq";
 
 const BATCH_SIZE = 100;
@@ -84,20 +88,39 @@ export async function relayOnce(
 
     const publishedIds: string[] = [];
     for (const row of rows) {
-      const envelope = toEnvelope(row) as EventEnvelope & {
-        __graphKey?: string;
-        __graphVersion?: number;
-      };
-      if (resolvePin) {
-        const pin = await resolvePin(row.event_type, row.organization_id);
-        if (pin) {
-          envelope.__graphKey = pin.graphKey;
-          envelope.__graphVersion = pin.graphVersion;
+      const envelope = toEnvelope(row);
+      const plan = planForEvent(row.event_type);
+
+      if (plan.kind === "graph") {
+        // Design front door: relay → ingress → router (D3 pin) → module.*
+        await boss.createQueue(INGRESS_QUEUE);
+        await boss.send(INGRESS_QUEUE, envelope, {
+          ...MODULE_SEND_OPTIONS,
+          singletonKey: row.event_id,
+        });
+        console.log(
+          `[Relay] ${row.event_type} → ${INGRESS_QUEUE} (${row.event_id})`,
+        );
+      } else {
+        // terminal / resume / fail — dispatch handlers (never re-enter graphs)
+        const stamped = envelope as EventEnvelope & {
+          __graphKey?: string;
+          __graphVersion?: number;
+        };
+        if (resolvePin) {
+          const pin = await resolvePin(row.event_type, row.organization_id);
+          if (pin) {
+            stamped.__graphKey = pin.graphKey;
+            stamped.__graphVersion = pin.graphVersion;
+          }
         }
+        await boss.send(DISPATCH_QUEUE, stamped, {
+          singletonKey: row.event_id,
+        });
+        console.log(
+          `[Relay] ${row.event_type} → ${DISPATCH_QUEUE} (terminal/control) (${row.event_id})`,
+        );
       }
-      await boss.send(DISPATCH_QUEUE, envelope, {
-        singletonKey: row.aggregate_id, // serialize per aggregate
-      });
       publishedIds.push(row.id);
     }
 
@@ -232,6 +255,11 @@ export async function startOutboxRelay(
       max: 1,
     });
     ownsPool = true;
+  }
+  if (ownsPool) {
+    pool.on("error", (error: Error) => {
+      console.error("[OutboxRelay] pg pool error:", error.message);
+    });
   }
 
   // Dead-letter queue must exist before the main queue can reference it.
