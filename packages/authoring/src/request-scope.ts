@@ -28,6 +28,18 @@ const OUT_OF_SCOPE_PATTERNS: Array<{ re: RegExp; label: string }> = [
     label: "LinkedIn messaging/scraping",
   },
   { re: /\b(stripe|payment|invoice)\b/i, label: "payments" },
+  {
+    re: /\b(\d{1,3})\s*%?\s*similar(?:ity)?|\bsimilarity\s+(?:threshold|score)\s+(?:of\s+)?(\d{1,3})/i,
+    label: "duplicate similarity threshold (not configurable in workflows yet)",
+  },
+  {
+    re: /\bduplicate\s+(?:detection|review|check).{0,40}(\d{1,3})\s*%?/i,
+    label: "duplicate similarity threshold (not configurable in workflows yet)",
+  },
+  {
+    re: /\b(\d{1,3})\s*%?\s*(?:duplicate|dedup)/i,
+    label: "duplicate similarity threshold (not configurable in workflows yet)",
+  },
 ];
 
 export type OutOfScopeHit = { label: string; matched: string };

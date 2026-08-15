@@ -1,6 +1,7 @@
 import type { Pool } from "pg";
 import { AgentTemplateSchema } from "./agent-template.js";
 import { TEMPLATE_SEED_CATALOG } from "./template-catalog.js";
+import { defaultDraftPolicyForTemplate } from "./product-agent-defaults.js";
 
 /**
  * Create authoring tables if missing (same idea as GraphCompiler.ensureSchemaAndSeed).
@@ -157,14 +158,18 @@ export async function ensureAuthoringSchema(pool: Pool): Promise<void> {
       )
     `);
 
-    for (const role of ["syntra_app", "syntra_relay"]) {
+    for (const role of ["syntra_app", "syntra_relay", "syntra_migrator"]) {
       try {
         await pool.query(
           `GRANT SELECT, INSERT, UPDATE, DELETE ON agent_policies, agent_versions TO ${role}`,
         );
         await pool.query(`GRANT SELECT ON agent_templates TO ${role}`);
         await pool.query(
-          `GRANT SELECT ON admin_agent_entitlements TO ${role}`,
+          `GRANT SELECT, INSERT ON admin_agent_entitlements TO ${role}`,
+        );
+        await pool.query(`GRANT INSERT ON agent_definitions TO ${role}`);
+        await pool.query(
+          `GRANT SELECT, INSERT, UPDATE ON graph_event_bindings TO ${role}`,
         );
 
         // Stage 2 Compile writes graph_definitions (runtime store).
@@ -185,6 +190,7 @@ export async function ensureAuthoringSchema(pool: Pool): Promise<void> {
     await applyAuthoringRls(pool);
     await applyGraphStoreRls(pool);
     await seedAgentTemplates(pool);
+    await seedProductAgentDefinitions(pool);
     await seedDefaultEntitlements(pool);
 
     console.log(
@@ -274,6 +280,93 @@ export async function seedAgentTemplates(pool: Pool): Promise<void> {
   console.log(
     `[authoring] agent_templates seeded (${TEMPLATE_SEED_CATALOG.length})`,
   );
+}
+
+const PRODUCT_AGENT_RUNTIME_TOOLS = JSON.stringify([
+  { name: "syntra.jd.process", min_version: "1.0.0" },
+  { name: "syntra.resume.process", min_version: "1.0.0" },
+  { name: "syntra.match.process", min_version: "1.0.0" },
+]);
+
+const PRODUCT_AGENT_AUTONOMY = JSON.stringify({
+  READ: "AUTO",
+  INTERNAL_WRITE: "AUTO",
+  DATA_SHAPING: "AUTO",
+  CONTROL: "AUTO",
+  EXTERNAL_COMM: "SUGGEST",
+});
+
+const PRODUCT_AGENT_MODEL = JSON.stringify({
+  provider: "anthropic",
+  model: "claude-sonnet-5",
+  temperature: 0,
+  max_output_tokens: 8192,
+  embedding: { provider: "voyage", model: "voyage-3-large", dims: 1024 },
+  cost_budget_usd_per_run: 0.5,
+  timeout_ms: 300000,
+});
+
+/**
+ * Ensure agent_definitions + draft policies exist for catalog product agents
+ * (mock agents ASTRA, ORBIT, etc. are not in runtime R__seed_agent_definitions).
+ */
+export async function seedProductAgentDefinitions(pool: Pool): Promise<void> {
+  let defs = 0;
+  let policies = 0;
+
+  for (const s of TEMPLATE_SEED_CATALOG) {
+    if (!s.purpose) continue;
+
+    const defRow = await pool.query(
+      `SELECT 1 FROM agent_definitions WHERE id = $1`,
+      [s.agentId],
+    );
+    if ((defRow.rowCount ?? 0) === 0) {
+      await pool.query(
+        `INSERT INTO agent_definitions (
+           id, name, version, purpose, system_prompt_ref,
+           allowed_tools, autonomy, model_config, is_active
+         ) VALUES ($1, $2, '1.0.0', $3, $4, $5::jsonb, $6::jsonb, $7::jsonb, true)`,
+        [
+          s.agentId,
+          s.agentKey,
+          s.purpose,
+          `prompts/${s.agentKey}@1.0.0`,
+          PRODUCT_AGENT_RUNTIME_TOOLS,
+          PRODUCT_AGENT_AUTONOMY,
+          PRODUCT_AGENT_MODEL,
+        ],
+      );
+      defs++;
+    }
+
+    const polRow = await pool.query(
+      `SELECT 1 FROM agent_policies
+        WHERE agent_id = $1 AND org_id IS NULL AND version = 1`,
+      [s.agentId],
+    );
+    if ((polRow.rowCount ?? 0) === 0) {
+      const policy = defaultDraftPolicyForTemplate({
+        agentId: s.agentId,
+        agentKey: s.agentKey,
+        displayName: s.displayName,
+        policyExt: s.template.policyExt,
+      });
+      await pool.query(
+        `INSERT INTO agent_policies (
+           org_id, agent_id, policy, status, version, created_by
+         ) VALUES (NULL, $1, $2::jsonb, 'draft', 1, 'seed')`,
+        [s.agentId, JSON.stringify(policy)],
+      );
+      policies++;
+    }
+  }
+
+  if (defs > 0 || policies > 0) {
+    console.log(
+      `[authoring] product agents seeded (definitions +${defs}, draft policies +${policies})`,
+    );
+  }
 }
 
 /** Grant admin-local edit on catalog agents (fail-closed for everyone else). */

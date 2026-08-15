@@ -1,47 +1,24 @@
 import { EVENT_TYPES } from '@tekisho/domain';
 
 /**
- * Day-1 platform events (event_schemas / platform-event.ts).
+ * Platform event metadata for workers (terminals / queues).
  *
- * kind:
- * - graph   → start a LangGraph workflow
- * - terminal → persisted + observed only (UI / audit); no graph
- * - resume  → continue a parked human.gate thread
- * - fail    → mirror into failed_workflows
- *
- * Production go-live: JD traffic prefers the authored key (`syntra.authored`)
- * when an active definition exists; otherwise falls back to the seed workflow
- * so local smoke still works before admin Activate / Make this live.
+ * Graph routing for ingress is NOT here — see `graph_event_bindings` (DB).
+ * The router resolves event_type → graph_key + module_queue only from that table.
+ * Seed rows cover day-1 Syntra; admin Activate upserts authoring bindings.
  */
+
 export type EventHandleKind = 'graph' | 'terminal' | 'resume' | 'fail';
 
 export type PlatformEventPlan = {
   kind: EventHandleKind;
-  /** Required when kind === 'graph' — preferred / primary graph_key */
-  graphKey?: string;
-  /**
-   * When set, router uses `graphKey` only if that key has an active
-   * graph_definitions row; otherwise routes to this seed key.
-   */
-  fallbackGraphKey?: string;
-  moduleQueue?: string;
   note: string;
 };
-
-/** Authored Syntra agent graph_key (admin Activate / go-live). */
-export const SYNTRA_AUTHORED_GRAPH_KEY = 'syntra.authored';
-
-/** Seed JD workflow kept as fallback when authored is not active. */
-export const SYNTRA_JD_SEED_GRAPH_KEY = 'syntra.jd.workflow';
 
 export const PLATFORM_EVENT_PLAN: Record<string, PlatformEventPlan> = {
   [EVENT_TYPES.JD_RECEIVED]: {
     kind: 'graph',
-    graphKey: SYNTRA_AUTHORED_GRAPH_KEY,
-    fallbackGraphKey: SYNTRA_JD_SEED_GRAPH_KEY,
-    moduleQueue: 'module.syntra.jd',
-    note:
-      'Trigger — prefer syntra.authored when active; else seed syntra.jd.workflow',
+    note: 'Trigger — routed via graph_event_bindings (DB)',
   },
   [EVENT_TYPES.JD_PARSED]: {
     kind: 'terminal',
@@ -49,9 +26,7 @@ export const PLATFORM_EVENT_PLAN: Record<string, PlatformEventPlan> = {
   },
   [EVENT_TYPES.RESUME_RECEIVED]: {
     kind: 'graph',
-    graphKey: 'resume.intake',
-    moduleQueue: 'module.design.resume',
-    note: 'Trigger — resume.intake via Syntra HTTP (syntra.resume.process)',
+    note: 'Trigger — routed via graph_event_bindings (DB)',
   },
   [EVENT_TYPES.PROFILE_PREPARED]: {
     kind: 'terminal',
@@ -59,15 +34,11 @@ export const PLATFORM_EVENT_PLAN: Record<string, PlatformEventPlan> = {
   },
   [EVENT_TYPES.DUPLICATE_REVIEW_REQUIRED]: {
     kind: 'graph',
-    graphKey: 'duplicate.review',
-    moduleQueue: 'module.design.duplicate',
-    note: 'Control — park at human.gate for merge decision',
+    note: 'Control — routed via graph_event_bindings (DB)',
   },
   [EVENT_TYPES.MATCH_REQUESTED]: {
     kind: 'graph',
-    graphKey: 'syntra.match.workflow',
-    moduleQueue: 'module.syntra.match',
-    note: 'Trigger — score job×resume via Syntra HTTP',
+    note: 'Trigger — routed via graph_event_bindings (DB)',
   },
   [EVENT_TYPES.MATCH_COMPLETED]: {
     kind: 'terminal',
@@ -96,53 +67,39 @@ export function planForEvent(eventType: string): PlatformEventPlan {
   );
 }
 
+/** Authored Syntra agent graph_key (admin Activate / go-live). */
+export const SYNTRA_AUTHORED_GRAPH_KEY = 'syntra.authored';
+
+/** Seed JD workflow (also seeded into graph_event_bindings). */
+export const SYNTRA_JD_SEED_GRAPH_KEY = 'syntra.jd.workflow';
+
 /**
- * Pick the graph_key the router should pin.
- * Prefer `plan.graphKey` when active; else `fallbackGraphKey` when present.
+ * @deprecated Ingress must use graph_event_bindings. Kept empty so accidental
+ * use of SimpleRunbookResolver does not silently restore hardcoded routing.
  */
-export async function resolveRoutableGraphKey(args: {
-  eventType: string;
-  organizationId?: string | null;
-  hasActive: (
-    graphKey: string,
-    organizationId?: string | null,
-  ) => Promise<boolean>;
-}): Promise<string | null> {
-  const plan = planForEvent(args.eventType);
-  if (plan.kind !== 'graph' || !plan.graphKey) return null;
+export const EVENT_TO_GRAPH: Record<string, string> = {};
 
-  if (!plan.fallbackGraphKey) return plan.graphKey;
-
-  const preferredActive = await args.hasActive(
-    plan.graphKey,
-    args.organizationId,
-  );
-  if (preferredActive) return plan.graphKey;
-  return plan.fallbackGraphKey;
-}
-
-/** event_type → graph_key for runbook / router */
-export const EVENT_TO_GRAPH: Record<string, string> = Object.fromEntries(
-  Object.entries(PLATFORM_EVENT_PLAN)
-    .filter(([, p]) => p.kind === 'graph' && p.graphKey)
-    .map(([t, p]) => [t, p.graphKey!]),
-);
-
-export const EVENT_TO_MODULE_QUEUE: Record<string, string> = Object.fromEntries(
-  Object.entries(PLATFORM_EVENT_PLAN)
-    .filter(([, p]) => p.kind === 'graph' && p.moduleQueue)
-    .map(([t, p]) => [t, p.moduleQueue!]),
-);
-
-export const GRAPH_TO_MODULE_QUEUE: Record<string, string> = Object.fromEntries(
-  Object.values(PLATFORM_EVENT_PLAN)
-    .filter((p) => p.kind === 'graph' && p.graphKey && p.moduleQueue)
-    .map((p) => [p.graphKey!, p.moduleQueue!]),
-);
-
+/**
+ * Module queues known to workers (createQueue / work). Not an event→graph map.
+ */
 export const MODULE_QUEUES = [
-  ...new Set(Object.values(EVENT_TO_MODULE_QUEUE)),
-] as string[];
+  'module.syntra.jd',
+  'module.design.resume',
+  'module.design.duplicate',
+  'module.syntra.match',
+] as const;
+
+/** @deprecated Prefer module_queue on graph_event_bindings */
+export const EVENT_TO_MODULE_QUEUE: Record<string, string> = {};
+
+/** @deprecated Prefer module_queue on graph_event_bindings */
+export const GRAPH_TO_MODULE_QUEUE: Record<string, string> = {
+  'syntra.jd.workflow': 'module.syntra.jd',
+  'syntra.authored': 'module.syntra.jd',
+  'resume.intake': 'module.design.resume',
+  'duplicate.review': 'module.design.duplicate',
+  'syntra.match.workflow': 'module.syntra.match',
+};
 
 export const INGRESS_QUEUE = 'orchestration.ingress';
 export const DISPATCH_QUEUE = 'orchestration.dispatch';

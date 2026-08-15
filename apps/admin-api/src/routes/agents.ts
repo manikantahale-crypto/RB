@@ -7,10 +7,14 @@ import {
   generateGraphFromLlm,
   GenerationFailedError,
   loadEventCatalog,
+  loadEventSchemaDetail,
   GraphDefinitionSchema,
   validateAuthoredGraphForGoLive,
   evaluateGoLiveGate,
-  buildGapAckMeta,
+  buildGenerationMeta,
+  buildLlmGenerationTrace,
+  buildGraphSystemPrompt,
+  readGenerationMeta,
   readGapAckFromMeta,
   oneActiveIndexIsPerGraphKey,
   listActiveTemplates,
@@ -18,6 +22,10 @@ import {
   summarizeGraphWorkflow,
   templateForAgentId,
   validateAgentPolicy,
+  enrichPolicyFromDefaults,
+  EventAlreadyBoundError,
+  upsertActiveEventBinding,
+  resolveActiveEventBinding,
   type GraphDefinition,
   type AgentPolicy,
   type LLMClient,
@@ -75,6 +83,22 @@ function readOrgId(headers: Record<string, unknown>): string | null {
 function readAdminId(headers: Record<string, unknown>): string {
   const raw = headers["x-admin-id"];
   return raw ? String(raw) : "admin-local";
+}
+
+const AGENT_ID_RE =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+
+function parseAgentId(raw: unknown): string | null {
+  const id = String(raw ?? "").trim();
+  if (!id || !AGENT_ID_RE.test(id)) return null;
+  return id;
+}
+
+function invalidAgentId(reply: any) {
+  return reply.code(400).send({
+    error: "INVALID_AGENT_ID",
+    message: "Provide a valid agent UUID in the URL.",
+  });
 }
 
 async function latestPolicy(
@@ -245,12 +269,18 @@ async function validatePolicyForAgent(
 
   const withIds =
     typeof rawPolicy === "object" && rawPolicy !== null
-      ? {
-          ...(rawPolicy as object),
-          agentId,
-          agentKey: tmpl.agentKey,
-        }
-      : { agentId, agentKey: tmpl.agentKey };
+      ? enrichPolicyFromDefaults(
+          {
+            ...(rawPolicy as object),
+            agentId,
+            agentKey: tmpl.agentKey,
+          },
+          tmpl.template.policyExt,
+        )
+      : enrichPolicyFromDefaults(
+          { agentId, agentKey: tmpl.agentKey },
+          tmpl.template.policyExt,
+        );
 
   const validated = validateAgentPolicy(withIds, {
     policyExt: tmpl.template.policyExt,
@@ -334,7 +364,11 @@ export function registerAgentRoutes(
           g.version AS last_generated_version,
           g.generated_at AS last_generated_at,
           g.generated_by AS last_generated_by,
-          g.status AS last_generated_status
+          g.status AS last_generated_status,
+          b.event_type AS binding_event_type,
+          b.graph_key AS binding_graph_key,
+          b.version AS binding_version,
+          b.source AS binding_source
         FROM agent_definitions d
         LEFT JOIN LATERAL (
           SELECT display_name
@@ -369,6 +403,14 @@ export function registerAgentRoutes(
            ORDER BY generated_at DESC, version DESC
            LIMIT 1
         ) g ON true
+        LEFT JOIN LATERAL (
+          SELECT event_type, graph_key, version, source
+            FROM graph_event_bindings
+           WHERE agent_id = d.id
+             AND status = 'active'
+           ORDER BY updated_at DESC
+           LIMIT 1
+        ) b ON true
         WHERE d.is_active = true
         ORDER BY COALESCE(t.display_name, d.name)
         `,
@@ -410,13 +452,22 @@ export function registerAgentRoutes(
                 status: r.last_generated_status,
               }
             : null,
+          binding: r.binding_event_type
+            ? {
+                eventType: r.binding_event_type,
+                graphKey: r.binding_graph_key,
+                version: r.binding_version ?? null,
+                source: r.binding_source ?? "authoring",
+              }
+            : null,
         })),
       });
     });
   });
 
   app.get("/agents/:id", async (req: any, reply: any) => {
-    const agentId = String(req.params.id);
+    const agentId = parseAgentId(req.params.id);
+    if (!agentId) return invalidAgentId(reply);
     const orgId = readOrgId(req.headers);
     const adminId = readAdminId(req.headers);
 
@@ -434,20 +485,23 @@ export function registerAgentRoutes(
         definition: unknown;
         version: number;
         checksum: string;
+        status?: string;
+        generatedAt?: Date;
+        meta?: unknown;
       } | null = null;
       // Latest generated graph for this agent — not tied to current draft version
       // (a new Save draft bumps version without clearing the prior workflow).
       {
         const verRows = await client.query(
           orgId === null
-            ? `SELECT version, artifact_source, checksum
+            ? `SELECT version, artifact_source, checksum, status, generated_at, meta
                  FROM agent_versions
                 WHERE agent_id = $1 AND org_id IS NULL
                   AND artifact_source IS NOT NULL
                   AND artifact_source <> ''
                 ORDER BY generated_at DESC NULLS LAST, version DESC
                 LIMIT 1`
-            : `SELECT version, artifact_source, checksum
+            : `SELECT version, artifact_source, checksum, status, generated_at, meta
                  FROM agent_versions
                 WHERE agent_id = $1 AND org_id = $2
                   AND artifact_source IS NOT NULL
@@ -457,7 +511,14 @@ export function registerAgentRoutes(
           orgId === null ? [agentId] : [agentId, orgId],
         );
         const vrow = verRows.rows[0] as
-          | { version: number; artifact_source: string; checksum: string }
+          | {
+              version: number;
+              artifact_source: string;
+              checksum: string;
+              status: string;
+              generated_at: Date;
+              meta: unknown;
+            }
           | undefined;
         if (vrow?.artifact_source) {
           const definition = parseStoredGraphArtifact(vrow.artifact_source);
@@ -466,8 +527,99 @@ export function registerAgentRoutes(
               definition,
               version: vrow.version,
               checksum: vrow.checksum,
+              status: vrow.status,
+              generatedAt: vrow.generated_at,
+              meta: vrow.meta,
             };
           }
+        }
+      }
+
+      const generation = workflow?.meta
+        ? readGenerationMeta(workflow.meta)
+        : null;
+
+      const triggerEventType =
+        typeof (latest?.policy as Record<string, unknown> | undefined)
+          ?.triggerEventType === "string"
+          ? String(
+              (latest!.policy as Record<string, unknown>).triggerEventType,
+            )
+          : generation?.triggerEventType ?? null;
+
+      let triggerEventSchema = null;
+      if (triggerEventType) {
+        try {
+          triggerEventSchema = await loadEventSchemaDetail(
+            client,
+            triggerEventType,
+          );
+        } catch {
+          /* ignore */
+        }
+      }
+
+      const runtimeBinding = await client.query(
+        `SELECT event_type, graph_key, module_queue, version, source, status
+           FROM graph_event_bindings
+          WHERE agent_id = $1::uuid
+            AND status = 'active'
+          ORDER BY updated_at DESC
+          LIMIT 1`,
+        [agentId],
+      );
+      const bindingRow = runtimeBinding.rows[0] as
+        | {
+            event_type: string;
+            graph_key: string;
+            module_queue: string;
+            version: number | null;
+            source: string;
+            status: string;
+          }
+        | undefined;
+
+      let activeCompiledGraph: {
+        graphKey: string;
+        version: number;
+        checksum: string;
+        status: string;
+      } | null = null;
+      const authoredKey = tmpl ? `${tmpl.agentKey}.authored` : null;
+      const graphKeyLookup = bindingRow?.graph_key ?? authoredKey;
+      if (graphKeyLookup) {
+        const gRows = await client.query(
+          orgId === null
+            ? `SELECT graph_key, version, checksum, status
+                 FROM graph_definitions
+                WHERE graph_key = $1
+                  AND org_id IS NULL
+                  AND status = 'active'
+                LIMIT 1`
+            : `SELECT graph_key, version, checksum, status
+                 FROM graph_definitions
+                WHERE graph_key = $1
+                  AND (org_id = $2 OR org_id IS NULL)
+                  AND status = 'active'
+                ORDER BY (org_id IS NOT NULL) DESC
+                LIMIT 1`,
+          orgId === null ? [graphKeyLookup] : [graphKeyLookup, orgId],
+        );
+        const g = gRows.rows[0] as
+          | {
+              graph_key: string;
+              version: number;
+              checksum: string;
+              status: string;
+            }
+          | undefined;
+        if (g) {
+          activeCompiledGraph = {
+            graphKey: g.graph_key,
+            version: g.version,
+            checksum: g.checksum,
+            status: g.status,
+          };
         }
       }
 
@@ -500,13 +652,37 @@ export function registerAgentRoutes(
               createdBy: latest.created_by,
             }
           : null,
-        workflow,
+        workflow: workflow
+          ? {
+              definition: workflow.definition,
+              version: workflow.version,
+              checksum: workflow.checksum,
+              status: workflow.status,
+              generatedAt: workflow.generatedAt,
+            }
+          : null,
+        generation,
+        triggerEventSchema,
+        runtime: bindingRow
+          ? {
+              binding: {
+                eventType: bindingRow.event_type,
+                graphKey: bindingRow.graph_key,
+                moduleQueue: bindingRow.module_queue,
+                version: bindingRow.version,
+                source: bindingRow.source,
+                status: bindingRow.status,
+              },
+              activeCompiledGraph,
+            }
+          : { binding: null, activeCompiledGraph },
       });
     });
   });
 
   app.put("/agents/:id/policy", async (req: any, reply: any) => {
-    const agentId = String(req.params.id);
+    const agentId = parseAgentId(req.params.id);
+    if (!agentId) return invalidAgentId(reply);
     const orgId = readOrgId(req.headers);
     const adminId = readAdminId(req.headers);
     const body = (req.body ?? {}) as {
@@ -613,7 +789,8 @@ export function registerAgentRoutes(
   });
 
   app.post("/agents/:id/generate", async (req: any, reply: any) => {
-    const agentId = String(req.params.id);
+    const agentId = parseAgentId(req.params.id);
+    if (!agentId) return invalidAgentId(reply);
     const orgId = readOrgId(req.headers);
     const adminId = readAdminId(req.headers);
     const body = (req.body ?? {}) as {
@@ -734,6 +911,8 @@ export function registerAgentRoutes(
         mode: "llm" | "template";
         unsupported?: string[];
         builtSummary?: string;
+        rawText?: string;
+        generationTrace?: ReturnType<typeof buildLlmGenerationTrace>;
       };
 
       if (mode === "llm" && accept) {
@@ -766,6 +945,17 @@ export function registerAgentRoutes(
             mode: "llm",
             unsupported,
             builtSummary: summarizeGraphWorkflow(locked).line,
+            generationTrace: buildLlmGenerationTrace({
+              userRequest:
+                userRequest ||
+                String(
+                  (validated.policy as Record<string, unknown>).prompt ?? "",
+                ),
+              systemPrompt: buildGraphSystemPrompt({ events: [] }),
+              rawText: "(persisted from accepted preview)",
+              model: "accepted",
+              definition: locked,
+            }),
           };
         } catch (err: any) {
           const message = err?.message ?? String(err);
@@ -807,6 +997,14 @@ export function registerAgentRoutes(
             events,
             graphKey: `${validated.agentKey}.authored`,
           });
+          const systemPrompt = buildGraphSystemPrompt({ events });
+          const generationTrace = buildLlmGenerationTrace({
+            userRequest,
+            systemPrompt,
+            rawText: llmResult.rawText,
+            model: llmResult.model,
+            definition: llmResult.definition,
+          });
           artifact = {
             source: llmResult.source,
             checksum: llmResult.checksum,
@@ -816,6 +1014,8 @@ export function registerAgentRoutes(
             mode: "llm",
             unsupported: llmResult.unsupported,
             builtSummary: llmResult.builtSummary,
+            rawText: llmResult.rawText,
+            generationTrace,
           };
         } catch (err: any) {
           const message = err?.message ?? String(err);
@@ -844,6 +1044,7 @@ export function registerAgentRoutes(
             request: userRequest,
             unsupported: artifact.unsupported ?? [],
             builtSummary: artifact.builtSummary ?? null,
+            generationTrace: artifact.generationTrace ?? null,
             message:
               (artifact.unsupported?.length ?? 0) > 0
                 ? `Built: ${artifact.builtSummary}. Could NOT add: ${(artifact.unsupported ?? []).join(", ")} (no tool available yet).`
@@ -872,7 +1073,55 @@ export function registerAgentRoutes(
       }
 
       const artifactRef = `agents/${validated.agentKey}/v${latest.version}/graph.json`;
-      const gapMeta = buildGapAckMeta(artifact.unsupported ?? []);
+
+      let events: Awaited<ReturnType<typeof loadEventCatalog>> = [];
+      try {
+        events = await loadEventCatalog(client);
+      } catch (err: any) {
+        req.log?.warn?.(
+          { err: err?.message ?? err },
+          "loadEventCatalog failed; continuing without event descriptions",
+        );
+      }
+
+      const policyRecord = validated.policy as Record<string, unknown>;
+      const triggerType = String(policyRecord.triggerEventType ?? "").trim();
+      let triggerEventSchema: {
+        eventType: string;
+        schemaVersion: string;
+        description: string;
+        payloadSchema: unknown;
+        envelopeFields: unknown;
+      } | null = null;
+      if (triggerType) {
+        try {
+          const detail = await loadEventSchemaDetail(client, triggerType);
+          if (detail) {
+            triggerEventSchema = {
+              eventType: detail.eventType,
+              schemaVersion: detail.schemaVersion,
+              description: detail.description,
+              payloadSchema: detail.payloadSchema,
+              envelopeFields: detail.envelopeFields,
+            };
+          }
+        } catch {
+          /* ignore */
+        }
+      }
+
+      const generationMeta = buildGenerationMeta({
+        mode: artifact.mode,
+        model: artifact.model ?? null,
+        userRequest: mode === "llm" ? userRequest : null,
+        rawText: artifact.rawText ?? null,
+        events,
+        policy: policyRecord,
+        definition: artifact.definition as GraphDefinition,
+        unsupported: artifact.unsupported ?? [],
+        builtSummary: artifact.builtSummary ?? null,
+        triggerEventSchema,
+      });
 
       const { rows: policyRows } = await client.query(
         `UPDATE agent_policies
@@ -926,7 +1175,7 @@ export function registerAgentRoutes(
             artifact.checksum,
             adminId,
             policyRow.id,
-            JSON.stringify(gapMeta),
+            JSON.stringify(generationMeta),
             existingVer.rows[0].id,
           ],
         );
@@ -947,7 +1196,7 @@ export function registerAgentRoutes(
             artifact.source,
             artifact.checksum,
             adminId,
-            JSON.stringify(gapMeta),
+            JSON.stringify(generationMeta),
           ],
         );
         ver = versionRows[0];
@@ -971,6 +1220,7 @@ export function registerAgentRoutes(
         request: mode === "llm" ? userRequest : null,
         unsupported: artifact.unsupported ?? [],
         builtSummary: artifact.builtSummary ?? null,
+        generationTrace: artifact.generationTrace ?? null,
         preview: false,
       });
     });
@@ -981,7 +1231,8 @@ export function registerAgentRoutes(
    * No human approval. Any check fail → 422 with a plain "Can't go live yet" message.
    */
   app.post("/agents/:id/go-live", async (req: any, reply: any) => {
-    const agentId = String(req.params.id);
+    const agentId = parseAgentId(req.params.id);
+    if (!agentId) return invalidAgentId(reply);
     const orgId = readOrgId(req.headers);
     const adminId = readAdminId(req.headers);
     const body = (req.body ?? {}) as { expectedVersion?: number };
@@ -1239,7 +1490,8 @@ export function registerAgentRoutes(
    * Prefer POST /go-live (deterministic auto gate). Kept for backlog / manual review.
    */
   app.post("/agents/:id/request-go-live", async (req: any, reply: any) => {
-    const agentId = String(req.params.id);
+    const agentId = parseAgentId(req.params.id);
+    if (!agentId) return invalidAgentId(reply);
     const orgId = readOrgId(req.headers);
     const adminId = readAdminId(req.headers);
     const body = (req.body ?? {}) as { expectedVersion?: number };
@@ -1327,7 +1579,8 @@ export function registerAgentRoutes(
 
   /** Withdraw a go-live request (back to generated — not live). */
   app.post("/agents/:id/cancel-go-live-request", async (req: any, reply: any) => {
-    const agentId = String(req.params.id);
+    const agentId = parseAgentId(req.params.id);
+    if (!agentId) return invalidAgentId(reply);
     const orgId = readOrgId(req.headers);
     const adminId = readAdminId(req.headers);
     const body = (req.body ?? {}) as { expectedVersion?: number };
@@ -1450,7 +1703,8 @@ export function registerAgentRoutes(
    * Business admins never call this; reviewers do after checking the request.
    */
   app.post("/agents/:id/approve-go-live", async (req: any, reply: any) => {
-    const agentId = String(req.params.id);
+    const agentId = parseAgentId(req.params.id);
+    if (!agentId) return invalidAgentId(reply);
     const orgId = readOrgId(req.headers);
     const adminId = readAdminId(req.headers);
     const body = (req.body ?? {}) as { expectedVersion?: number };
@@ -1576,7 +1830,8 @@ export function registerAgentRoutes(
   });
 
   app.post("/agents/:id/compile", async (req: any, reply: any) => {
-    const agentId = String(req.params.id);
+    const agentId = parseAgentId(req.params.id);
+    if (!agentId) return invalidAgentId(reply);
     const orgId = readOrgId(req.headers);
     const adminId = readAdminId(req.headers);
     const body = (req.body ?? {}) as {
@@ -1767,7 +2022,8 @@ export function registerAgentRoutes(
    * graph_definitions stays draft until Activate (separate, authored-key only).
    */
   app.post("/agents/:id/publish", async (req: any, reply: any) => {
-    const agentId = String(req.params.id);
+    const agentId = parseAgentId(req.params.id);
+    if (!agentId) return invalidAgentId(reply);
     const orgId = readOrgId(req.headers);
     const adminId = readAdminId(req.headers);
     const body = (req.body ?? {}) as {
@@ -1889,7 +2145,8 @@ export function registerAgentRoutes(
    * Never updates syntra.*.workflow (or any non-authored key).
    */
   app.post("/agents/:id/activate", async (req: any, reply: any) => {
-    const agentId = String(req.params.id);
+    const agentId = parseAgentId(req.params.id);
+    if (!agentId) return invalidAgentId(reply);
     const orgId = readOrgId(req.headers);
     const adminId = readAdminId(req.headers);
     const body = (req.body ?? {}) as {
@@ -2105,6 +2362,37 @@ export function registerAgentRoutes(
         [graphKey, latest.version, scopeText],
       );
 
+      // Bind trigger event → this authored graph (DB-only ingress; no code fallback).
+      const policyJson =
+        typeof policyRow.policy === "string"
+          ? JSON.parse(policyRow.policy)
+          : (policyRow.policy as Record<string, unknown>);
+      const triggerEventType = String(policyJson?.triggerEventType ?? "").trim();
+      let bindingEvent: string | null = null;
+      if (triggerEventType) {
+        try {
+          await upsertActiveEventBinding(client, {
+            eventType: triggerEventType,
+            orgId,
+            graphKey,
+            agentId,
+            version: latest.version,
+          });
+          bindingEvent = triggerEventType;
+        } catch (err: any) {
+          if (err instanceof EventAlreadyBoundError || err?.code === "EVENT_ALREADY_BOUND") {
+            return reply.code(409).send({
+              error: "EVENT_ALREADY_BOUND",
+              message: err.message,
+              eventType: err.eventType ?? triggerEventType,
+              existingAgentId: err.existingAgentId ?? null,
+              existingGraphKey: err.existingGraphKey ?? null,
+            });
+          }
+          throw err;
+        }
+      }
+
       return reply.send({
         status: "active",
         agentId,
@@ -2114,6 +2402,7 @@ export function registerAgentRoutes(
         version: latest.version,
         checksum: latest.checksum,
         graphId: activatedId,
+        triggerEventType: bindingEvent,
       });
     });
   });
@@ -2124,7 +2413,8 @@ export function registerAgentRoutes(
    * Never touches runtime *.workflow keys.
    */
   app.post("/agents/:id/rollback", async (req: any, reply: any) => {
-    const agentId = String(req.params.id);
+    const agentId = parseAgentId(req.params.id);
+    if (!agentId) return invalidAgentId(reply);
     const orgId = readOrgId(req.headers);
     const adminId = readAdminId(req.headers);
     const body = (req.body ?? {}) as {
@@ -2369,6 +2659,39 @@ export function registerAgentRoutes(
         [graphKey, targetVersion, scopeText],
       );
 
+      const policyJson =
+        typeof policyRow.policy === "string"
+          ? JSON.parse(policyRow.policy)
+          : (policyRow.policy as Record<string, unknown>);
+      const triggerEventType = String(policyJson?.triggerEventType ?? "").trim();
+      let bindingEvent: string | null = null;
+      if (triggerEventType) {
+        try {
+          await upsertActiveEventBinding(client, {
+            eventType: triggerEventType,
+            orgId,
+            graphKey,
+            agentId,
+            version: targetVersion,
+          });
+          bindingEvent = triggerEventType;
+        } catch (err: any) {
+          if (
+            err instanceof EventAlreadyBoundError ||
+            err?.code === "EVENT_ALREADY_BOUND"
+          ) {
+            return reply.code(409).send({
+              error: "EVENT_ALREADY_BOUND",
+              message: err.message,
+              eventType: err.eventType ?? triggerEventType,
+              existingAgentId: err.existingAgentId ?? null,
+              existingGraphKey: err.existingGraphKey ?? null,
+            });
+          }
+          throw err;
+        }
+      }
+
       return reply.send({
         status: "active",
         rolledBackTo: targetVersion,
@@ -2379,6 +2702,7 @@ export function registerAgentRoutes(
         version: targetVersion,
         checksum: target.checksum,
         graphId: activatedId,
+        triggerEventType: bindingEvent,
       });
     });
   });

@@ -12,6 +12,8 @@ export const TEMPLATE_SEED_CATALOG: Array<{
   displayName: string;
   version: number;
   template: AgentTemplate;
+  /** Runtime spine purpose when seeding agent_definitions (mock product agents). */
+  purpose?: string;
 }> = [
   {
     id: "01900000-0000-7000-8000-000000000601",
@@ -53,14 +55,10 @@ export const TEMPLATE_SEED_CATALOG: Array<{
       agentKey: "intake",
       displayName: "Intake — Channel Arrival Interpreter",
       policyExt: "IntakePolicyExt",
-      // No dedicated intake runtime nodes yet — reuse Syntra process nodes.
-      nodes: [
-        { id: "jd", impl: "syntra.jd.process" },
-        { id: "resume", impl: "syntra.resume.process" },
-      ],
+      // Resume intake (matches seed resume.intake). Duplicate review → use LLM + human.gate.
+      nodes: [{ id: "resume", impl: "syntra.resume.process" }],
       wiring: [
-        ["__start__", "jd"],
-        ["jd", "resume"],
+        ["__start__", "resume"],
         ["resume", "__end__"],
       ],
       conditionalOn: {},
@@ -86,3 +84,93 @@ export const TEMPLATE_SEED_CATALOG: Array<{
     }),
   },
 ];
+
+const SYNTA_MATCH_NODES = [
+  { id: "jd", impl: "syntra.jd.process" },
+  { id: "resume", impl: "syntra.resume.process" },
+  {
+    id: "match",
+    impl: "syntra.match.process",
+    configFrom: ["matchThreshold", "rerank"],
+  },
+] as const;
+
+const SYNTA_MATCH_WIRING = [
+  ["__start__", "jd"],
+  ["jd", "resume"],
+  ["resume", "match"],
+  ["match", "__end__"],
+] as const;
+
+/** Placeholder product agents (built like SYNTRA until dedicated runtime exists). */
+const MOCK_PRODUCT_AGENTS: Array<{
+  id: string;
+  agentKey: string;
+  agentId: string;
+  displayName: string;
+  purpose: string;
+}> = [
+  {
+    id: "01900000-0000-7000-8000-000000000604",
+    agentKey: "astra",
+    agentId: "01900000-0000-7000-8000-000000000504",
+    displayName: "ASTRA — Workforce Analytics",
+    purpose: "Analyze bench talent, pipeline health, and hiring signals.",
+  },
+  {
+    id: "01900000-0000-7000-8000-000000000605",
+    agentKey: "orbit",
+    agentId: "01900000-0000-7000-8000-000000000505",
+    displayName: "ORBIT — Pipeline Orchestration",
+    purpose: "Coordinate handoffs across intake, matching, and recruiter workflows.",
+  },
+  {
+    id: "01900000-0000-7000-8000-000000000606",
+    agentKey: "helix",
+    agentId: "01900000-0000-7000-8000-000000000506",
+    displayName: "HELIX — Candidate Journey",
+    purpose: "Guide candidates through lifecycle steps from intake to placement.",
+  },
+  {
+    id: "01900000-0000-7000-8000-000000000607",
+    agentKey: "tempo",
+    agentId: "01900000-0000-7000-8000-000000000507",
+    displayName: "TEMPO — Scheduling & Follow-ups",
+    purpose: "Schedule interviews, reminders, and timed follow-up actions.",
+  },
+  {
+    id: "01900000-0000-7000-8000-000000000608",
+    agentKey: "prism",
+    agentId: "01900000-0000-7000-8000-000000000508",
+    displayName: "PRISM — Insights & Reporting",
+    purpose: "Summarize match quality, recruiter activity, and bench performance.",
+  },
+  {
+    id: "01900000-0000-7000-8000-000000000609",
+    agentKey: "tayln",
+    agentId: "01900000-0000-7000-8000-000000000509",
+    displayName: "TAYLN — Personalized Outreach",
+    purpose: "Draft tailored outreach and messaging for candidates and clients.",
+  },
+];
+
+for (const m of MOCK_PRODUCT_AGENTS) {
+  TEMPLATE_SEED_CATALOG.push({
+    id: m.id,
+    agentKey: m.agentKey,
+    agentId: m.agentId,
+    displayName: m.displayName,
+    purpose: m.purpose,
+    version: 1,
+    template: AgentTemplateSchema.parse({
+      agentKey: m.agentKey,
+      displayName: m.displayName,
+      policyExt: "SyntraPolicyExt",
+      nodes: [...SYNTA_MATCH_NODES],
+      wiring: [...SYNTA_MATCH_WIRING],
+      conditionalOn: {
+        hardFilters: "stamp hardFilters onto match node config when non-empty",
+      },
+    }),
+  });
+}

@@ -46,12 +46,17 @@ description: >-
 | Uploaded JD/resume | `syntra.jobs` / `syntra.resumes` (Syntra) |
 | Platform event trail | `event_outbox` |
 | Event type registry | `event_schemas` |
-| Graph recipes | `graph_definitions` |
-| Agent policy contracts | `agent_definitions` |
+| Graph recipes (runtime) | `graph_definitions` |
+| Event → graph routing | `graph_event_bindings` |
+| Authoring policy + artifacts | `agent_policies`, `agent_versions` |
+| Agent catalog | `agent_definitions`, `agent_templates` |
 | Run audit (works today) | `orch.runs` / `orch.steps` |
 | Design audit (needs GRANT) | `agent_runs` / `agent_steps` |
 | Queue jobs | `pgboss.*` |
 | Resume state | LangGraph checkpoints |
+
+Admin **writes** authoring tables + go-live materializes runtime tables. Worker
+**reads** `graph_event_bindings` + `graph_definitions` only at event time.
 
 `syntra.ts` is **not** ingress — HTTP peer inside a running graph.
 
@@ -59,9 +64,10 @@ description: >-
 
 If migrator lacks rights, run as **postgres**:
 
-`packages/db/scripts/grant-orch-runtime.sql`
+- `packages/db/scripts/grant-orch-runtime.sql` (worker, relay, ingress)
+- `packages/db/scripts/grant-admin-builder.sql` (admin go-live)
 
-(also mirrored in `R__orch_runtime_grants.sql`). Seeds `syntra.match.requested`.
+(orch grants also mirrored in `R__orch_runtime_grants.sql`). Seeds `syntra.match.requested`.
 
 ## Compiler / workflow rule
 

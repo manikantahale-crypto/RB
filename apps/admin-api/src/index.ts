@@ -18,9 +18,12 @@ import { resolve } from "node:path";
 import {
   createLlmClientFromEnv,
   ensureAuthoringSchema,
+  ensureEventBindingsSchema,
   type LLMClient,
 } from "@tekisho/authoring";
 import { registerAgentRoutes } from "./routes/agents.js";
+import { registerCatalogAndCreateRoutes } from "./routes/catalog.js";
+import { registerBuilderOverviewRoutes } from "./routes/builder-overview.js";
 
 loadEnv({ path: resolve(process.cwd(), "../../.env") });
 loadEnv();
@@ -60,7 +63,7 @@ async function main(): Promise<void> {
   const schemaUrl = migratorUrl as string;
   const migratorPool = new pg.Pool(poolOpts(schemaUrl));
   await ensureAuthoringSchema(migratorPool);
-  await migratorPool.end();
+  await ensureEventBindingsSchema(migratorPool);
 
   const pool = new pg.Pool(poolOpts(dataUrl));
   const llm = tryCreateLlm();
@@ -79,15 +82,18 @@ async function main(): Promise<void> {
   app.get("/health", async () => ({
     ok: true,
     service: "admin-api",
-    stage: "authoring-stage-1",
+    stage: "authoring-builder-v2",
     llmConfigured: Boolean(llm),
   }));
 
+  registerCatalogAndCreateRoutes(app, pool, migratorPool);
+  registerBuilderOverviewRoutes(app, pool);
   registerAgentRoutes(app, pool, { llm });
 
   const shutdown = async () => {
     await app.close();
     await pool.end();
+    await migratorPool.end();
     process.exit(0);
   };
   process.on("SIGINT", shutdown);

@@ -18,6 +18,7 @@ export const RUNTIME_RUNNABLE_IMPLS: readonly string[] = [
   "syntra.jd.process",
   "syntra.resume.process",
   "syntra.match.process",
+  "human.gate",
 ] as const;
 
 export type GoLiveGateCheckId =

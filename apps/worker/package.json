@@ -17,6 +17,7 @@
     "tsx": "^4.23.5"
   },
   "dependencies": {
+    "@tekisho/authoring": "*",
     "@tekisho/domain": "*",
     "@tekisho/orchestrator": "*",
     "dotenv": "^16.4.7",

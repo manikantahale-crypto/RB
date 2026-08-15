@@ -88,18 +88,90 @@ export const POLICY_EXT_UI: Record<string, PolicyFieldDesc[]> = {
   SyntraPolicyExt: [
     {
       key: "prompt",
-      label: "Extra instructions for this agent (optional)",
+      label: "System prompt",
       kind: "textarea",
-      hint: "Plain English is fine — e.g. “Be strict about visa requirements.”",
-      defaultValue: "",
+      hint: "Base instructions for this agent — how it should behave.",
+      defaultValue: "Process Syntra hiring events using the selected tools.",
+    },
+    {
+      key: "allowedTools",
+      label: "Steps this agent may use",
+      kind: "tools",
+      hint: "Select from registered runtime tools only.",
+      defaultValue: ["syntra.jd.process"],
+    },
+    {
+      key: "triggerEventType",
+      label: "When this runs (trigger)",
+      kind: "enum",
+      options: [
+        "syntra.jd.received",
+        "syntra.resume.received",
+        "syntra.match.requested",
+        "syntra.duplicate.review_required",
+      ],
+      optionLabels: {
+        "syntra.jd.received": "Job description received",
+        "syntra.resume.received": "Resume received",
+        "syntra.match.requested": "Match requested",
+        "syntra.duplicate.review_required": "Duplicate review required",
+      },
+      hint: "Which real event starts this graph (one per agent in v1).",
+      defaultValue: "syntra.jd.received",
+    },
+    {
+      key: "matchThreshold",
+      label: "Match score threshold",
+      kind: "number",
+      min: 0,
+      max: 100,
+      defaultValue: 60,
+    },
+    {
+      key: "rerank",
+      label: "Rerank shortlist",
+      kind: "boolean",
+      defaultValue: true,
+    },
+    {
+      key: "hardFilters",
+      label: "Hard filters (on match step)",
+      kind: "multiEnum",
+      options: ["location", "visa", "availability", "experience"],
+      hint: "Applied on syntra.match.process when the workflow includes match.",
+      defaultValue: [],
     },
   ],
   IntakePolicyExt: [
     {
       key: "prompt",
-      label: "Extra instructions for this agent (optional)",
+      label: "System prompt",
       kind: "textarea",
-      defaultValue: "",
+      defaultValue: "Interpret inbound documents and prepare profiles.",
+    },
+    {
+      key: "allowedTools",
+      label: "Steps this agent may use",
+      kind: "tools",
+      defaultValue: ["syntra.resume.process"],
+    },
+    {
+      key: "triggerEventType",
+      label: "When this runs (trigger)",
+      kind: "enum",
+      options: [
+        "syntra.jd.received",
+        "syntra.resume.received",
+        "syntra.match.requested",
+        "syntra.duplicate.review_required",
+      ],
+      optionLabels: {
+        "syntra.jd.received": "Job description received",
+        "syntra.resume.received": "Resume received",
+        "syntra.match.requested": "Match requested",
+        "syntra.duplicate.review_required": "Duplicate review required",
+      },
+      defaultValue: "syntra.resume.received",
     },
     {
       key: "autoClassify",
@@ -111,9 +183,33 @@ export const POLICY_EXT_UI: Record<string, PolicyFieldDesc[]> = {
   CopilotPolicyExt: [
     {
       key: "prompt",
-      label: "Extra instructions for this agent (optional)",
+      label: "System prompt",
       kind: "textarea",
-      defaultValue: "",
+      defaultValue: "Assist recruiters with match explanations.",
+    },
+    {
+      key: "allowedTools",
+      label: "Steps this agent may use",
+      kind: "tools",
+      defaultValue: ["syntra.match.process"],
+    },
+    {
+      key: "triggerEventType",
+      label: "When this runs (trigger)",
+      kind: "enum",
+      options: [
+        "syntra.jd.received",
+        "syntra.resume.received",
+        "syntra.match.requested",
+        "syntra.duplicate.review_required",
+      ],
+      optionLabels: {
+        "syntra.jd.received": "Job description received",
+        "syntra.resume.received": "Resume received",
+        "syntra.match.requested": "Match requested",
+        "syntra.duplicate.review_required": "Duplicate review required",
+      },
+      defaultValue: "syntra.match.requested",
     },
     {
       key: "maxTurns",
@@ -143,6 +239,86 @@ export function formFieldsFor(policyExt: string): {
   const base = baseFieldsFor();
   const ext = extFieldsFor(policyExt);
   return { base, ext, all: [...base, ...ext] };
+}
+
+/**
+ * Admin Policy Box — one free-text field. LLM reads this on Create workflow.
+ * Tools, threshold, and trigger defaults are filled on the server unless set in Advanced.
+ */
+export function policyMainFieldsFor(policyExt: string): PolicyFieldDesc[] {
+  return policyBoxFieldsFor(policyExt);
+}
+
+/** Optional go-live setting — not used to build the graph (LLM uses policy text). */
+export function policyIngressFieldsFor(policyExt: string): PolicyFieldDesc[] {
+  const trigger = extFieldsFor(policyExt).find((f) => f.key === "triggerEventType");
+  return trigger ? [trigger] : [];
+}
+
+/** Retry, escalation, guardrails — collapsible Advanced section. */
+export function policyAdvancedFieldsFor(): PolicyFieldDesc[] {
+  return baseFieldsFor();
+}
+
+/**
+ * Admin-facing Policy Box — one free-text field.
+ */
+export function policyBoxFieldsFor(policyExt: string): PolicyFieldDesc[] {
+  const ext = extFieldsFor(policyExt);
+  const prompt = ext.find((f) => f.key === "prompt");
+  if (prompt) {
+    return [
+      {
+        ...prompt,
+        label: "Policy",
+        hint:
+          "Write everything here in plain English (what to do, threshold, filters, steps). " +
+          "Click Create workflow — the AI builds steps from this text using platform tools.",
+      },
+    ];
+  }
+  return [
+    {
+      key: "prompt",
+      label: "Policy",
+      kind: "textarea",
+      hint:
+        "Write everything here in plain English (what to do, threshold, filters, steps). " +
+        "Click Create workflow — the AI builds steps from this text using platform tools.",
+      defaultValue: "",
+    },
+  ];
+}
+
+/**
+ * Fill hidden policy fields (tools, trigger, retries, etc.) from template defaults
+ * before server validation / graph generation.
+ */
+export function enrichPolicyFromDefaults(
+  raw: Record<string, unknown>,
+  policyExt: string,
+): Record<string, unknown> {
+  const { all } = formFieldsFor(policyExt);
+  let out = defaultFormValues(all);
+  for (const f of all) {
+    const v = getPath(raw, f.key);
+    if (v === undefined || v === null) continue;
+    if ((f.kind === "text" || f.kind === "textarea") && v === "") continue;
+    if (f.kind === "number" && v === "") continue;
+    out = setPath(out, f.key, v);
+  }
+  if (typeof raw.agentId === "string") out.agentId = raw.agentId;
+  if (typeof raw.agentKey === "string") out.agentKey = raw.agentKey;
+
+  for (const f of all) {
+    if (f.kind !== "number") continue;
+    const v = getPath(out, f.key);
+    if (v === "" || v === null || v === undefined) {
+      out = omitPath(out, f.key);
+    }
+  }
+
+  return out;
 }
 
 export function getPath(obj: unknown, path: string): unknown {
@@ -175,6 +351,29 @@ export function setPath(
       value,
     ),
   };
+}
+
+function omitPath(
+  obj: Record<string, unknown>,
+  path: string,
+): Record<string, unknown> {
+  const parts = path.split(".");
+  if (parts.length === 1) {
+    const { [path]: _removed, ...rest } = obj;
+    return rest;
+  }
+  const [head, ...restParts] = parts;
+  const child = obj[head!];
+  if (child == null || typeof child !== "object") return obj;
+  const next = omitPath(
+    { ...(child as Record<string, unknown>) },
+    restParts.join("."),
+  );
+  if (Object.keys(next).length === 0) {
+    const { [head!]: _removed, ...rest } = obj;
+    return rest;
+  }
+  return { ...obj, [head!]: next };
 }
 
 export function defaultFormValues(fields: PolicyFieldDesc[]): Record<string, unknown> {
