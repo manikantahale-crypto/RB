@@ -9,11 +9,8 @@ import type { EventInput } from "@tekisho/orchestrator/src/types.js";
 import {
   DISPATCH_QUEUE,
   planForEvent,
+  resolveRoutableGraphKey,
 } from "@tekisho/orchestrator/src/routing/table.js";
-import {
-  ensureEventBindingsSchema,
-  resolveActiveEventBinding,
-} from "@tekisho/authoring/src/event-bindings.js";
 import { startOutboxRelay } from "./workers/outbox-relay.worker.js";
 import { startIngressRouter } from "./workers/ingress-router.worker.js";
 import { startModuleWorkers } from "./workers/module-execute.worker.js";
@@ -73,24 +70,18 @@ async function bootstrapPgBoss(): Promise<void> {
   await ensureFailedWorkflowsTable(pool);
   await ensureJobPinTable(pool);
   await ensureIngressEventSchemas(pool);
-  await ensureEventBindingsSchema(pool);
   const runner = new WorkflowRunner(compiler, pool);
 
-  await startIngressRouter({ boss, compiler, pool });
+  await startIngressRouter({ boss, compiler });
   await startModuleWorkers({ boss, pool, compiler, runner });
   await startResumeThreadWorker({ boss, runner });
 
-  const resolveGraphKey = async (
-    eventType: string,
-    organizationId?: string,
-  ) => {
-    const binding = await resolveActiveEventBinding(
-      pool,
+  const resolveGraphKey = (eventType: string, organizationId?: string) =>
+    resolveRoutableGraphKey({
       eventType,
       organizationId,
-    );
-    return binding?.graph_key ?? null;
-  };
+      hasActive: (key, orgId) => compiler.hasActiveDefinition(key, orgId),
+    });
 
   const stopOutboxRelay = await startOutboxRelay({
     boss,

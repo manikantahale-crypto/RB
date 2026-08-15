@@ -5,7 +5,6 @@ import {
 import type { AgentPolicyBaseType } from "./agent-policy-base.js";
 import { policySchemaForExt } from "./policy-ext.js";
 import { isRegisteredTool } from "./tool-registry.js";
-import { isTriggerEventType } from "./trigger-events.js";
 
 /** Composed policy: base + product-specific extension fields. */
 export type AgentPolicy = AgentPolicyBaseType & Record<string, unknown>;
@@ -58,31 +57,6 @@ export function validateAgentPolicy(
         });
       }
     }
-  } else {
-    fields.push({
-      path: "allowedTools",
-      message: "Select at least one registered tool",
-    });
-  }
-
-  const trigger = policy.triggerEventType;
-  if (typeof trigger !== "string" || !trigger.trim()) {
-    fields.push({
-      path: "triggerEventType",
-      message: "Select a trigger event",
-    });
-  } else if (!isTriggerEventType(trigger)) {
-    fields.push({
-      path: "triggerEventType",
-      message: `event "${trigger}" is not a selectable trigger event`,
-    });
-  }
-
-  if (typeof policy.prompt !== "string" || !policy.prompt.trim()) {
-    fields.push({
-      path: "prompt",
-      message: "System prompt is required",
-    });
   }
 
   if (fields.length > 0) {

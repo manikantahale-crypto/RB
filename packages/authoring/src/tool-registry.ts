@@ -66,20 +66,6 @@ export const TOOL_CATALOG: readonly ToolCatalogEntry[] = [
     },
     triggeredBy: "syntra.match.requested",
   },
-  {
-    key: "human.gate",
-    description:
-      "Pause the workflow for human review (duplicate check, approval gate). " +
-      "Set config.reason (e.g. duplicate_review) on the node.",
-    input: {
-      reason: "string (optional) — why review is needed",
-    },
-    output: {
-      event: "syntra.approval.requested",
-      shape: "{ reason, gate, source_event_id }",
-    },
-    triggeredBy: "syntra.duplicate.review_required",
-  },
 ] as const;
 
 /** Registry map used by isRegisteredTool / Generate validation. */

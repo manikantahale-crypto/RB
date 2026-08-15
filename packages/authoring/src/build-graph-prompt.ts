@@ -41,8 +41,6 @@ const DEFAULT_RULES = [
   "When the admin asks for a match score cutoff, set node.config.matchThreshold (0–100) on syntra.match.process.",
   "When the admin asks to rerank (or not), set node.config.rerank true/false on syntra.match.process.",
   "Example match config: { \"hardFilters\": [\"visa\"], \"matchThreshold\": 80 }",
-  "For duplicate review or human approval, use human.gate with config.reason (e.g. duplicate_review). " +
-    "Typical graph: single human.gate node for syntra.duplicate.review_required triggers.",
   "CRITICAL: Never invent tools. Never silently pretend you fulfilled something you cannot.",
   "Always include an \"unsupported\" array (may be empty): strings naming parts of the admin request you could NOT implement with the tools above (e.g. \"email\", \"Slack\").",
   'Output shape: { "graphKey": string, "nodes": [...], "edges": [...], "unsupported": string[] }',

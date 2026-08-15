@@ -11,26 +11,21 @@ export const SyntraPolicyExt = z.object({
     .array(z.enum(["location", "visa", "availability", "experience"]))
     .default([]),
   rerank: z.boolean().default(true),
-  /** System / base instructions (Builder Policy Box). */
-  prompt: z.string().min(1),
-  /** Registered tool keys (multi-select). */
-  allowedTools: z.array(z.string().min(1)).min(1),
-  /** Primary trigger event_type (v1: single trigger per agent). */
-  triggerEventType: z.string().min(1),
+  /** Optional free-text prompt overlay for Stage 1 editor. */
+  prompt: z.string().min(1).optional(),
+  allowedTools: z.array(z.string().min(1)).optional(),
 });
 
 export const IntakePolicyExt = z.object({
   autoClassify: z.boolean().default(true),
-  prompt: z.string().min(1),
-  allowedTools: z.array(z.string().min(1)).min(1),
-  triggerEventType: z.string().min(1),
+  prompt: z.string().min(1).optional(),
+  allowedTools: z.array(z.string().min(1)).optional(),
 });
 
 export const CopilotPolicyExt = z.object({
   maxTurns: z.number().int().min(1).max(50).default(12),
-  prompt: z.string().min(1),
-  allowedTools: z.array(z.string().min(1)).min(1),
-  triggerEventType: z.string().min(1),
+  prompt: z.string().min(1).optional(),
+  allowedTools: z.array(z.string().min(1)).optional(),
 });
 
 export const POLICY_EXT_REGISTRY = {

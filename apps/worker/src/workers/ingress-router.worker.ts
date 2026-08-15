@@ -1,13 +1,13 @@
-import type { Pool } from 'pg';
 import type { PgBoss } from 'pg-boss';
 import type { EventEnvelope } from '@tekisho/domain';
 import type { GraphCompiler } from '@tekisho/orchestrator/src/graphs/compiler.js';
 import {
+  EVENT_TO_MODULE_QUEUE,
+  GRAPH_TO_MODULE_QUEUE,
   INGRESS_QUEUE,
   MODULE_SEND_OPTIONS,
-  planForEvent,
+  resolveRoutableGraphKey,
 } from '@tekisho/orchestrator/src/routing/table.js';
-import { resolveActiveEventBinding } from '@tekisho/authoring/src/event-bindings.js';
 
 export type RoutedEnvelope = EventEnvelope & {
   __graphKey: string;
@@ -15,15 +15,14 @@ export type RoutedEnvelope = EventEnvelope & {
 };
 
 /**
- * Router — reads orchestration.ingress, resolves graph from DB bindings only.
- * No hardcoded PLATFORM_EVENT_PLAN graph fallback (Admin Authoring Layer v2).
+ * Router — reads orchestration.ingress, picks module queue, stamps graph version (D3).
+ * JD events prefer syntra.authored when active; otherwise seed syntra.jd.workflow.
  */
 export async function startIngressRouter(args: {
   boss: PgBoss;
   compiler: GraphCompiler;
-  pool: Pool;
 }): Promise<void> {
-  const { boss, compiler, pool } = args;
+  const { boss, compiler } = args;
 
   await boss.createQueue(INGRESS_QUEUE);
 
@@ -34,31 +33,26 @@ export async function startIngressRouter(args: {
         `[Router] ingress ${envelope.event_type} (${envelope.event_id})`,
       );
 
-      const plan = planForEvent(envelope.event_type);
-      if (plan.kind !== 'graph') {
+      const graphKey = await resolveRoutableGraphKey({
+        eventType: envelope.event_type,
+        organizationId: envelope.organization_id,
+        hasActive: (key, orgId) => compiler.hasActiveDefinition(key, orgId),
+      });
+      if (!graphKey) {
         console.log(
-          `[Router] ${plan.kind} ${envelope.event_type} — ${plan.note} (ack)`,
+          `[Router] terminal / no runbook for ${envelope.event_type} — acking`,
         );
         continue;
       }
 
-      const binding = await resolveActiveEventBinding(
-        pool,
-        envelope.event_type,
-        envelope.organization_id,
-      );
-
-      if (!binding) {
-        console.warn(
-          `[Router] no active DB binding for ${envelope.event_type} ` +
-            `(org=${envelope.organization_id ?? '~global~'}) — unroutable; ack. ` +
-            `Activate an agent for this event in Admin, or re-seed graph_event_bindings.`,
+      const moduleQueue =
+        EVENT_TO_MODULE_QUEUE[envelope.event_type] ??
+        GRAPH_TO_MODULE_QUEUE[graphKey];
+      if (!moduleQueue) {
+        throw new Error(
+          `[Router] graph ${graphKey} has no module queue for ${envelope.event_type}`,
         );
-        continue;
       }
-
-      const graphKey = binding.graph_key;
-      const moduleQueue = binding.module_queue;
 
       const graphVersion = await compiler.resolveActiveVersion(
         graphKey,
@@ -76,13 +70,10 @@ export async function startIngressRouter(args: {
         singletonKey: envelope.event_id,
       });
       console.log(
-        `[Router] ${envelope.event_type} → ${moduleQueue} ${graphKey}@${graphVersion} ` +
-          `via binding source=${binding.source}` +
-          (binding.agent_id ? ` agent=${binding.agent_id}` : '') +
-          ` (${envelope.event_id})`,
+        `[Router] ${envelope.event_type} → ${moduleQueue} ${graphKey}@${graphVersion} (${envelope.event_id})`,
       );
     }
   });
 
-  console.log(`Ingress router listening on ${INGRESS_QUEUE} (DB bindings only)`);
+  console.log(`Ingress router listening on ${INGRESS_QUEUE}`);
 }
