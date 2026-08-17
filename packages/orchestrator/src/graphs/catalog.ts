@@ -43,7 +43,6 @@ export const graphSeedCatalog: GraphSeed[] = [
   ),
   // Syntra UI polls resumes/candidates for processingStatus=processed.
   // Route through Syntra HTTP (same as JD/match) so product rows update.
-  // In-process cv.* nodes remain registered for design/demo without Syntra.
   defineGraph(
     {
       graphKey: 'resume.intake',

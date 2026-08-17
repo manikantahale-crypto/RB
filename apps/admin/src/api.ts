@@ -316,6 +316,12 @@ export function getAgent(id: string) {
   return request<AgentDetail>(`/agents/${id}`);
 }
 
+export function deleteAgent(id: string) {
+  return request<{ status: string; agentId: string }>(`/agents/${id}`, {
+    method: "DELETE",
+  });
+}
+
 export function savePolicy(
   id: string,
   policy: unknown,
@@ -331,6 +337,18 @@ export function savePolicy(
   }>(`/agents/${id}/policy`, {
     method: "PUT",
     body: JSON.stringify({ policy, expectedVersion }),
+  });
+}
+
+export function takeOffline(id: string, expectedVersion?: number) {
+  return request<{
+    status: string;
+    agentId: string;
+    version?: number;
+    message?: string;
+  }>(`/agents/${id}/take-offline`, {
+    method: "POST",
+    body: JSON.stringify({ expectedVersion }),
   });
 }
 

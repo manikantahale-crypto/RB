@@ -29,6 +29,8 @@ import {
   type GraphDefinition,
   type AgentPolicy,
   type LLMClient,
+  isBuilderVisibleAgentId,
+  canDeleteAgentFromBuilder,
 } from "@tekisho/authoring";
 import { canEditAgent, editableAgentIds } from "../entitlement.js";
 import { withOrgScope, type DbQueryable } from "../with-org-scope.js";
@@ -37,6 +39,7 @@ type FastifyLike = {
   get: (path: string, handler: any) => void;
   put: (path: string, handler: any) => void;
   post: (path: string, handler: any) => void;
+  delete: (path: string, handler: any) => void;
   /** Present on real Fastify — used by approve-go-live to chain Stage 2–3. */
   inject?: (opts: {
     method: string;
@@ -417,16 +420,20 @@ export function registerAgentRoutes(
         params,
       );
 
+      const visibleRows = rows.filter((r: { id: string }) =>
+        isBuilderVisibleAgentId(r.id),
+      );
+
       const editable = await editableAgentIds(
         client,
         adminId,
         orgId,
-        rows.map((r: { id: string }) => r.id),
+        visibleRows.map((r: { id: string }) => r.id),
       );
 
       return reply.send({
         orgId,
-        agents: rows.map((r: any) => ({
+        agents: visibleRows.map((r: any) => ({
           id: r.id,
           name: r.name,
           purpose: r.purpose,
@@ -2704,6 +2711,149 @@ export function registerAgentRoutes(
         graphId: activatedId,
         triggerEventType: bindingEvent,
       });
+    });
+  });
+
+  app.post("/agents/:id/take-offline", async (req: any, reply: any) => {
+    const agentId = parseAgentId(req.params.id);
+    if (!agentId) return invalidAgentId(reply);
+    const orgId = readOrgId(req.headers);
+    const adminId = readAdminId(req.headers);
+    const body = (req.body ?? {}) as { expectedVersion?: number };
+
+    return withOrgScope(pool, orgId, async (client) => {
+      if (!(await canEditAgent(client, { adminId, agentId, orgId }))) {
+        return reply.code(403).send({ error: "FORBIDDEN" });
+      }
+
+      const tmpl = await templateForAgentId(client, agentId);
+      if (!tmpl) {
+        return reply.code(404).send({
+          error: "TEMPLATE_NOT_FOUND",
+          message: "No active template for this agent.",
+        });
+      }
+
+      const latest = await latestPolicy(client, agentId, orgId);
+      if (!latest) {
+        return reply.code(404).send({
+          error: "NO_POLICY",
+          message: "No policy found for this agent.",
+        });
+      }
+      if (
+        body.expectedVersion !== undefined &&
+        latest.version !== body.expectedVersion
+      ) {
+        return reply.code(409).send({
+          error: "STALE_POLICY",
+          currentVersion: latest.version,
+        });
+      }
+
+      const graphKey = `${tmpl.agentKey}.authored`;
+      const scopeText = orgId;
+
+      await client.query("BEGIN");
+      try {
+        await client.query(
+          `UPDATE graph_event_bindings
+              SET status = 'retired', updated_at = NOW()
+            WHERE agent_id = $1 AND status = 'active'`,
+          [agentId],
+        );
+        await client.query(
+          `UPDATE graph_definitions
+              SET status = 'retired'
+            WHERE graph_key = $1
+              AND status = 'active'
+              AND org_id IS NOT DISTINCT FROM $2::text`,
+          [graphKey, scopeText],
+        );
+        if (orgId === null) {
+          await client.query(
+            `UPDATE agent_policies
+                SET status = 'published', updated_at = now()
+              WHERE agent_id = $1
+                AND status = 'active'
+                AND org_id IS NULL`,
+            [agentId],
+          );
+        } else {
+          await client.query(
+            `UPDATE agent_policies
+                SET status = 'published', updated_at = now()
+              WHERE agent_id = $1
+                AND status = 'active'
+                AND org_id = $2`,
+            [agentId, orgId],
+          );
+        }
+        await client.query("COMMIT");
+      } catch (err) {
+        await client.query("ROLLBACK");
+        throw err;
+      }
+
+      return reply.send({
+        status: "offline",
+        agentId,
+        version: latest.version,
+        message:
+          "Agent taken offline. New uploads will not use this workflow until you make it live again.",
+      });
+    });
+  });
+
+  app.delete("/agents/:id", async (req: any, reply: any) => {
+    const agentId = parseAgentId(req.params.id);
+    if (!agentId) return invalidAgentId(reply);
+    if (!canDeleteAgentFromBuilder(agentId)) {
+      return reply.code(403).send({
+        error: "AGENT_DELETE_FORBIDDEN",
+        message:
+          "This agent cannot be deleted from Builder (core platform agent).",
+      });
+    }
+
+    const orgId = readOrgId(req.headers);
+    const adminId = readAdminId(req.headers);
+
+    return withOrgScope(pool, orgId, async (client) => {
+      const def = await agentExists(client, agentId);
+      if (!def || !def.is_active) {
+        return reply.code(404).send({ error: "AGENT_NOT_FOUND" });
+      }
+
+      const canEdit = await canEditAgent(client, { adminId, agentId, orgId });
+      if (!canEdit) {
+        return reply.code(403).send({
+          error: "FORBIDDEN",
+          message: "You do not have permission to delete this agent.",
+        });
+      }
+
+      await client.query("BEGIN");
+      try {
+        await client.query(
+          `UPDATE graph_event_bindings
+              SET status = 'retired', updated_at = NOW()
+            WHERE agent_id = $1 AND status = 'active'`,
+          [agentId],
+        );
+        await client.query(
+          `UPDATE agent_definitions
+              SET is_active = false, updated_at = NOW()
+            WHERE id = $1`,
+          [agentId],
+        );
+        await client.query("COMMIT");
+      } catch (err) {
+        await client.query("ROLLBACK");
+        throw err;
+      }
+
+      return reply.send({ status: "deleted", agentId });
     });
   });
 }

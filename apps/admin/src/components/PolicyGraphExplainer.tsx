@@ -1,6 +1,6 @@
 import type { GraphDefinition } from "@tekisho/authoring/src/graph-definition.js";
 import type { GenerationTrace } from "@tekisho/authoring/src/generation-meta.js";
-import { GraphDiagram } from "./GraphDiagram";
+import { WorkflowCanvas } from "./WorkflowCanvas";
 import {
   buildPlannedSteps,
   explainGeneratedGraph,
@@ -77,7 +77,7 @@ export function PolicyGraphExplainer({
       )}
 
       {mode !== "planned" && definition ? (
-        <GraphDiagram definition={definition} version={graphVersion} />
+        <WorkflowCanvas definition={definition} version={graphVersion} />
       ) : null}
     </div>
   );

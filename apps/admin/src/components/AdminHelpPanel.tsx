@@ -52,10 +52,9 @@ export function AdminHelpPanel() {
           <p>
             <strong>SYNTRA (matching)</strong> is the product agent for candidate
             matching when a job description or resume is uploaded.{" "}
-            <strong>ASTRA, ORBIT, HELIX, TEMPO, PRISM, TAYLN</strong> are upcoming
-            product agents — they appear in the list like SYNTRA until their dedicated
-            tools ship. <strong>Custom agents</strong> (e.g. SonuZ) are copies you
-            create to try a different policy without changing the product defaults.
+            <strong>Intake</strong> and <strong>Copilot</strong> are other product
+            agents with their own policies. <strong>Custom agents</strong> are copies
+            you create to try a different policy without changing product defaults.
           </p>
         </section>
         <section>

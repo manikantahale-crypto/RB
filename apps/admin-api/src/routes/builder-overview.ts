@@ -4,6 +4,7 @@ import {
   summarizeGraphWorkflow,
   getToolCatalog,
   listTriggerEvents,
+  isBuilderVisibleAgentId,
 } from "@tekisho/authoring";
 import { withOrgScope } from "../with-org-scope.js";
 
@@ -102,7 +103,11 @@ export function registerBuilderOverviewRoutes(app: FastifyLike, pool: Pool): voi
         defaultGraphKey: e.defaultGraphKey,
       }));
 
-      const agents = rows.map((r: Record<string, unknown>) => {
+      const agents = rows
+        .filter((r: Record<string, unknown>) =>
+          isBuilderVisibleAgentId(String(r.id)),
+        )
+        .map((r: Record<string, unknown>) => {
         const policyJson = r.policy_json as Record<string, unknown> | null;
         const policyText =
           typeof policyJson?.prompt === "string"

@@ -15,7 +15,7 @@ function AppShell() {
         </p>
         <nav className="brand-nav">
           <Link to="/builder">Builder</Link>
-          <Link to="/go-live-requests">Go-live requests</Link>
+          <Link to="/go-live-requests">Go-live</Link>
         </nav>
       </header>
       <Routes>

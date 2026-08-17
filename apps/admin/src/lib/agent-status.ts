@@ -1,4 +1,3 @@
-import type { AgentListItem } from "../api";
 import { friendlyEventLabel } from "./platform-narrative";
 
 export type IngressStatus = {
@@ -12,7 +11,11 @@ export type IngressStatus = {
  * "Live" = uploads/events actually run this workflow; "Not connected" = saved as live but missing trigger link.
  */
 export function agentIngressStatus(
-  agent: Pick<AgentListItem, "policy" | "activeVersion" | "binding">,
+  agent: {
+    policy?: { status?: string } | null;
+    activeVersion?: number | null;
+    binding?: { eventType: string } | null;
+  },
 ): IngressStatus {
   const policyStatus = agent.policy?.status;
   const hasBinding = Boolean(agent.binding?.eventType);

@@ -13,6 +13,7 @@
   "dependencies": {
     "@fastify/cors": "^11.0.1",
     "@tekisho/authoring": "*",
+    "@tekisho/graph-contract": "*",
     "dotenv": "^16.4.7",
     "fastify": "*",
     "pg": "*",

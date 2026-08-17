@@ -1,28 +1,19 @@
 import { useNavigate, useParams } from "react-router-dom";
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import {
   createAgent,
+  deleteAgent,
   getBuilderOverview,
   listAgents,
   type AgentListItem,
   type BuilderOverview,
 } from "../api";
-import { PlatformOrchestrationPanel } from "../components/PlatformOrchestrationPanel";
+import { AgentSummaryBar } from "../components/AgentSummaryBar";
+import { PlatformPoliciesModal } from "../components/PlatformPoliciesModal";
 import { PolicyEditorPage } from "./PolicyEditor";
+import { filterBuilderAgents, canDeleteAgentFromBuilder } from "../lib/agent-filters";
 import { friendlyAgentTitle } from "../lib/platform-narrative";
 import { agentIngressStatus } from "../lib/agent-status";
-
-function formatWhen(iso: string | undefined | null): string {
-  if (!iso) return "—";
-  try {
-    return new Date(iso).toLocaleString(undefined, {
-      dateStyle: "medium",
-      timeStyle: "short",
-    });
-  } catch {
-    return iso;
-  }
-}
 
 export function BuilderPage() {
   const { id } = useParams();
@@ -34,9 +25,11 @@ export function BuilderPage() {
   const [error, setError] = useState<string | null>(null);
   const [creating, setCreating] = useState(false);
   const [showCreate, setShowCreate] = useState(false);
+  const [showAllPolicies, setShowAllPolicies] = useState(false);
   const [newName, setNewName] = useState("");
   const [newPurpose, setNewPurpose] = useState("");
   const [cloneFromId, setCloneFromId] = useState("");
+  const [deletingId, setDeletingId] = useState<string | null>(null);
 
   const refreshOverview = useCallback(async () => {
     setOverviewLoading(true);
@@ -50,7 +43,10 @@ export function BuilderPage() {
       setOverview(null);
     } else {
       setOverviewError(null);
-      setOverview(res.data);
+      setOverview({
+        ...res.data,
+        agents: filterBuilderAgents(res.data.agents),
+      });
     }
     setOverviewLoading(false);
   }, []);
@@ -67,7 +63,7 @@ export function BuilderPage() {
       return;
     }
     setError(null);
-    setAgents(res.data.agents);
+    setAgents(filterBuilderAgents(res.data.agents));
   }
 
   async function refreshAll() {
@@ -77,6 +73,18 @@ export function BuilderPage() {
   useEffect(() => {
     void refreshAll();
   }, []);
+
+  const selectedAgent = useMemo(
+    () => overview?.agents.find((a) => a.id === id) ?? null,
+    [overview, id],
+  );
+
+  useEffect(() => {
+    if (!id || agents === null) return;
+    if (!agents.some((a) => a.id === id)) {
+      navigate("/builder", { replace: true });
+    }
+  }, [id, agents, navigate]);
 
   async function onCreate() {
     const name = newName.trim();
@@ -104,6 +112,32 @@ export function BuilderPage() {
     navigate(`/builder/${res.data.id}`);
   }
 
+  function onAgentDeleted() {
+    void refreshAll();
+    navigate("/builder");
+  }
+
+  async function onDeleteFromSidebar(agentId: string, agentName: string) {
+    if (
+      !window.confirm(
+        `Delete "${friendlyAgentTitle(agentName)}"? This cannot be undone.`,
+      )
+    ) {
+      return;
+    }
+    setDeletingId(agentId);
+    const res = await deleteAgent(agentId);
+    setDeletingId(null);
+    if (!res.ok) {
+      setError(res.body.message ?? res.body.error ?? "Delete failed");
+      return;
+    }
+    if (id === agentId) {
+      navigate("/builder");
+    }
+    await refreshAll();
+  }
+
   return (
     <div className="builder-page-wrap">
       <div className="builder-shell">
@@ -111,21 +145,26 @@ export function BuilderPage() {
           <div className="builder-sidebar-card">
             <div className="builder-sidebar-head">
               <h1>Agents</h1>
-              <button
-                type="button"
-                className="btn"
-                onClick={() => {
-                  setShowCreate(true);
-                  setError(null);
-                }}
-              >
-                + Create agent
-              </button>
+              <div className="builder-sidebar-actions">
+                <button
+                  type="button"
+                  className="btn secondary btn--compact"
+                  onClick={() => setShowAllPolicies(true)}
+                >
+                  All policies
+                </button>
+                <button
+                  type="button"
+                  className="btn btn--compact"
+                  onClick={() => {
+                    setShowCreate(true);
+                    setError(null);
+                  }}
+                >
+                  + Create
+                </button>
+              </div>
             </div>
-            <p className="muted builder-sidebar-hint">
-              Pick an agent to edit what it does, build its workflow, and make it
-              active on the platform.
-            </p>
 
             {error ? (
               <div className="banner err builder-sidebar-error">{error}</div>
@@ -135,22 +174,19 @@ export function BuilderPage() {
               <div className="builder-create">
                 <h2 className="builder-create-title">New agent</h2>
                 <label className="field">
-                  <span className="field-label">Clone from existing agent</span>
+                  <span className="field-label">Copy from</span>
                   <select
                     value={cloneFromId}
                     onChange={(e) => setCloneFromId(e.target.value)}
                     disabled={creating}
                   >
-                    <option value="">Start from default template</option>
+                    <option value="">Default template</option>
                     {agents?.map((a) => (
                       <option key={a.id} value={a.id}>
                         {friendlyAgentTitle(a.name)}
                       </option>
                     ))}
                   </select>
-                  <span className="hint">
-                    Copies policy + workflow shape. The original agent stays unchanged.
-                  </span>
                 </label>
                 <label className="field">
                   <span className="field-label">Name</span>
@@ -162,19 +198,19 @@ export function BuilderPage() {
                   />
                 </label>
                 <label className="field">
-                  <span className="field-label">Purpose (optional)</span>
+                  <span className="field-label">What should it do?</span>
                   <textarea
-                    rows={3}
+                    rows={2}
                     value={newPurpose}
                     onChange={(e) => setNewPurpose(e.target.value)}
-                    placeholder="What should this agent do?"
+                    placeholder="Short description"
                     disabled={creating}
                   />
                 </label>
                 <div className="card-actions">
                   <button
                     type="button"
-                    className="btn"
+                    className="btn btn--compact"
                     disabled={creating}
                     onClick={() => void onCreate()}
                   >
@@ -182,7 +218,7 @@ export function BuilderPage() {
                   </button>
                   <button
                     type="button"
-                    className="btn secondary"
+                    className="btn secondary btn--compact"
                     disabled={creating}
                     onClick={() => setShowCreate(false)}
                   >
@@ -193,16 +229,17 @@ export function BuilderPage() {
             ) : null}
 
             {agents === null ? (
-              <div className="loading">Loading agents…</div>
+              <div className="loading">Loading…</div>
             ) : agents.length === 0 ? (
-              <p className="muted">No agents yet. Click + Create agent.</p>
+              <p className="muted">No agents yet.</p>
             ) : (
               <ul className="builder-agent-list">
                 {agents.map((a) => {
                   const selected = a.id === id;
                   const ingress = agentIngressStatus(a);
+                  const deletable = canDeleteAgentFromBuilder(a.id);
                   return (
-                    <li key={a.id}>
+                    <li key={a.id} className="builder-agent-row">
                       <button
                         type="button"
                         className={`builder-agent-item${selected ? " selected" : ""}`}
@@ -211,18 +248,23 @@ export function BuilderPage() {
                         <span className="builder-agent-name">
                           {friendlyAgentTitle(a.name)}
                         </span>
-                        <span
-                          className={`badge ${ingress.badgeClass}`}
-                          title={ingress.detail ?? undefined}
-                        >
+                        <span className={`badge ${ingress.badgeClass}`}>
                           {ingress.label}
                         </span>
-                        <span className="builder-agent-meta">
-                          {a.lastGenerated
-                            ? formatWhen(a.lastGenerated.generatedAt)
-                            : "No graph yet"}
-                        </span>
                       </button>
+                      {deletable ? (
+                        <button
+                          type="button"
+                          className="builder-agent-delete"
+                          title="Delete agent"
+                          disabled={deletingId === a.id}
+                          onClick={() =>
+                            void onDeleteFromSidebar(a.id, a.name)
+                          }
+                        >
+                          {deletingId === a.id ? "…" : "×"}
+                        </button>
+                      ) : null}
                     </li>
                   );
                 })}
@@ -232,34 +274,42 @@ export function BuilderPage() {
         </aside>
 
         <main className="builder-main">
-          <PlatformOrchestrationPanel
-            overview={overview}
-            loading={overviewLoading}
-            error={overviewError}
-            selectedId={id}
-            onSelectAgent={(agentId) => navigate(`/builder/${agentId}`)}
-          />
+          {overviewError ? (
+            <div className="banner err">{overviewError}</div>
+          ) : null}
 
-          <div className="builder-editor-section">
-            {id ? (
-              <PolicyEditorPage
-                agentId={id}
-                embedded
-                onAgentUpdated={() => void refreshAll()}
-              />
-            ) : (
-              <div className="builder-select-hint">
-                <h2>Edit one agent&apos;s policy</h2>
-                <p>
-                  Click an agent card above or in the sidebar to open its{" "}
-                  <strong>editable Policy box</strong>, then{" "}
-                  <strong>Create workflow</strong> and <strong>Make live</strong>.
-                </p>
-              </div>
-            )}
-          </div>
+          {id && selectedAgent && !overviewLoading ? (
+            <AgentSummaryBar
+              agent={selectedAgent}
+              onDeleted={onAgentDeleted}
+            />
+          ) : id && overviewLoading ? (
+            <div className="loading">Loading…</div>
+          ) : !id ? (
+            <div className="builder-select-hint">
+              <h2>Select an agent</h2>
+              <p className="muted">
+                Pick an agent from the list, or create a new one.
+              </p>
+            </div>
+          ) : null}
+
+          {id ? (
+            <PolicyEditorPage
+              agentId={id}
+              embedded
+              onAgentUpdated={() => void refreshAll()}
+            />
+          ) : null}
         </main>
       </div>
+
+      {showAllPolicies && overview ? (
+        <PlatformPoliciesModal
+          agents={overview.agents}
+          onClose={() => setShowAllPolicies(false)}
+        />
+      ) : null}
     </div>
   );
 }

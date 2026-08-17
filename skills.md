@@ -249,11 +249,12 @@ Idle bootstrap logs only mean **no unpublished outbox rows / no producer / relay
 | Runner + audit | `packages/orchestrator/src/workflow/runner.ts`, `agent-runs.ts` |
 | Syntra HTTP nodes + config | `packages/orchestrator/src/nodes/syntra.ts` |
 | Policy engine (runtime gate) | `packages/orchestrator/src/policy/engine.ts` |
-| Admin UI | `apps/admin/src/pages/PolicyEditor.tsx`, `PlatformOrchestrationPanel.tsx` |
+| Admin UI | `apps/admin/src/pages/PolicyEditor.tsx`, `apps/admin/src/pages/BuilderPage.tsx` |
 | Admin API generate/go-live | `apps/admin-api/src/routes/agents.ts` |
 | LLM graph generation | `packages/authoring/src/generate-graph-from-llm.ts`, `build-graph-prompt.ts` |
 | Template graphs + mock agents | `packages/authoring/src/template-catalog.ts`, `product-agent-defaults.ts` |
 | Go-live gate | `packages/authoring/src/go-live-gate.ts` |
+| **Graph JSON contract** | `packages/graph-contract/src/graph-definition.ts` |
 | Generation audit meta | `packages/authoring/src/generation-meta.ts` |
 | Duplicate-policy warning | `packages/authoring/src/request-scope.ts` |
 | Grants | `packages/db/scripts/grant-orch-runtime.sql`, `grant-admin-builder.sql` |
@@ -280,8 +281,20 @@ Policy textarea (+ tools, trigger event)
 - **Preview is not saved** — UI must show “not saved” until Accept.
 - **Explainer values** come from graph JSON / generation meta, not keyword guesses
   from policy text.
-- **Platform overview** (`PlatformOrchestrationPanel`) shows overall orchestration
-  narrative for naive admins.
+
+### Tools vs nodes vs graphs (do not confuse)
+
+| Concept | Where | Purpose |
+|---------|-------|---------|
+| **Policy** | `agent_policies` | English rules + trigger event; admin edits in Builder |
+| **Graph / workflow** | `agent_versions.artifact_source` → `graph_definitions` | Ordered steps (nodes + edges) the worker runs |
+| **Graph contract** | `packages/graph-contract` | Single Zod schema for graph JSON (authoring + orchestrator) |
+| **Tool catalog** | `packages/authoring/src/tool-registry.ts` | Step handlers the admin/LLM can pick (`syntra.*`, `human.gate`) |
+| **Runtime nodes** | `packages/orchestrator/src/nodes/registry.ts` | Same four `impl` keys as TOOL_CATALOG — Syntra HTTP + `human.gate` |
+| **Trigger events** | `packages/authoring/src/trigger-events.ts` | Ingress events (e.g. `syntra.resume.received`) — not workflow steps |
+| **Event bindings** | `graph_event_bindings` | Links trigger → active graph after go-live |
+
+**Admin → runtime path:** Save policy → save/generate workflow (graph JSON) → Make live (compile + activate + bind trigger). Manual workflow edit (✎ Save) writes graph JSON **without LLM**; still requires Make live to run in production.
 
 ### Product agents (seeded)
 

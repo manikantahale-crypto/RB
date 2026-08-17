@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState, type ReactNode } from "react";
+import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { Link, useParams } from "react-router-dom";
 import {
   buildPolicyFromForm,
@@ -6,8 +6,6 @@ import {
   formFieldsFor,
   getPath,
   policyMainFieldsFor,
-  policyIngressFieldsFor,
-  policyAdvancedFieldsFor,
   setPath,
   valuesFromPolicy,
   type PolicyFieldDesc,
@@ -28,12 +26,19 @@ import {
   getBuilderOverview,
   savePolicy,
   goLive,
+  takeOffline,
   rollbackAgent,
   type AgentDetail,
   type FieldError,
 } from "../api";
 import type { GenerationTrace } from "@tekisho/authoring/src/generation-meta.js";
 import { WorkflowPreviewSummary } from "../components/WorkflowPreviewSummary";
+import {
+  WorkflowCanvas,
+  stepsToLinearGraph,
+  workflowStepsFromDefinition,
+  type WorkflowStep,
+} from "../components/WorkflowCanvas";
 import { AdminHelpPanel } from "../components/AdminHelpPanel";
 import { PolicyGraphExplainer } from "../components/PolicyGraphExplainer";
 import { WorkflowStatusStepper } from "../components/WorkflowStatusStepper";
@@ -93,7 +98,6 @@ export function PolicyEditorPage({
   const [policyExt, setPolicyExt] = useState("");
   const [mainPolicyFields, setMainPolicyFields] = useState<PolicyFieldDesc[]>([]);
   const [values, setValues] = useState<Record<string, unknown>>({});
-  const [showAdvanced, setShowAdvanced] = useState(false);
   const [toolCatalog, setToolCatalog] = useState<
     Array<{ key: string; description: string }>
   >([]);
@@ -121,6 +125,11 @@ export function PolicyEditorPage({
   const [activityLog, setActivityLog] = useState<string[]>([]);
   const [lastGenerationTrace, setLastGenerationTrace] =
     useState<GenerationTrace | null>(null);
+  const [editingPolicy, setEditingPolicy] = useState(false);
+  const [workflowOutOfDate, setWorkflowOutOfDate] = useState(false);
+  const [editingWorkflow, setEditingWorkflow] = useState(false);
+  const [workflowSteps, setWorkflowSteps] = useState<WorkflowStep[]>([]);
+  const policySectionRef = useRef<HTMLDivElement>(null);
 
   function pushActivity(message: string) {
     const line = `${new Date().toLocaleTimeString()} — ${message}`;
@@ -161,6 +170,23 @@ export function PolicyEditorPage({
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps -- load on agent id change
   }, [id]);
+
+  useEffect(() => {
+    if (embedded) setEditingPolicy(false);
+  }, [id, embedded]);
+
+  useEffect(() => {
+    setWorkflowOutOfDate(false);
+    setPendingPreview(null);
+    setEditingWorkflow(false);
+  }, [id]);
+
+  useEffect(() => {
+    if (!editingWorkflow) {
+      const def = pendingPreview?.definition ?? workflowDef;
+      setWorkflowSteps(workflowStepsFromDefinition(def));
+    }
+  }, [workflowDef, pendingPreview, editingWorkflow]);
 
   useEffect(() => {
     void getBuilderOverview().then((res) => {
@@ -358,6 +384,11 @@ export function PolicyEditorPage({
     setUi("success");
     setBanner(`Saved draft v${saved.data.version}.`);
     pushActivity(`Saved policy draft v${saved.data.version}`);
+    if (embedded) setEditingPolicy(false);
+    if (workflowDef) {
+      setWorkflowOutOfDate(true);
+    }
+    onAgentUpdated?.();
   }
 
   function discardPreview() {
@@ -457,7 +488,9 @@ export function PolicyEditorPage({
         message: res.data.message,
         generationTrace: res.data.generationTrace ?? null,
       });
-      setLastGenerationTrace(res.data.generationTrace ?? null);
+    setWorkflowOutOfDate(false);
+    setEditingWorkflow(false);
+    setLastGenerationTrace(res.data.generationTrace ?? null);
       setUi("preview");
       setBanner(
         "Preview created — not saved yet. Review below, then Accept & save to persist.",
@@ -541,6 +574,7 @@ export function PolicyEditorPage({
     setLastGenerationTrace(
       res.data.generationTrace ?? pendingPreview.generationTrace ?? null,
     );
+    setWorkflowOutOfDate(false);
     setUi("success");
     setBanner(
       "Workflow saved. When you're happy with it, make it live below.",
@@ -662,6 +696,90 @@ export function PolicyEditorPage({
     onAgentUpdated?.();
   }
 
+  async function onTakeOffline() {
+    const confirmed = window.confirm(
+      "Take this agent offline?\n\nNew uploads will stop using this workflow until you make it live again.",
+    );
+    if (!confirmed) return;
+
+    setUi("going_live");
+    setBanner(null);
+    const res = await takeOffline(id, version);
+    if (!res.ok) {
+      if (res.body.error === "STALE_POLICY") {
+        await handleStale(res.body.currentVersion);
+        return;
+      }
+      setUi("server");
+      setBanner(
+        res.body.message ?? res.body.error ?? "Could not take agent offline.",
+      );
+      return;
+    }
+    await syncFromServer();
+    setUi("success");
+    setBanner(res.data.message ?? "Agent taken offline.");
+    setGoLiveChecks(null);
+    onAgentUpdated?.();
+  }
+
+  async function onSaveWorkflowManual() {
+    const graphKey =
+      workflowDef?.graphKey ??
+      pendingPreview?.definition.graphKey ??
+      `${agentKey}.authored`;
+    const def = stepsToLinearGraph(graphKey, workflowSteps);
+    if (!def) {
+      setBanner("Add at least one workflow step.");
+      return;
+    }
+
+    const v = validateAgentPolicy(payload, { policyExt });
+    if (!v.ok) {
+      setUi("validation");
+      setFields(v.fields);
+      setBanner("Fix policy errors before saving workflow.");
+      return;
+    }
+
+    setUi("accepting");
+    setBanner(null);
+    const res = await generateAgent(id, v.policy, version, {
+      mode: "llm",
+      accept: true,
+      definition: def,
+      request: policyText,
+    });
+    if (!res.ok) {
+      if (res.body.error === "STALE_POLICY") {
+        await handleStale(res.body.currentVersion);
+        return;
+      }
+      setUi("server");
+      setBanner(
+        friendlyGenerateError(res.body.message, res.body.error) ||
+          "Could not save workflow.",
+      );
+      return;
+    }
+
+    setVersion(res.data.version);
+    setStatus(res.data.status);
+    setChecksum(res.data.checksum ?? null);
+    if (res.data.definition && typeof res.data.definition === "object") {
+      setWorkflowDef(res.data.definition as GraphDefinition);
+    } else {
+      setWorkflowDef(def);
+    }
+    setPendingPreview(null);
+    setWorkflowOutOfDate(false);
+    setEditingWorkflow(false);
+    setLastGenerationTrace(res.data.generationTrace ?? null);
+    setUi("success");
+    setBanner("Workflow saved — no AI call needed.");
+    onAgentUpdated?.();
+  }
+
   async function onRollback() {
     const target = Number(rollbackTarget);
     if (!Number.isFinite(target) || target <= 0) {
@@ -732,56 +850,78 @@ export function PolicyEditorPage({
     status === "published";
   const displayTitle = friendlyAgentTitle(name);
   const displayPurpose = adminFacingPrompt(purpose) || purpose;
+  const simpleLayout = embedded;
+  const isAgentLive =
+    status === "active" || Boolean(runtime?.binding?.eventType);
+  const showBanner =
+    banner &&
+    (!simpleLayout ||
+      bannerClass === "err" ||
+      bannerClass === "warn" ||
+      ui === "preview");
 
   return (
-    <section className={`editor-page${embedded ? " editor-page--embedded" : ""}`}>
+    <section className={`editor-page${embedded ? " editor-page--embedded editor-page--simple" : ""}`}>
       {!embedded ? (
         <Link className="back-link" to="/builder">
           ← Builder
         </Link>
       ) : null}
 
-      <header className="editor-hero">
-        <div className="editor-hero-text">
-          <h1>{displayTitle}</h1>
-          <p>{displayPurpose}</p>
-        </div>
-        <div className="editor-hero-meta">
-          <span className={`badge ${statusBadgeClass(status)}`}>
-            {statusLabel}
-          </span>
-        </div>
-      </header>
+      {!simpleLayout ? (
+        <header className="editor-hero">
+          <div className="editor-hero-text">
+            <h1>{displayTitle}</h1>
+            <p>{displayPurpose}</p>
+          </div>
+          <div className="editor-hero-meta">
+            <span className={`badge ${statusBadgeClass(status)}`}>
+              {statusLabel}
+            </span>
+          </div>
+        </header>
+      ) : null}
 
-      {banner ? <div className={`banner ${bannerClass}`}>{banner}</div> : null}
+      {showBanner ? <div className={`banner ${bannerClass}`}>{banner}</div> : null}
 
       {pendingPreview ? (
         <div className="banner warn preview-not-saved-banner" role="alert">
-          <strong>Preview only — not saved.</strong> The workflow below is not in the
-          database yet. Click <strong>Accept &amp; save</strong> to write graph JSON
-          to <code>agent_versions</code>, or <strong>Discard</strong> to edit your
-          policy again.
+          {simpleLayout ? (
+            <>
+              <strong>Preview only — not saved yet.</strong> Click{" "}
+              <strong>Accept & save</strong> below or discard to keep editing.
+            </>
+          ) : (
+            <>
+              <strong>Preview only — not saved.</strong> The workflow below is not in the
+              database yet. Click <strong>Accept &amp; save</strong> to write graph JSON
+              to <code>agent_versions</code>, or <strong>Discard</strong> to edit your
+              policy again.
+            </>
+          )}
         </div>
       ) : null}
 
-      <WorkflowStatusStepper
-        phase={workflowPhase}
-        version={version}
-        graphKey={
-          pendingPreview?.definition.graphKey ??
-          workflowDef?.graphKey ??
-          runtime?.binding?.graphKey
-        }
-        hasUnsavedPreview={pendingPreview !== null}
-      />
+      {!simpleLayout ? (
+        <WorkflowStatusStepper
+          phase={workflowPhase}
+          version={version}
+          graphKey={
+            pendingPreview?.definition.graphKey ??
+            workflowDef?.graphKey ??
+            runtime?.binding?.graphKey
+          }
+          hasUnsavedPreview={pendingPreview !== null}
+        />
+      ) : null}
 
-      <AdminHelpPanel />
+      {!simpleLayout ? <AdminHelpPanel /> : null}
 
       {bindingConflictHint ? (
         <div className="banner warn">{bindingConflictHint}</div>
       ) : null}
 
-      {policyDirty ? (
+      {policyDirty && !simpleLayout ? (
         <div className="banner warn">
           You changed the policy after the last graph was built. Click{" "}
           <strong>Update workflow</strong> to store a new graph version (v
@@ -789,29 +929,109 @@ export function PolicyEditorPage({
         </div>
       ) : null}
 
-      <ol className="pipeline-steps" aria-label="Authoring pipeline">
-        {[
-          { id: "policy", label: "Policy" },
-          { id: "generate", label: "Create workflow" },
-          { id: "live", label: "Make live" },
-        ].map((s) => (
-          <li key={s.id}>{s.label}</li>
-        ))}
-      </ol>
+      {!simpleLayout ? (
+        <ol className="pipeline-steps" aria-label="Authoring pipeline">
+          {[
+            { id: "policy", label: "Policy" },
+            { id: "generate", label: "Create workflow" },
+            { id: "live", label: "Make live" },
+          ].map((s) => (
+            <li key={s.id}>{s.label}</li>
+          ))}
+        </ol>
+      ) : null}
 
-      <div className="editor-layout editor-layout--simple">
+      <div className={`editor-layout${simpleLayout ? " editor-layout--simple-only" : " editor-layout--simple"}`}>
         <div className="editor-main">
-          <div className="section-card policy-box">
-            <div className="section-head">
-              <div>
-                <h2>Policy Box</h2>
-                <p className="muted">
-                  Describe what this agent should do in plain English. Create
-                  workflow sends this text to the LLM with the tool catalog;
-                  the model returns graph JSON (preview before save).
-                </p>
+          {simpleLayout ? (
+            <div className="agent-panel" ref={policySectionRef}>
+              <div className="agent-panel-head">
+                <h3>Policy</h3>
+                <div className="agent-panel-actions">
+                  {editingPolicy ? (
+                    <>
+                      <button
+                        type="button"
+                        className="btn btn--compact"
+                        disabled={locked}
+                        onClick={() => void onSaveDraft()}
+                      >
+                        {ui === "saving" ? "Saving…" : "Save"}
+                      </button>
+                      <button
+                        type="button"
+                        className="icon-btn"
+                        title="Cancel"
+                        disabled={locked}
+                        onClick={() => setEditingPolicy(false)}
+                      >
+                        ✕
+                      </button>
+                    </>
+                  ) : (
+                    <button
+                      type="button"
+                      className="icon-btn"
+                      title="Edit policy"
+                      disabled={locked}
+                      onClick={() => setEditingPolicy(true)}
+                    >
+                      ✎
+                    </button>
+                  )}
+                </div>
               </div>
+              {fields.length > 0 ? (
+                <ul className="field-errors">
+                  {fields.map((f) => (
+                    <li key={f.path}>
+                      <code>{f.path}</code>: {f.message}
+                    </li>
+                  ))}
+                </ul>
+              ) : null}
+              {editingPolicy ? (
+                <div className="policy-fields policy-fields--builder">
+                  {mainPolicyFields.map((f) => {
+                    const raw = getPath(values, f.key);
+                    const err = fields.find(
+                      (e) =>
+                        e.path === f.key || e.path.startsWith(f.key + "."),
+                    );
+                    return renderPolicyField(
+                      f,
+                      raw,
+                      err,
+                      locked,
+                      updateField,
+                      toolCatalog,
+                    );
+                  })}
+                </div>
+              ) : (
+                <p className="policy-readonly">
+                  {policyText ||
+                    "Click the pencil to describe what this agent should do."}
+                </p>
+              )}
             </div>
+          ) : null}
+
+          {!simpleLayout ? (
+            <div
+              className="section-card policy-box"
+              ref={policySectionRef}
+            >
+              <div className="section-head">
+                <div>
+                  <h2>Policy Box</h2>
+                  <p className="muted">
+                    Describe what this agent should do in plain English. Create
+                    workflow sends this text to the LLM with the tool catalog;
+                    the model returns graph JSON (preview before save).
+                  </p>
+                </div>
+              </div>
 
             {fields.length > 0 ? (
               <ul className="field-errors">
@@ -840,48 +1060,6 @@ export function PolicyEditorPage({
               })}
             </div>
 
-            <details
-              className="policy-advanced"
-              open={showAdvanced}
-              onToggle={(e) =>
-                setShowAdvanced((e.target as HTMLDetailsElement).open)
-              }
-            >
-              <summary>
-                Advanced — when this runs (go-live), retry, escalation, guardrails
-              </summary>
-              <div className="policy-fields policy-fields--builder">
-                {policyIngressFieldsFor(policyExt).map((f) => {
-                  const raw = getPath(values, f.key);
-                  const err = fields.find(
-                    (e) => e.path === f.key || e.path.startsWith(f.key + "."),
-                  );
-                  return renderPolicyField(
-                    f,
-                    raw,
-                    err,
-                    locked,
-                    updateField,
-                    toolCatalog,
-                  );
-                })}
-                {policyAdvancedFieldsFor().map((f) => {
-                  const raw = getPath(values, f.key);
-                  const err = fields.find(
-                    (e) => e.path === f.key || e.path.startsWith(f.key + "."),
-                  );
-                  return renderPolicyField(
-                    f,
-                    raw,
-                    err,
-                    locked,
-                    updateField,
-                    toolCatalog,
-                  );
-                })}
-              </div>
-            </details>
-
             <div className="card-actions">
               <button
                 type="button"
@@ -893,61 +1071,199 @@ export function PolicyEditorPage({
               </button>
             </div>
           </div>
+          ) : null}
 
-          <div className="section-card workflow-card">
-            <div className="section-head">
-              <div>
-                <h2>Workflow</h2>
-                <p className="muted">
-                  Preview runs policy text through the LLM pipeline, then Accept
-                  saves graph JSON to the database.
+          <div className={`${simpleLayout ? "agent-panel" : "section-card workflow-card"}`}>
+            <div className={simpleLayout ? "agent-panel-head" : "section-head"}>
+              {simpleLayout ? (
+                <h3>Workflow</h3>
+              ) : (
+                <div>
+                  <h2>Workflow</h2>
+                  <p className="muted">
+                    Preview runs policy text through the LLM pipeline, then Accept
+                    saves graph JSON to the database.
+                  </p>
+                </div>
+              )}
+              {simpleLayout ? (
+                <div className="agent-panel-actions">
+                  {pendingPreview ? (
+                    <>
+                      <button
+                        type="button"
+                        className="btn btn--compact"
+                        disabled={busy || !canEdit}
+                        onClick={() => void onAcceptPreview()}
+                      >
+                        {ui === "accepting" ? "Saving…" : "Save workflow"}
+                      </button>
+                      <button
+                        type="button"
+                        className="btn secondary btn--compact"
+                        disabled={busy}
+                        onClick={discardPreview}
+                      >
+                        Discard
+                      </button>
+                      <button
+                        type="button"
+                        className="icon-btn"
+                        title="Edit steps manually instead"
+                        disabled={busy}
+                        onClick={() => {
+                          setWorkflowSteps(
+                            workflowStepsFromDefinition(
+                              pendingPreview.definition,
+                            ),
+                          );
+                          discardPreview();
+                          setEditingWorkflow(true);
+                        }}
+                      >
+                        ✎
+                      </button>
+                    </>
+                  ) : editingWorkflow ? (
+                    <>
+                      <button
+                        type="button"
+                        className="btn btn--compact"
+                        disabled={locked || ui === "accepting"}
+                        onClick={() => void onSaveWorkflowManual()}
+                      >
+                        {ui === "accepting" ? "Saving…" : "Save"}
+                      </button>
+                      <button
+                        type="button"
+                        className="icon-btn"
+                        title="Cancel"
+                        disabled={ui === "accepting"}
+                        onClick={() => setEditingWorkflow(false)}
+                      >
+                        ✕
+                      </button>
+                    </>
+                  ) : (
+                    <>
+                      <button
+                        type="button"
+                        className="icon-btn"
+                        title="Edit workflow steps"
+                        disabled={locked}
+                        onClick={() => {
+                          const steps = workflowStepsFromDefinition(
+                            pendingPreview?.definition ?? workflowDef,
+                          );
+                          setWorkflowSteps(
+                            steps.length > 0
+                              ? steps
+                              : [
+                                  {
+                                    id: "step_1",
+                                    impl: "syntra.jd.process",
+                                  },
+                                ],
+                          );
+                          setEditingWorkflow(true);
+                        }}
+                      >
+                        ✎
+                      </button>
+                      <button
+                        type="button"
+                        className="icon-btn"
+                        title="Rebuild from policy using AI (costs tokens)"
+                        disabled={generateDisabled}
+                        onClick={() => void onGenerate()}
+                      >
+                        {ui === "generating" ? "…" : "AI"}
+                      </button>
+                    </>
+                  )}
+                </div>
+              ) : null}
+            </div>
+
+            {simpleLayout ? (
+              <>
+              {workflowOutOfDate && !pendingPreview && !editingWorkflow ? (
+                <p className="workflow-stale-hint" role="status">
+                  Policy changed. Edit workflow steps here, or use <strong>AI</strong> to
+                  rebuild from policy.
                 </p>
+              ) : null}
+              <div
+                className={
+                  workflowOutOfDate && !pendingPreview && !editingWorkflow
+                    ? "workflow-canvas--stale"
+                    : undefined
+                }
+              >
+                <WorkflowCanvas
+                  definition={pendingPreview?.definition ?? workflowDef}
+                  version={pendingPreview ? undefined : version}
+                  editable={editingWorkflow}
+                  steps={editingWorkflow ? workflowSteps : undefined}
+                  onStepsChange={editingWorkflow ? setWorkflowSteps : undefined}
+                  emptyHint="Click ✎ to add steps manually (free), or AI to build from policy."
+                />
               </div>
-            </div>
-
-            <div className="form-block">
-              <PolicyGraphExplainer
-                policyText={policyText}
-                template={
-                  agentTemplate as {
-                    nodes?: Array<{ id: string; impl: string }>;
-                    wiring?: Array<[string, string]>;
-                  } | null
-                }
-                definition={explainerDefinition}
-                graphKey={
-                  explainerDefinition?.graphKey ??
-                  runtime?.binding?.graphKey
-                }
-                graphVersion={pendingPreview ? undefined : version}
-                mode={explainerMode}
-                generationTrace={
-                  pendingPreview?.generationTrace ??
-                  lastGenerationTrace ??
-                  null
-                }
-              />
-            </div>
+              {generateDisabled && generateDisabledReason && !editingWorkflow ? (
+                <p className="hint generate-hint" role="status">
+                  {generateDisabledReason}
+                </p>
+              ) : null}
+              </>
+            ) : (
+              <div className="form-block">
+                <PolicyGraphExplainer
+                  policyText={policyText}
+                  template={
+                    agentTemplate as {
+                      nodes?: Array<{ id: string; impl: string }>;
+                      wiring?: Array<[string, string]>;
+                    } | null
+                  }
+                  definition={explainerDefinition}
+                  graphKey={
+                    explainerDefinition?.graphKey ?? runtime?.binding?.graphKey
+                  }
+                  graphVersion={pendingPreview ? undefined : version}
+                  mode={explainerMode}
+                  generationTrace={
+                    pendingPreview?.generationTrace ??
+                    lastGenerationTrace ??
+                    null
+                  }
+                />
+              </div>
+            )}
 
             {pendingPreview ? (
-              <div className="gap-report" role="status">
-                <h3 className="form-block-title">Review before saving</h3>
-                <p className="gap-report-built">
-                  <strong>Built:</strong>{" "}
-                  {pendingPreview.builtSummary ??
-                    summarizeGraphWorkflow(pendingPreview.definition).line}
-                </p>
-                {pendingPreview.unsupported.length > 0 ? (
+              <div className={`gap-report${simpleLayout ? " gap-report--simple" : ""}`} role="status">
+                {!simpleLayout ? (
+                  <h3 className="form-block-title">Review before saving</h3>
+                ) : null}
+                {!simpleLayout ? (
+                  <p className="gap-report-built">
+                    <strong>Built:</strong>{" "}
+                    {pendingPreview.builtSummary ??
+                      summarizeGraphWorkflow(pendingPreview.definition).line}
+                  </p>
+                ) : null}
+                {pendingPreview.unsupported.length > 0 && !simpleLayout ? (
                   <p className="gap-report-unsupported">
                     <strong>Could NOT add:</strong>{" "}
                     {pendingPreview.unsupported.join(", ")} (no tool available
                     yet).
                   </p>
-                ) : (
+                ) : !simpleLayout ? (
                   <p className="muted">
                     Everything in your request maps to available steps.
                   </p>
-                )}
+                ) : null}
+                {!simpleLayout ? (
                 <ol className="workflow-steps workflow-steps--plain gap-report-steps">
                   {summarizeGraphWorkflow(pendingPreview.definition).steps.map(
                     (s) => (
@@ -960,12 +1276,16 @@ export function PolicyEditorPage({
                     ),
                   )}
                 </ol>
-                <WorkflowPreviewSummary
-                  definition={pendingPreview.definition}
-                  builtSummary={pendingPreview.builtSummary}
-                  trace={pendingPreview.generationTrace}
-                  isPreviewOnly
-                />
+                ) : null}
+                {!simpleLayout ? (
+                  <WorkflowPreviewSummary
+                    definition={pendingPreview.definition}
+                    builtSummary={pendingPreview.builtSummary}
+                    trace={pendingPreview.generationTrace}
+                    isPreviewOnly
+                  />
+                ) : null}
+                {!simpleLayout ? (
                 <div className="card-actions">
                   <button
                     type="button"
@@ -973,7 +1293,7 @@ export function PolicyEditorPage({
                     disabled={busy || !canEdit}
                     onClick={() => void onAcceptPreview()}
                   >
-                    {ui === "accepting" ? "Savingâ€¦" : "Accept & save"}
+                    {ui === "accepting" ? "Saving…" : "Save workflow"}
                   </button>
                   <button
                     type="button"
@@ -984,8 +1304,9 @@ export function PolicyEditorPage({
                     Discard
                   </button>
                 </div>
+                ) : null}
               </div>
-            ) : (
+            ) : !simpleLayout ? (
               <div className="card-actions">
                 {workflowDef && lastGenerationTrace ? (
                   <WorkflowPreviewSummary
@@ -1011,22 +1332,80 @@ export function PolicyEditorPage({
                   </p>
                 ) : null}
               </div>
-            )}
+            ) : null}
 
-            <div className="activity-log" aria-label="Recent actions">
-              <h3 className="form-block-title">Recent actions</h3>
-              {activityLog.length === 0 ? (
-                <p className="muted">No actions yet.</p>
-              ) : (
-                <ol className="activity-log-list">
-                  {activityLog.map((line) => (
-                    <li key={line}>{line}</li>
-                  ))}
-                </ol>
-              )}
-            </div>
+            {!simpleLayout ? (
+              <div className="activity-log" aria-label="Recent actions">
+                <h3 className="form-block-title">Recent actions</h3>
+                {activityLog.length === 0 ? (
+                  <p className="muted">No actions yet.</p>
+                ) : (
+                  <ol className="activity-log-list">
+                    {activityLog.map((line) => (
+                      <li key={line}>{line}</li>
+                    ))}
+                  </ol>
+                )}
+              </div>
+            ) : null}
           </div>
 
+          {simpleLayout ? (
+            <div className="agent-panel agent-panel--live">
+              <div className="agent-panel-head">
+                <h3>Go live</h3>
+              </div>
+              {isAgentLive ? (
+                <>
+                  <p className="muted agent-live-hint">
+                    This agent is live
+                    {runtime?.binding
+                      ? ` — runs when ${friendlyEventLabel(runtime.binding.eventType)}`
+                      : ""}
+                    .
+                  </p>
+                  <button
+                    type="button"
+                    className="btn secondary btn--compact"
+                    disabled={locked || ui === "going_live"}
+                    onClick={() => void onTakeOffline()}
+                  >
+                    {ui === "going_live" ? "Working…" : "Take offline"}
+                  </button>
+                </>
+              ) : (
+                <>
+                  <p className="muted agent-live-hint">
+                    {workflowSummary.empty
+                      ? "Create a workflow first, then make it live."
+                      : "Ready when you are — we run safety checks first."}
+                  </p>
+                  <button
+                    type="button"
+                    className="btn btn--compact"
+                    disabled={locked || !canGoLive}
+                    onClick={() => void onGoLive()}
+                  >
+                    {ui === "going_live" ? "Going live…" : "Make it live"}
+                  </button>
+                </>
+              )}
+              {goLiveChecks ? (
+                <ul className="go-live-checks">
+                  {goLiveChecks.map((c) => (
+                    <li
+                      key={c.id}
+                      className={c.ok ? "check-ok" : "check-fail"}
+                    >
+                      {c.ok ? "✓" : "✗"} {c.message}
+                    </li>
+                  ))}
+                </ul>
+              ) : null}
+            </div>
+          ) : null}
+
+          {!simpleLayout ? (
           <div className="section-card">
             <div className="section-head">
               <div>
@@ -1126,8 +1505,10 @@ export function PolicyEditorPage({
               </div>
             </div>
           </div>
+          ) : null}
         </div>
 
+        {!simpleLayout ? (
         <aside className="panel panel--simple">
           <h2>At a glance</h2>
           <dl className="panel-list">
@@ -1201,6 +1582,7 @@ export function PolicyEditorPage({
             </div>
           </dl>
         </aside>
+        ) : null}
       </div>
     </section>
   );

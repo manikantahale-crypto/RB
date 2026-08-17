@@ -1,7 +1,7 @@
 /**
  * Enriched tool catalog for the LLM graph generator (llm-graph-generator-design §4.1).
  *
- * Keys must match runtime `nodeRegistry` production nodes.
+ * Keys must match runtime `nodeRegistry` (same four production impls).
  * Teammate tools land here as catalog data only — no engine change (A6 / §9 #5).
  */
 
@@ -81,6 +81,14 @@ export const TOOL_CATALOG: readonly ToolCatalogEntry[] = [
     triggeredBy: "syntra.duplicate.review_required",
   },
 ] as const;
+
+/**
+ * Admin-authorable node impl keys that pass go-live (must exist in orchestrator nodeRegistry).
+ * Single source — do not duplicate in go-live-gate.
+ */
+export const RUNTIME_RUNNABLE_IMPLS: readonly string[] = TOOL_CATALOG.map(
+  (t) => t.key,
+);
 
 /** Registry map used by isRegisteredTool / Generate validation. */
 export const TOOL_REGISTRY: Record<

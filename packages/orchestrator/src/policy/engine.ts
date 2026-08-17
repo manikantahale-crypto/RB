@@ -32,13 +32,7 @@ export const DEFAULT_IMPL_ACTION_CLASS: Record<string, ActionClass> = {
   'syntra.jd.process': 'INTERNAL_WRITE',
   'syntra.resume.process': 'INTERNAL_WRITE',
   'syntra.match.process': 'INTERNAL_WRITE',
-  'cv.summarize': 'READ',
-  'cv.embed': 'INTERNAL_WRITE',
-  'jd.match': 'READ',
-  'match.persist': 'INTERNAL_WRITE',
   'human.gate': 'CONTROL',
-  'event.emit': 'CONTROL',
-  'system.record_failure': 'INTERNAL_WRITE',
 };
 
 const ACTION_CLASSES: ActionClass[] = [

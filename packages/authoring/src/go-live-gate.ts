@@ -5,21 +5,9 @@ import {
   type GraphDefinition,
 } from "./graph-definition.js";
 import { validateGraphNodeConfigs } from "./validate-llm-graph.js";
+import { RUNTIME_RUNNABLE_IMPLS } from "./tool-registry.js";
 
-/**
- * Production keys from packages/orchestrator/src/nodes/registry.ts
- * (excludes test.resume.*).
- *
- * Check 1 uses THIS list — never the authoring TOOL_CATALOG alone.
- * Do not weaken: if an impl isn't here, go-live must block.
- * Becomes permissive only as real runtime tools are added to the registry.
- */
-export const RUNTIME_RUNNABLE_IMPLS: readonly string[] = [
-  "syntra.jd.process",
-  "syntra.resume.process",
-  "syntra.match.process",
-  "human.gate",
-] as const;
+export { RUNTIME_RUNNABLE_IMPLS };
 
 export type GoLiveGateCheckId =
   | "tools_runnable"

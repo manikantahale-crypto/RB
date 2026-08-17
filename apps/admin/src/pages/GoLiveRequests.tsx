@@ -2,8 +2,13 @@ import { Link } from "react-router-dom";
 import { useCallback, useEffect, useState } from "react";
 import {
   approveGoLive,
+  listAgents,
   listGoLiveRequests,
+  type AgentListItem,
 } from "../api";
+import { filterBuilderAgents } from "../lib/agent-filters";
+import { agentIngressStatus } from "../lib/agent-status";
+import { friendlyAgentTitle } from "../lib/platform-narrative";
 
 type GoLiveRequest = {
   agentId: string;
@@ -15,17 +20,6 @@ type GoLiveRequest = {
   requestedBy: string;
   checksum: string | null;
 };
-
-function friendlyTitle(raw: string): string {
-  let t = raw.trim();
-  if (!t) return "Agent";
-  t = t.replace(/^SYNTRA\s*[—–-]\s*/i, "");
-  t = t.replace(/^matching-agent$/i, "Candidate matching");
-  t = t.replace(/^intake-agent$/i, "Intake");
-  t = t.replace(/^copilot$/i, "Recruiter assistant");
-  t = t.replace(/-agent$/i, "");
-  return t.trim() || "Agent";
-}
 
 function formatWhen(iso: string | undefined | null): string {
   if (!iso) return "—";
@@ -39,26 +33,40 @@ function formatWhen(iso: string | undefined | null): string {
   }
 }
 
-/**
- * Technical review queue — Approve runs compile → publish → activate.
- * Business admins only Request; they never see this page's Approve action
- * as their primary path (linked from nav for reviewers).
- */
 export function GoLiveRequestsPage() {
+  const [liveAgents, setLiveAgents] = useState<AgentListItem[] | null>(null);
   const [requests, setRequests] = useState<GoLiveRequest[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [banner, setBanner] = useState<string | null>(null);
   const [busyId, setBusyId] = useState<string | null>(null);
 
   const reload = useCallback(async () => {
-    const res = await listGoLiveRequests();
-    if (!res.ok) {
-      setError(res.body.message ?? res.body.error ?? "Failed to load requests");
-      setRequests([]);
-      return;
+    const [agentsRes, reqRes] = await Promise.all([
+      listAgents(),
+      listGoLiveRequests(),
+    ]);
+
+    if (!agentsRes.ok) {
+      setError(
+        agentsRes.body.message ?? agentsRes.body.error ?? "Failed to load agents",
+      );
+      setLiveAgents([]);
+    } else {
+      setError(null);
+      const visible = filterBuilderAgents(agentsRes.data.agents);
+      setLiveAgents(
+        visible.filter((a) => {
+          const ingress = agentIngressStatus(a);
+          return ingress.label === "Live" || a.policy?.status === "active";
+        }),
+      );
     }
-    setError(null);
-    setRequests(res.data.requests);
+
+    if (!reqRes.ok) {
+      setRequests([]);
+    } else {
+      setRequests(reqRes.data.requests);
+    }
   }, []);
 
   useEffect(() => {
@@ -67,7 +75,7 @@ export function GoLiveRequestsPage() {
 
   async function onApprove(row: GoLiveRequest) {
     const ok = window.confirm(
-      `Approve go-live for “${friendlyTitle(row.name)}” (v${row.version})?\n\nThis will make that workflow live after safety checks.`,
+      `Approve go-live for “${friendlyAgentTitle(row.name)}” (v${row.version})?`,
     );
     if (!ok) return;
 
@@ -79,7 +87,7 @@ export function GoLiveRequestsPage() {
       setBanner(
         res.body.message ??
           res.body.error ??
-          "Approve failed — production was not changed if the last step failed.",
+          "Approve failed — production was not changed.",
       );
       await reload();
       return;
@@ -89,17 +97,16 @@ export function GoLiveRequestsPage() {
   }
 
   return (
-    <section>
-      <Link className="back-link" to="/">
-        ← Agents
+    <section className="go-live-page">
+      <Link className="back-link" to="/builder">
+        ← Builder
       </Link>
 
       <div className="page-head">
-        <h1>Go-live requests</h1>
-        <p>
-          Technical backlog of older “request to go live” items. Prefer{" "}
-          <strong>Make this live</strong> on the agent page — it runs automatic
-          safety checks and goes live without a separate approval step.
+        <h1>Go-live</h1>
+        <p className="muted">
+          Agents that are live on the platform, and any older requests waiting for
+          approval.
         </p>
       </div>
 
@@ -112,48 +119,76 @@ export function GoLiveRequestsPage() {
         </div>
       ) : null}
 
-      {requests === null ? (
-        <div className="loading">Loading requests…</div>
-      ) : requests.length === 0 ? (
-        <div className="empty">No go-live requests waiting.</div>
+      <h2 className="go-live-section-title">Live agents</h2>
+      {liveAgents === null ? (
+        <div className="loading">Loading…</div>
+      ) : liveAgents.length === 0 ? (
+        <p className="muted go-live-empty">
+          No agents are live yet. Open an agent in Builder and click{" "}
+          <strong>Make it live</strong>.
+        </p>
       ) : (
-        <div className="agent-list">
-          {requests.map((r) => (
-            <article key={`${r.agentId}-${r.version}`} className="agent-card">
-              <div className="agent-card-main">
-                <h2 className="agent-name">{friendlyTitle(r.name)}</h2>
-                <p className="agent-purpose">{r.purpose}</p>
-                <div className="agent-meta">
-                  <div className="agent-meta-item">
-                    <span className="agent-meta-label">Version</span>
-                    <span>v{r.version}</span>
-                  </div>
-                  <div className="agent-meta-item">
-                    <span className="agent-meta-label">Requested</span>
-                    <span>{formatWhen(r.requestedAt)}</span>
-                  </div>
-                  <div className="agent-meta-item">
-                    <span className="agent-meta-label">By</span>
-                    <span>{r.requestedBy || "—"}</span>
-                  </div>
+        <ul className="go-live-agent-list">
+          {liveAgents.map((a) => {
+            const ingress = agentIngressStatus(a);
+            return (
+              <li key={a.id} className="go-live-agent-card">
+                <div>
+                  <h3>{friendlyAgentTitle(a.name)}</h3>
+                  <p className="muted">{a.purpose}</p>
+                  <span className={`badge ${ingress.badgeClass}`}>
+                    {ingress.label}
+                  </span>
+                  {a.binding ? (
+                    <p className="go-live-agent-trigger muted">
+                      {ingress.detail}
+                    </p>
+                  ) : null}
                 </div>
+                <Link className="btn secondary btn--compact" to={`/builder/${a.id}`}>
+                  Open in Builder
+                </Link>
+              </li>
+            );
+          })}
+        </ul>
+      )}
+
+      <h2 className="go-live-section-title">Waiting for approval</h2>
+      {requests === null ? (
+        <div className="loading">Loading…</div>
+      ) : requests.length === 0 ? (
+        <p className="muted go-live-empty">No requests waiting.</p>
+      ) : (
+        <ul className="go-live-agent-list">
+          {requests.map((r) => (
+            <li key={`${r.agentId}-${r.version}`} className="go-live-agent-card">
+              <div>
+                <h3>{friendlyAgentTitle(r.name)}</h3>
+                <p className="muted">{r.purpose}</p>
+                <p className="go-live-agent-meta muted">
+                  Version {r.version} · requested {formatWhen(r.requestedAt)}
+                </p>
               </div>
-              <div className="agent-card-actions">
-                <Link className="btn secondary" to={`/agents/${r.agentId}`}>
+              <div className="go-live-card-actions">
+                <Link
+                  className="btn secondary btn--compact"
+                  to={`/builder/${r.agentId}`}
+                >
                   Open
                 </Link>
                 <button
                   type="button"
-                  className="btn"
+                  className="btn btn--compact"
                   disabled={busyId === r.agentId}
                   onClick={() => void onApprove(r)}
                 >
-                  {busyId === r.agentId ? "Approving…" : "Approve & make live"}
+                  {busyId === r.agentId ? "Approving…" : "Approve"}
                 </button>
               </div>
-            </article>
+            </li>
           ))}
-        </div>
+        </ul>
       )}
     </section>
   );

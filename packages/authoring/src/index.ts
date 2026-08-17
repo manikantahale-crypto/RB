@@ -74,7 +74,14 @@ export {
   listToolKeys,
   getToolCatalog,
   catalogRelatedEventTypes,
+  RUNTIME_RUNNABLE_IMPLS,
 } from "./tool-registry.js";
+export {
+  GraphDefinitionSchema,
+  validateGraphTopology,
+  checksumOf,
+  type GraphDefinition,
+} from "./graph-definition.js";
 export {
   loadEventCatalog,
   loadEventSchemaDetail,
@@ -139,7 +146,6 @@ export {
   buildGapAckMeta,
   readGapAckFromMeta,
   oneActiveIndexIsPerGraphKey,
-  RUNTIME_RUNNABLE_IMPLS,
   type GoLiveGateInput,
   type GoLiveGateResult,
   type GoLiveGateCheck,
@@ -168,9 +174,12 @@ export {
   type GenerateGraphResult,
 } from "./generate-graph.js";
 export { generateAgentTs, type GenerateResult } from "./generate-agent-ts.js";
-export {
-  GraphDefinitionSchema,
-  validateGraphTopology,
-  type GraphDefinition,
-} from "./graph-definition.js";
 export { ensureAuthoringSchema, seedAgentTemplates, seedProductAgentDefinitions, seedDefaultEntitlements, applyAuthoringRls } from "./ensure-schema.js";
+export {
+  MOCK_PRODUCT_AGENT_IDS,
+  PROTECTED_PRODUCT_AGENT_IDS,
+  isMockProductAgentId,
+  isProtectedProductAgentId,
+  isBuilderVisibleAgentId,
+  canDeleteAgentFromBuilder,
+} from "./mock-product-agents.js";
