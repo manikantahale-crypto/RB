@@ -6,7 +6,6 @@
   "description": "Agent authoring API (Stage 1: Save policy + Generate agent.ts)",
   "main": "./src/index.ts",
   "scripts": {
-    "start": "tsx src/index.ts",
     "dev": "tsx watch src/index.ts",
     "typecheck": "tsc --noEmit",
     "test": "vitest run"

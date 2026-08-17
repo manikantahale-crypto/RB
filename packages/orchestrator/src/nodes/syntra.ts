@@ -63,6 +63,29 @@ async function postSyntra(
   }
 }
 
+/** Pass authored node.config into Syntra HTTP bodies. */
+function optionsFromNodeConfig(
+  config: Record<string, unknown>,
+): Record<string, unknown> {
+  const out: Record<string, unknown> = {};
+  if (typeof config.matchThreshold === 'number') {
+    out.matchThreshold = config.matchThreshold;
+  }
+  if (typeof config.rerank === 'boolean') {
+    out.rerank = config.rerank;
+  }
+  if (
+    Array.isArray(config.hardFilters) &&
+    config.hardFilters.length > 0
+  ) {
+    out.hardFilters = config.hardFilters;
+  }
+  if (typeof config.prompt === 'string' && config.prompt.trim()) {
+    out.prompt = config.prompt.trim();
+  }
+  return out;
+}
+
 function completionEvent(
   trigger: EventInput,
   eventType: string,
@@ -87,7 +110,10 @@ export const syntraJdProcess: NodeImpl = async (state, ctx) => {
   if (!jobId || !trigger) throw new Error('syntra.jd.process: no jobId in payload');
 
   ctx.logger.info('calling Syntra JD process', { jobId, orgId: ctx.orgId });
-  const r = await postSyntra(`/internal/jobs/${jobId}/process`);
+  const r = await postSyntra(
+    `/internal/jobs/${jobId}/process`,
+    optionsFromNodeConfig(ctx.config),
+  );
   ctx.events.emit(
     completionEvent(trigger, EVENT_TYPES.JD_PARSED, {
       jobId,
@@ -103,8 +129,16 @@ export const syntraJdProcess: NodeImpl = async (state, ctx) => {
 /** Summarize resume + profile via Syntra. */
 export const syntraResumeProcess: NodeImpl = async (state, ctx) => {
   const trigger = state.trigger_event;
-  const resumeId = trigger?.payload?.resumeId;
-  const candidateId = trigger?.payload?.candidateId;
+  const p = trigger?.payload ?? {};
+  // Accept camel/snake + document_id (publisher often sets document_id = resume row id).
+  const resumeId =
+    (p.resumeId as string | undefined) ??
+    (p.resume_id as string | undefined) ??
+    (p.document_id as string | undefined) ??
+    (p.documentId as string | undefined);
+  const candidateId =
+    (p.candidateId as string | undefined) ??
+    (p.candidate_id as string | undefined);
   if (!resumeId || !trigger) {
     throw new Error('syntra.resume.process: no resumeId in payload');
   }
@@ -112,6 +146,7 @@ export const syntraResumeProcess: NodeImpl = async (state, ctx) => {
   ctx.logger.info('calling Syntra resume process', { resumeId, orgId: ctx.orgId });
   const r = await postSyntra(`/internal/resumes/${resumeId}/process`, {
     candidateId,
+    ...optionsFromNodeConfig(ctx.config),
   });
   ctx.events.emit(
     completionEvent(trigger, EVENT_TYPES.PROFILE_PREPARED, {
@@ -145,7 +180,12 @@ export const syntraMatchProcess: NodeImpl = async (
     resumeId,
     orgId: ctx.orgId,
   });
-  const r = await postSyntra(`/internal/matches/process`, { jobId, resumeId });
+  const r = await postSyntra(`/internal/matches/process`, {
+    jobId,
+    resumeId,
+    candidateId: trigger.payload?.candidateId,
+    ...optionsFromNodeConfig(ctx.config),
+  });
   const skillMatchScore =
     r.skillMatchScore ??
     r.score ??

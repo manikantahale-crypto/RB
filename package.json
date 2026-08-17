@@ -7,8 +7,11 @@
   ],
   "scripts": {
     "start": "npm run start -w @tekisho/worker",
-    "dev:admin": "concurrently -n api,ui -c blue,green \"npm run dev -w @tekisho/admin-api\" \"npm run dev -w @tekisho/admin\"",
+    "dev:admin-api": "npm run dev -w @tekisho/admin-api",
+    "dev:admin-ui": "npm run dev -w @tekisho/admin",
+    "dev:admin": "npx concurrently -n api,ui -c blue,green \"npm run dev -w @tekisho/admin-api\" \"npm run dev:admin-ui\"",
     "smoke:e2e": "tsx scripts/smoke-e2e.ts",
+    "smoke:generate-threshold": "tsx scripts/smoke-generate-threshold.ts",
     "demo:flow": "tsx scripts/demo-flow.ts"
   },
   "dependencies": {

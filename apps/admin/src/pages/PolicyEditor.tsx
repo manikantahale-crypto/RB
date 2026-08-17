@@ -1,32 +1,54 @@
-﻿import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { Link, useParams } from "react-router-dom";
 import {
-  baseFieldsFor,
   buildPolicyFromForm,
+  enrichPolicyFromDefaults,
   formFieldsFor,
   getPath,
+  policyMainFieldsFor,
+  policyIngressFieldsFor,
+  policyAdvancedFieldsFor,
   setPath,
   valuesFromPolicy,
   type PolicyFieldDesc,
 } from "@tekisho/authoring/src/policy-ext-ui.js";
-import {
-  AGENT_CAPABILITIES_LINE,
-  GENERATE_REQUEST_HINT,
-} from "@tekisho/authoring/src/build-graph-prompt.js";
+import { validateAgentPolicy } from "@tekisho/authoring/src/validate-policy.js";
 import {
   parseStoredGraphArtifact,
   summarizeGraphWorkflow,
 } from "@tekisho/authoring/src/summarize-graph.js";
-import { validateAgentPolicy } from "@tekisho/authoring/src/validate-policy.js";
 import type { GraphDefinition } from "@tekisho/authoring/src/graph-definition.js";
+import {
+  readGenerationMeta,
+  generationMetaToTrace,
+} from "@tekisho/authoring/src/generation-meta.js";
 import {
   generateAgent,
   getAgent,
+  getBuilderOverview,
   savePolicy,
   goLive,
   rollbackAgent,
+  type AgentDetail,
   type FieldError,
 } from "../api";
+import type { GenerationTrace } from "@tekisho/authoring/src/generation-meta.js";
+import { WorkflowPreviewSummary } from "../components/WorkflowPreviewSummary";
+import { AdminHelpPanel } from "../components/AdminHelpPanel";
+import { PolicyGraphExplainer } from "../components/PolicyGraphExplainer";
+import { WorkflowStatusStepper } from "../components/WorkflowStatusStepper";
+import {
+  deriveWorkflowPhase,
+  friendlyBindingConflict,
+} from "../lib/policy-workflow-guide";
+import { policyEditorIngressLabel } from "../lib/agent-status";
+import { friendlyEventLabel } from "../lib/platform-narrative";
+
+type PolicyEditorProps = {
+  agentId?: string;
+  embedded?: boolean;
+  onAgentUpdated?: () => void;
+};
 
 type EditorState =
   | "idle"
@@ -51,10 +73,16 @@ type PendingPreview = {
   builtSummary: string | null;
   request: string;
   message?: string;
+  generationTrace?: GenerationTrace | null;
 };
 
-export function PolicyEditorPage() {
-  const { id = "" } = useParams();
+export function PolicyEditorPage({
+  agentId: agentIdProp,
+  embedded = false,
+  onAgentUpdated,
+}: PolicyEditorProps = {}) {
+  const { id: routeId = "" } = useParams();
+  const id = agentIdProp ?? routeId;
   const [name, setName] = useState("");
   const [purpose, setPurpose] = useState("");
   const [canEdit, setCanEdit] = useState(false);
@@ -63,20 +91,41 @@ export function PolicyEditorPage() {
   const [checksum, setChecksum] = useState<string | null>(null);
   const [agentKey, setAgentKey] = useState("");
   const [policyExt, setPolicyExt] = useState("");
-  const [baseFields, setBaseFields] = useState<PolicyFieldDesc[]>([]);
-  const [extFields, setExtFields] = useState<PolicyFieldDesc[]>([]);
+  const [mainPolicyFields, setMainPolicyFields] = useState<PolicyFieldDesc[]>([]);
   const [values, setValues] = useState<Record<string, unknown>>({});
+  const [showAdvanced, setShowAdvanced] = useState(false);
+  const [toolCatalog, setToolCatalog] = useState<
+    Array<{ key: string; description: string }>
+  >([]);
+  const [goLiveChecks, setGoLiveChecks] = useState<
+    Array<{ id: string; ok: boolean; message: string }> | null
+  >(null);
+  const [bindingConflictHint, setBindingConflictHint] = useState<string | null>(
+    null,
+  );
   const [ui, setUi] = useState<EditorState>("idle");
   const [banner, setBanner] = useState<string | null>(null);
   const [fields, setFields] = useState<FieldError[]>([]);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [rollbackTarget, setRollbackTarget] = useState("");
-  const [generateRequest, setGenerateRequest] = useState("");
   const [workflowDef, setWorkflowDef] = useState<GraphDefinition | null>(null);
   const [pendingPreview, setPendingPreview] = useState<PendingPreview | null>(
     null,
   );
+  const [runtime, setRuntime] = useState<AgentDetail["runtime"] | null>(null);
+  const [agentTemplate, setAgentTemplate] = useState<Record<string, unknown> | null>(
+    null,
+  );
+  const [savedPolicyPrompt, setSavedPolicyPrompt] = useState("");
+  const [activityLog, setActivityLog] = useState<string[]>([]);
+  const [lastGenerationTrace, setLastGenerationTrace] =
+    useState<GenerationTrace | null>(null);
+
+  function pushActivity(message: string) {
+    const line = `${new Date().toLocaleTimeString()} — ${message}`;
+    setActivityLog((prev) => [line, ...prev].slice(0, 12));
+  }
 
   const busy =
     ui === "saving" ||
@@ -89,12 +138,13 @@ export function PolicyEditorPage() {
     ui === "activating" ||
     ui === "rolling_back";
   const locked = busy || !canEdit;
-  const allFields = useMemo(
-    () => [...baseFields, ...extFields],
-    [baseFields, extFields],
-  );
 
   useEffect(() => {
+    if (!id.trim()) {
+      setLoading(false);
+      setLoadError(null);
+      return;
+    }
     let cancelled = false;
     (async () => {
       setLoading(true);
@@ -112,6 +162,19 @@ export function PolicyEditorPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps -- load on agent id change
   }, [id]);
 
+  useEffect(() => {
+    void getBuilderOverview().then((res) => {
+      if (res.ok) {
+        setToolCatalog(
+          res.data.tools.map((t) => ({
+            key: t.key,
+            description: t.description,
+          })),
+        );
+      }
+    });
+  }, []);
+
   async function syncFromServer(): Promise<boolean> {
     const res = await getAgent(id);
     if (!res.ok) {
@@ -122,9 +185,8 @@ export function PolicyEditorPage() {
     }
 
     const pe = res.data.template?.policyExt ?? "";
-    const catalog = formFieldsFor(pe);
-    const resolvedBase = catalog.base.length ? catalog.base : baseFieldsFor();
-    const resolvedExt = pe ? catalog.ext : [];
+    const mainFields = policyMainFieldsFor(pe);
+    const enrichFields = formFieldsFor(pe).all;
 
     setName(res.data.template?.displayName ?? res.data.name);
     setPurpose(res.data.purpose);
@@ -134,18 +196,16 @@ export function PolicyEditorPage() {
     setChecksum(res.data.policy?.checksum ?? null);
     setAgentKey(res.data.template?.agentKey ?? "");
     setPolicyExt(pe);
-    setBaseFields(resolvedBase);
-    setExtFields(resolvedExt);
+    setMainPolicyFields(mainFields);
+    const tmpl = res.data.template?.template ?? null;
+    setAgentTemplate(tmpl && typeof tmpl === "object" ? tmpl : null);
+    let cleanedPrompt = "";
     setValues(() => {
-      const vals = valuesFromPolicy(res.data.policy?.policy ?? null, [
-        ...resolvedBase,
-        ...resolvedExt,
-      ]);
-      const cleaned = adminFacingPrompt(
-        String(getPath(vals, "prompt") ?? ""),
-      );
-      return setPath(vals, "prompt", cleaned);
+      const vals = valuesFromPolicy(res.data.policy?.policy ?? null, enrichFields);
+      cleanedPrompt = adminFacingPrompt(String(getPath(vals, "prompt") ?? ""));
+      return setPath(vals, "prompt", cleanedPrompt);
     });
+    setSavedPolicyPrompt(cleanedPrompt);
     const rawWf = res.data.workflow?.definition;
     const parsed =
       rawWf && typeof rawWf === "object"
@@ -158,6 +218,15 @@ export function PolicyEditorPage() {
         ? parsed
         : null,
     );
+    setRuntime(res.data.runtime ?? null);
+    const genMeta = res.data.generation
+      ? readGenerationMeta(res.data.generation)
+      : null;
+    if (genMeta) {
+      setLastGenerationTrace(
+        generationMetaToTrace(genMeta, parsed ?? workflowDef),
+      );
+    }
     if (!res.data.template) {
       setLoadError("This agent is missing a template. Ask an engineer for help.");
     } else {
@@ -177,9 +246,18 @@ export function PolicyEditorPage() {
     );
   }
 
+  const allPolicyFields = useMemo(
+    () => (policyExt ? formFieldsFor(policyExt).all : []),
+    [policyExt],
+  );
+
   const payload = useMemo(
-    () => buildPolicyFromForm(id, agentKey, values, allFields),
-    [id, agentKey, values, allFields],
+    () =>
+      enrichPolicyFromDefaults(
+        buildPolicyFromForm(id, agentKey, values, allPolicyFields),
+        policyExt,
+      ),
+    [id, agentKey, values, allPolicyFields, policyExt],
   );
 
   const clientValidation = useMemo(() => {
@@ -197,13 +275,90 @@ export function PolicyEditorPage() {
     [workflowDef],
   );
 
+  const policyText = String(getPath(values, "prompt") ?? "").trim();
+  const policyDirty =
+    savedPolicyPrompt.trim() !== policyText &&
+    policyText.length > 0 &&
+    !workflowSummary.empty;
+
+  const workflowPhase = deriveWorkflowPhase({
+    policyText,
+    status,
+    ui,
+    hasGraph: !workflowSummary.empty,
+    policyDirty,
+    hasUnsavedPreview: pendingPreview !== null,
+  });
+
+  const explainerDefinition = pendingPreview?.definition ?? workflowDef;
+  const explainerMode: "planned" | "generated" | "preview" = pendingPreview
+    ? "preview"
+    : workflowSummary.empty
+      ? "planned"
+      : "generated";
+
+  const generateDisabledReason = useMemo(() => {
+    if (loading) return "Loading agent…";
+    if (!canEdit) return "You do not have permission to edit this agent.";
+    if (pendingPreview) return "Accept or discard the preview first.";
+    if (!policyExt) return "Missing template configuration.";
+    if (!clientValidation.ok) {
+      const first = clientValidation.fields[0];
+      return first
+        ? `Fix policy: ${first.path} — ${first.message}`
+        : "Enter your policy in the Policy Box above.";
+    }
+    if (!policyText) {
+      return "Enter a policy description — it is sent to the LLM to build the graph.";
+    }
+    return null;
+  }, [
+    loading,
+    canEdit,
+    pendingPreview,
+    policyExt,
+    clientValidation,
+  ]);
+
   const generateDisabled =
     locked ||
     loading ||
     !clientValidation.ok ||
     !policyExt ||
-    !generateRequest.trim() ||
+    !policyText ||
     pendingPreview !== null;
+
+  function updateField(key: string, value: unknown) {
+    setValues((prev) => setPath({ ...prev }, key, value));
+    setUi("idle");
+  }
+
+  async function onSaveDraft() {
+    const v = validateAgentPolicy(payload, { policyExt });
+    if (!v.ok) {
+      setUi("validation");
+      setFields(v.fields);
+      setBanner("Fix validation errors before saving.");
+      return;
+    }
+    setUi("saving");
+    const saved = await savePolicy(id, v.policy, version);
+    if (!saved.ok) {
+      if (saved.body.error === "STALE_POLICY") {
+        await handleStale(saved.body.currentVersion);
+        return;
+      }
+      setUi("server");
+      setBanner(saved.body.message ?? saved.body.error ?? "Save failed");
+      return;
+    }
+    setVersion(saved.data.version);
+    setStatus(saved.data.status);
+    setSavedPolicyPrompt(policyText);
+    setUi("success");
+    setBanner(`Saved draft v${saved.data.version}.`);
+    pushActivity(`Saved policy draft v${saved.data.version}`);
+  }
 
   function discardPreview() {
     setPendingPreview(null);
@@ -212,13 +367,6 @@ export function PolicyEditorPage() {
   }
 
   async function onGenerate() {
-    const requestText = generateRequest.trim();
-    if (!requestText) {
-      setUi("validation");
-      setBanner("Describe the workflow in plain English before generating.");
-      return;
-    }
-
     const v = validateAgentPolicy(payload, { policyExt });
     if (!v.ok) {
       setUi("validation");
@@ -228,8 +376,6 @@ export function PolicyEditorPage() {
     }
 
     let expectedVersion = version;
-    // Regenerate while already generated / pending review â€” no new draft required.
-    // Otherwise ensure a draft exists (save first).
     if (status !== "generated" && status !== "pending_go_live") {
       if (expectedVersion === undefined || status !== "draft") {
         setUi("saving");
@@ -258,11 +404,17 @@ export function PolicyEditorPage() {
     setFields([]);
     setPendingPreview(null);
 
-    const res = await generateAgent(id, v.policy, expectedVersion, {
-      request: requestText,
-      mode: "llm",
-      preview: true,
-    });
+    const request = policyText;
+    const res = await generateAgent(
+      id,
+      v.policy,
+      expectedVersion,
+      {
+        mode: "llm",
+        request,
+        preview: true,
+      },
+    );
     if (!res.ok) {
       if (res.body.error === "STALE_POLICY") {
         await handleStale(res.body.currentVersion);
@@ -271,7 +423,12 @@ export function PolicyEditorPage() {
       if (res.body.error === "POLICY_INVALID") {
         setUi("validation");
         setFields(res.body.fields ?? []);
-        setBanner("Policy invalid â€” nothing written.");
+        setBanner("Policy invalid — nothing written.");
+        pushActivity(
+          `Generate failed: POLICY_INVALID — ${(res.body.fields ?? [])
+            .map((f) => f.path)
+            .join(", ")}`,
+        );
         return;
       }
       if (res.body.error === "LLM_NOT_CONFIGURED") {
@@ -284,34 +441,57 @@ export function PolicyEditorPage() {
       }
       setUi("server");
       setBanner(friendlyGenerateError(res.body.message, res.body.error));
+      pushActivity(
+        `Generate failed: ${res.body.error ?? "error"} — ${res.body.message ?? ""}`,
+      );
       return;
     }
 
+    if (res.data.preview && res.data.definition) {
+      const def = res.data.definition as GraphDefinition;
+      setPendingPreview({
+        definition: def,
+        unsupported: res.data.unsupported ?? [],
+        builtSummary: res.data.builtSummary ?? null,
+        request,
+        message: res.data.message,
+        generationTrace: res.data.generationTrace ?? null,
+      });
+      setLastGenerationTrace(res.data.generationTrace ?? null);
+      setUi("preview");
+      setBanner(
+        "Preview created — not saved yet. Review below, then Accept & save to persist.",
+      );
+      pushActivity(
+        `LLM preview: ${res.data.graphKey ?? "graph"} — ${request.slice(0, 80)}${
+          request.length > 80 ? "…" : ""
+        }`,
+      );
+      return;
+    }
+
+    setVersion(res.data.version);
+    setStatus(res.data.status);
+    if (res.data.checksum) setChecksum(res.data.checksum);
     const def = res.data.definition;
-    if (!def || typeof def !== "object") {
-      setUi("server");
-      setBanner("Preview returned no workflow â€” nothing stored. Try again.");
-      return;
+    if (def && typeof def === "object") {
+      setWorkflowDef(def as GraphDefinition);
+    } else {
+      await syncFromServer();
     }
-
-    const unsupported = Array.isArray(res.data.unsupported)
-      ? res.data.unsupported
-      : [];
-    const builtSummary =
-      typeof res.data.builtSummary === "string" ? res.data.builtSummary : null;
-    setPendingPreview({
-      definition: def as GraphDefinition,
-      unsupported,
-      builtSummary,
-      request: requestText,
-      message: res.data.message,
-    });
-    setUi("preview");
+    setUi("success");
     setBanner(
-      unsupported.length > 0
-        ? "Review the gap report, then Accept to save â€” or Discard to keep the current workflow."
-        : "Review the proposed workflow, then Accept to save â€” or Discard to keep the current one.",
+      `Workflow created (v${res.data.version}). Review the mapping below, then Make live.`,
     );
+    setSavedPolicyPrompt(policyText);
+    pushActivity(
+      `Generated v${res.data.version}: ${res.data.graphKey} (${
+        Array.isArray((res.data.definition as GraphDefinition | undefined)?.nodes)
+          ? (res.data.definition as GraphDefinition).nodes.length
+          : 0
+      } nodes)`,
+    );
+    onAgentUpdated?.();
   }
 
   async function onAcceptPreview() {
@@ -358,13 +538,29 @@ export function PolicyEditorPage() {
       setWorkflowDef(pendingPreview.definition);
     }
     setPendingPreview(null);
+    setLastGenerationTrace(
+      res.data.generationTrace ?? pendingPreview.generationTrace ?? null,
+    );
     setUi("success");
     setBanner(
-      "Workflow saved. When youâ€™re happy with it, make it live below.",
+      "Workflow saved. When you're happy with it, make it live below.",
     );
+    pushActivity(`Accepted workflow v${res.data.version}`);
+    onAgentUpdated?.();
   }
 
   async function onGoLive() {
+    if (status === "active") {
+      setUi("success");
+      setBanner(
+        runtime?.binding
+          ? `Already live (v${version}) — routes ${runtime.binding.eventType} → ${runtime.binding.graphKey}`
+          : `Already live (v${version}).`,
+      );
+      pushActivity(`Already live at v${version}`);
+      return;
+    }
+
     if (
       status !== "generated" &&
       status !== "pending_go_live" &&
@@ -386,19 +582,47 @@ export function PolicyEditorPage() {
     if (!confirmed) return;
 
     setUi("going_live");
-    setBanner("Making it liveâ€¦");
+    setBanner("Making it live…");
+    pushActivity("Go-live started — running safety checks…");
     const res = await goLive(id, version);
     if (!res.ok) {
       if (res.body.error === "STALE_POLICY") {
         await handleStale(res.body.currentVersion);
         return;
       }
+      if (res.body.error === "ALREADY_LIVE") {
+        await syncFromServer();
+        setUi("success");
+        setBanner(res.body.message ?? "This agent is already live.");
+        pushActivity("Already live");
+        return;
+      }
       if (res.body.error === "GO_LIVE_BLOCKED") {
         setUi("validation");
+        setGoLiveChecks(res.body.checks ?? null);
+        const blocked = res.body.blockedBy?.join(", ") ?? "safety checks";
         setBanner(
           res.body.message ??
-            "Can't go live yet: one or more safety checks failed.",
+            `Can't go live yet: ${blocked} failed.`,
         );
+        pushActivity(
+          `Go-live blocked: ${res.body.message ?? blocked}`,
+        );
+        return;
+      }
+      if (
+        res.body.error === "EVENT_ALREADY_BOUND" ||
+        res.body.error === "GO_LIVE_FAILED"
+      ) {
+        setUi("validation");
+        setBindingConflictHint(
+          "Another agent is already active for this trigger event. Change «When this runs» above to a different event, or ask which agent should own this trigger.",
+        );
+        const msg = friendlyBindingConflict(
+          res.body.message ?? "Trigger event is already used by another live agent.",
+        );
+        setBanner(msg);
+        pushActivity(`Go-live blocked: ${res.body.error}`);
         return;
       }
       setUi("server");
@@ -407,20 +631,35 @@ export function PolicyEditorPage() {
           res.body.error ??
           "Couldn't make this live. Production was not changed.",
       );
+      pushActivity(
+        `Go-live failed: ${res.body.error ?? "error"} — ${res.body.message ?? ""}`,
+      );
       return;
     }
 
     setStatus(res.data.status);
     if (res.data.version != null) setVersion(res.data.version);
     if (res.data.checksum != null) setChecksum(res.data.checksum);
+    setGoLiveChecks(res.data.checks ?? null);
+    setBindingConflictHint(null);
+    await syncFromServer();
     setUi("success");
     const liveVer = res.data.version ?? version;
-    setBanner(
+    const liveMsg =
       res.data.message ??
-        (liveVer != null
-          ? `This agent is now live (version ${liveVer}).`
-          : "This agent is now live."),
+      (liveVer != null
+        ? `This agent is now live (version ${liveVer}).`
+        : "This agent is now live.");
+    setBanner(liveMsg);
+    const passed =
+      res.data.checks?.filter((c) => c.ok).length ?? 0;
+    const total = res.data.checks?.length ?? 0;
+    pushActivity(
+      `Go-live success: v${liveVer}${res.data.graphKey ? ` → ${res.data.graphKey}` : ""}${
+        total ? ` (${passed}/${total} checks passed)` : ""
+      }`,
     );
+    onAgentUpdated?.();
   }
 
   async function onRollback() {
@@ -448,8 +687,11 @@ export function PolicyEditorPage() {
     setVersion(res.data.version);
     setStatus(res.data.status);
     setChecksum(res.data.checksum);
+    await syncFromServer();
     setUi("success");
-    setBanner(`Restored version ${res.data.rolledBackTo}. Itâ€™s live again.`);
+    setBanner(`Restored version ${res.data.rolledBackTo}. It's live again.`);
+    pushActivity(`Rollback to v${res.data.rolledBackTo}`);
+    onAgentUpdated?.();
   }
 
   if (loading) {
@@ -459,9 +701,11 @@ export function PolicyEditorPage() {
   if (loadError && !policyExt) {
     return (
       <section>
-        <Link className="back-link" to="/">
-          â† Agents
-        </Link>
+        {!embedded ? (
+          <Link className="back-link" to="/builder">
+            ← Builder
+          </Link>
+        ) : null}
         <div className="banner err">{loadError}</div>
       </section>
     );
@@ -490,10 +734,12 @@ export function PolicyEditorPage() {
   const displayPurpose = adminFacingPrompt(purpose) || purpose;
 
   return (
-    <section className="editor-page">
-      <Link className="back-link" to="/">
-        â† All agents
-      </Link>
+    <section className={`editor-page${embedded ? " editor-page--embedded" : ""}`}>
+      {!embedded ? (
+        <Link className="back-link" to="/builder">
+          ← Builder
+        </Link>
+      ) : null}
 
       <header className="editor-hero">
         <div className="editor-hero-text">
@@ -509,65 +755,178 @@ export function PolicyEditorPage() {
 
       {banner ? <div className={`banner ${bannerClass}`}>{banner}</div> : null}
 
+      {pendingPreview ? (
+        <div className="banner warn preview-not-saved-banner" role="alert">
+          <strong>Preview only — not saved.</strong> The workflow below is not in the
+          database yet. Click <strong>Accept &amp; save</strong> to write graph JSON
+          to <code>agent_versions</code>, or <strong>Discard</strong> to edit your
+          policy again.
+        </div>
+      ) : null}
+
+      <WorkflowStatusStepper
+        phase={workflowPhase}
+        version={version}
+        graphKey={
+          pendingPreview?.definition.graphKey ??
+          workflowDef?.graphKey ??
+          runtime?.binding?.graphKey
+        }
+        hasUnsavedPreview={pendingPreview !== null}
+      />
+
+      <AdminHelpPanel />
+
+      {bindingConflictHint ? (
+        <div className="banner warn">{bindingConflictHint}</div>
+      ) : null}
+
+      {policyDirty ? (
+        <div className="banner warn">
+          You changed the policy after the last graph was built. Click{" "}
+          <strong>Update workflow</strong> to store a new graph version (v
+          {version} → next).
+        </div>
+      ) : null}
+
+      <ol className="pipeline-steps" aria-label="Authoring pipeline">
+        {[
+          { id: "policy", label: "Policy" },
+          { id: "generate", label: "Create workflow" },
+          { id: "live", label: "Make live" },
+        ].map((s) => (
+          <li key={s.id}>{s.label}</li>
+        ))}
+      </ol>
+
       <div className="editor-layout editor-layout--simple">
         <div className="editor-main">
+          <div className="section-card policy-box">
+            <div className="section-head">
+              <div>
+                <h2>Policy Box</h2>
+                <p className="muted">
+                  Describe what this agent should do in plain English. Create
+                  workflow sends this text to the LLM with the tool catalog;
+                  the model returns graph JSON (preview before save).
+                </p>
+              </div>
+            </div>
+
+            {fields.length > 0 ? (
+              <ul className="field-errors">
+                {fields.map((f) => (
+                  <li key={f.path}>
+                    <code>{f.path}</code>: {f.message}
+                  </li>
+                ))}
+              </ul>
+            ) : null}
+
+            <div className="policy-fields policy-fields--builder">
+              {mainPolicyFields.map((f) => {
+                const raw = getPath(values, f.key);
+                const err = fields.find(
+                  (e) => e.path === f.key || e.path.startsWith(f.key + "."),
+                );
+                return renderPolicyField(
+                  f,
+                  raw,
+                  err,
+                  locked,
+                  updateField,
+                  toolCatalog,
+                );
+              })}
+            </div>
+
+            <details
+              className="policy-advanced"
+              open={showAdvanced}
+              onToggle={(e) =>
+                setShowAdvanced((e.target as HTMLDetailsElement).open)
+              }
+            >
+              <summary>
+                Advanced — when this runs (go-live), retry, escalation, guardrails
+              </summary>
+              <div className="policy-fields policy-fields--builder">
+                {policyIngressFieldsFor(policyExt).map((f) => {
+                  const raw = getPath(values, f.key);
+                  const err = fields.find(
+                    (e) => e.path === f.key || e.path.startsWith(f.key + "."),
+                  );
+                  return renderPolicyField(
+                    f,
+                    raw,
+                    err,
+                    locked,
+                    updateField,
+                    toolCatalog,
+                  );
+                })}
+                {policyAdvancedFieldsFor().map((f) => {
+                  const raw = getPath(values, f.key);
+                  const err = fields.find(
+                    (e) => e.path === f.key || e.path.startsWith(f.key + "."),
+                  );
+                  return renderPolicyField(
+                    f,
+                    raw,
+                    err,
+                    locked,
+                    updateField,
+                    toolCatalog,
+                  );
+                })}
+              </div>
+            </details>
+
+            <div className="card-actions">
+              <button
+                type="button"
+                className="btn secondary"
+                disabled={locked}
+                onClick={() => void onSaveDraft()}
+              >
+                {ui === "saving" ? "Saving…" : "Save draft"}
+              </button>
+            </div>
+          </div>
+
           <div className="section-card workflow-card">
             <div className="section-head">
               <div>
-                <h2>What this agent does</h2>
+                <h2>Workflow</h2>
                 <p className="muted">
-                  Read how it works today. To change it, write what you want in
-                  plain English â€” we design the steps for you.
+                  Preview runs policy text through the LLM pipeline, then Accept
+                  saves graph JSON to the database.
                 </p>
               </div>
             </div>
 
             <div className="form-block">
-              <h3 className="form-block-title">How it works today</h3>
-              {workflowSummary.empty ? (
-                <p className="muted workflow-empty">
-                  Nothing set up yet. Describe what you want below and click{" "}
-                  <strong>Create workflow</strong>.
-                </p>
-              ) : (
-                <div className="workflow-summary">
-                  <ol className="workflow-steps workflow-steps--plain">
-                    {workflowSummary.steps.map((s) => (
-                      <li key={s.id}>
-                        <span className="workflow-step-label">{s.label}</span>
-                        {s.detail ? (
-                          <span className="workflow-step-detail">{s.detail}</span>
-                        ) : null}
-                      </li>
-                    ))}
-                  </ol>
-                </div>
-              )}
-            </div>
-
-            <div className="form-block">
-              <h3 className="form-block-title">Tell us what you want</h3>
-              <p className="capability-line" role="note">
-                {AGENT_CAPABILITIES_LINE}
-              </p>
-              <label className="field field--wide">
-                <span className="field-label">Your description</span>
-                <textarea
-                  className="generate-request"
-                  rows={5}
-                  value={generateRequest}
-                  disabled={locked || pendingPreview !== null}
-                  placeholder={GENERATE_REQUEST_HINT}
-                  onChange={(e) => {
-                    setGenerateRequest(e.target.value);
-                    setUi("idle");
-                  }}
-                />
-                <span className="hint">
-                  Write like you would explain it to a coworker. Include any
-                  rules (location, score, visa, and so on).
-                </span>
-              </label>
+              <PolicyGraphExplainer
+                policyText={policyText}
+                template={
+                  agentTemplate as {
+                    nodes?: Array<{ id: string; impl: string }>;
+                    wiring?: Array<[string, string]>;
+                  } | null
+                }
+                definition={explainerDefinition}
+                graphKey={
+                  explainerDefinition?.graphKey ??
+                  runtime?.binding?.graphKey
+                }
+                graphVersion={pendingPreview ? undefined : version}
+                mode={explainerMode}
+                generationTrace={
+                  pendingPreview?.generationTrace ??
+                  lastGenerationTrace ??
+                  null
+                }
+              />
             </div>
 
             {pendingPreview ? (
@@ -601,6 +960,12 @@ export function PolicyEditorPage() {
                     ),
                   )}
                 </ol>
+                <WorkflowPreviewSummary
+                  definition={pendingPreview.definition}
+                  builtSummary={pendingPreview.builtSummary}
+                  trace={pendingPreview.generationTrace}
+                  isPreviewOnly
+                />
                 <div className="card-actions">
                   <button
                     type="button"
@@ -622,6 +987,12 @@ export function PolicyEditorPage() {
               </div>
             ) : (
               <div className="card-actions">
+                {workflowDef && lastGenerationTrace ? (
+                  <WorkflowPreviewSummary
+                    definition={workflowDef}
+                    trace={lastGenerationTrace}
+                  />
+                ) : null}
                 <button
                   type="button"
                   className="btn"
@@ -629,13 +1000,31 @@ export function PolicyEditorPage() {
                   onClick={() => void onGenerate()}
                 >
                   {ui === "generating"
-                    ? "Creatingâ€¦"
+                    ? "Creating…"
                     : status === "generated" || !workflowSummary.empty
                       ? "Update workflow"
                       : "Create workflow"}
                 </button>
+                {generateDisabled && generateDisabledReason ? (
+                  <p className="hint generate-hint" role="status">
+                    {generateDisabledReason}
+                  </p>
+                ) : null}
               </div>
             )}
+
+            <div className="activity-log" aria-label="Recent actions">
+              <h3 className="form-block-title">Recent actions</h3>
+              {activityLog.length === 0 ? (
+                <p className="muted">No actions yet.</p>
+              ) : (
+                <ol className="activity-log-list">
+                  {activityLog.map((line) => (
+                    <li key={line}>{line}</li>
+                  ))}
+                </ol>
+              )}
+            </div>
           </div>
 
           <div className="section-card">
@@ -644,13 +1033,43 @@ export function PolicyEditorPage() {
                 <h2>Make this live</h2>
                 <p className="muted">
                   When the workflow looks right, make it live. We run automatic
-                  safety checks first â€” if anything isnâ€™t ready, nothing changes
+                  safety checks first — if anything isn&apos;t ready, nothing changes
                   in production.
                 </p>
               </div>
             </div>
 
             <div className="go-live-panel">
+              {runtime?.binding ? (
+                <div className="banner ok go-live-live-banner">
+                  <strong>This workflow is live.</strong>{" "}
+                  {friendlyEventLabel(runtime.binding.eventType)} — uploads and
+                  events that match this trigger will run this agent&apos;s steps.
+                </div>
+              ) : status === "active" ? (
+                <div className="banner warn go-live-live-banner">
+                  <strong>Not connected to uploads yet.</strong> This agent is saved
+                  as live in settings, but real uploads won&apos;t use it until Make
+                  live succeeds for the trigger you chose.
+                </div>
+              ) : null}
+              {policyEditorIngressLabel(status, runtime?.binding ?? null) ? (
+                <p className="ingress-hint muted">
+                  {policyEditorIngressLabel(status, runtime?.binding ?? null)}
+                </p>
+              ) : null}
+              {goLiveChecks ? (
+                <ul className="go-live-checks">
+                  {goLiveChecks.map((c) => (
+                    <li
+                      key={c.id}
+                      className={c.ok ? "check-ok" : "check-fail"}
+                    >
+                      {c.ok ? "✓" : "✗"} {c.message}
+                    </li>
+                  ))}
+                </ul>
+              ) : null}
               <p className="go-live-status">
                 {status === "active"
                   ? "This agent is live."
@@ -665,11 +1084,11 @@ export function PolicyEditorPage() {
                   <button
                     type="button"
                     className="btn"
-                    disabled={locked || !canGoLive}
+                    disabled={locked}
                     onClick={() => void onGoLive()}
                   >
                     {ui === "going_live"
-                      ? "Making it liveâ€¦"
+                      ? "Making it live…"
                       : status === "active"
                         ? "Already live"
                         : "Make this live"}
@@ -741,9 +1160,46 @@ export function PolicyEditorPage() {
           </dl>
           {!canEdit ? (
             <p className="banner warn">
-              You can view this agent, but you donâ€™t have permission to edit it.
+              You can view this agent, but you don&apos;t have permission to edit it.
             </p>
           ) : null}
+
+          <h2 className="panel-subhead">Runtime routing</h2>
+          <dl className="panel-list">
+            <div className="panel-stat">
+              <dt>DB binding</dt>
+              <dd>
+                {runtime?.binding ? (
+                  <>
+                    <code>{runtime.binding.eventType}</code>
+                    {" → "}
+                    <code>{runtime.binding.graphKey}</code>
+                    {runtime.binding.version != null
+                      ? `@${runtime.binding.version}`
+                      : ""}
+                    <span className="muted"> ({runtime.binding.source})</span>
+                  </>
+                ) : (
+                  "No active binding for this agent"
+                )}
+              </dd>
+            </div>
+            <div className="panel-stat">
+              <dt>Compiled graph</dt>
+              <dd>
+                {runtime?.activeCompiledGraph ? (
+                  <>
+                    <code>
+                      {runtime.activeCompiledGraph.graphKey}@v
+                      {runtime.activeCompiledGraph.version}
+                    </code>
+                  </>
+                ) : (
+                  "Not compiled / active in graph_definitions"
+                )}
+              </dd>
+            </div>
+          </dl>
         </aside>
       </div>
     </section>
@@ -754,10 +1210,10 @@ function friendlyStatus(
   status: string | null | undefined,
   version?: number,
 ): string {
-  const ver = version != null ? ` Â· v${version}` : "";
+  const ver = version != null ? ` · v${version}` : "";
   switch (status) {
     case "draft":
-      return `Draft â€” not live${ver}`;
+      return `Draft - not live${ver}`;
     case "generated":
     case "compiled":
     case "published":
@@ -790,20 +1246,11 @@ function adminFacingPrompt(raw: string): string {
   let text = raw.trim();
   if (!text) return "";
 
-  // Drop known seed / design leftovers.
-  text = text
-    .replace(/You are SYNTRA\.?\s*/gi, "")
-    .replace(/Â§\d+(?:\.\d+)*(?:\s+[A-Za-z][\w\s-]*)?/g, "")
-    .replace(/\bdesign\s+Â§\d+(?:\.\d+)*/gi, "")
-    .replace(/\bintegration\.?\s*/gi, "")
-    .replace(/\bsyntra\.[a-z0-9._-]+/gi, "")
-    .replace(/\b[a-z]+\.authored\b/gi, "")
-    .replace(/\bgraphKey\b/gi, "")
-    .replace(/\s{2,}/g, " ")
-    .trim();
-
-  // If almost nothing left (or only punctuation), treat as blank.
-  if (text.length < 8 || /^[.\-â€”,\s]+$/.test(text)) return "";
+  // Only strip known seed boilerplate — keep custom agent prompts intact.
+  if (/^you are syntra/i.test(text)) {
+    text = text.replace(/^You are SYNTRA\.?\s*/i, "").trim();
+  }
+  if (text.length < 3) return "";
   return text;
 }
 
@@ -815,38 +1262,35 @@ function friendlyGenerateError(
   if (
     raw.includes("402") ||
     raw.includes("credits") ||
-    raw.includes("can only afford") ||
     raw.includes("insufficient")
   ) {
-    return "The language-model account is out of credits (OpenRouter). Add credits, or switch LLM_PROVIDER in .env to groq / gemini / openai, then restart admin-api.";
+    return "The AI service needs more credits. Ask your engineer to update the API account.";
   }
   if (raw.includes("401") || raw.includes("unauthorized") || raw.includes("invalid api")) {
-    return "The language-model API key looks invalid. Check LLM_API_KEY in .env and restart admin-api.";
+    return "The AI API key is not valid. Ask your engineer to check the server configuration.";
   }
   if (raw.includes("404") && (raw.includes("model") || raw.includes("no longer available"))) {
-    return "That Gemini model name is retired. Set LLM_MODEL=gemini-2.5-flash in .env and restart admin-api.";
+    return "The AI model name is outdated. Ask your engineer to update the model setting.";
   }
   if (
     raw.includes("cannot build yet") ||
     raw.includes("unsupported_request") ||
-    raw.includes("capabilities we cannot") ||
-    (raw.includes("email") && raw.includes("slack"))
+    raw.includes("unsupported")
   ) {
     const trimmed = (message ?? "").replace(/^GENERATION_FAILED:\s*/i, "").trim();
     return (
       trimmed ||
-      "That request needs steps we cannot build yet. Stick to process JD, process resume, and match."
+      "We cannot build all of that yet. Try describing process job, resume, match, or human review."
     );
   }
   if (raw.includes("unclosed json") || raw.includes("max_tokens") || raw.includes("mid-response")) {
-    return "The modelâ€™s answer was cut off before the workflow JSON finished. Try Update workflow again â€” we raised the output limit.";
+    return "The AI response was cut off. Try Create workflow again with a shorter description.";
   }
   if (message?.trim()) {
-    // Keep it short for the banner
     const trimmed = message.replace(/^GENERATION_FAILED:\s*/i, "").trim();
-    return trimmed.length > 220 ? `${trimmed.slice(0, 220)}â€¦` : trimmed;
+    return trimmed.length > 220 ? `${trimmed.slice(0, 220)}…` : trimmed;
   }
-  return "Couldnâ€™t create the workflow. Your settings were kept â€” try again.";
+  return "Could not create the workflow. Your text was kept — try again.";
 }
 
 function statusBadgeClass(status: string | null | undefined): string {
@@ -857,4 +1301,169 @@ function statusBadgeClass(status: string | null | undefined): string {
   if (status === "active") return "active";
   if (status === "compiled") return "compiled";
   return "";
+}
+
+function renderPolicyField(
+  f: PolicyFieldDesc,
+  raw: unknown,
+  err: FieldError | undefined,
+  locked: boolean,
+  updateField: (key: string, value: unknown) => void,
+  toolCatalog: Array<{ key: string; description: string }> = [],
+): ReactNode {
+  if (f.kind === "textarea") {
+    return (
+      <label
+        key={f.key}
+        className={`field field--wide ${err ? "invalid" : ""}`}
+      >
+        <span className="field-label">{f.label}</span>
+        <textarea
+          rows={4}
+          disabled={locked}
+          value={String(raw ?? "")}
+          onChange={(e) => updateField(f.key, e.target.value)}
+        />
+        {f.hint ? <span className="hint">{f.hint}</span> : null}
+      </label>
+    );
+  }
+  if (f.kind === "multiEnum") {
+    const selected = Array.isArray(raw) ? (raw as string[]) : [];
+    const options = f.options ?? [];
+    return (
+      <fieldset
+        key={f.key}
+        className={`field field--wide ${err ? "invalid" : ""}`}
+      >
+        <legend className="field-label">{f.label}</legend>
+        <div className="tool-checks">
+          {options.map((opt) => {
+            const checked = selected.includes(opt);
+            return (
+              <label key={opt} className="tool-check">
+                <input
+                  type="checkbox"
+                  disabled={locked}
+                  checked={checked}
+                  onChange={() => {
+                    const next = checked
+                      ? selected.filter((x) => x !== opt)
+                      : [...selected, opt];
+                    updateField(f.key, next);
+                  }}
+                />
+                <span>{f.optionLabels?.[opt] ?? opt}</span>
+              </label>
+            );
+          })}
+        </div>
+        {f.hint ? <span className="hint">{f.hint}</span> : null}
+      </fieldset>
+    );
+  }
+  if (f.kind === "tools") {
+    const selected = Array.isArray(raw) ? (raw as string[]) : [];
+    const options =
+      toolCatalog.length > 0
+        ? toolCatalog
+        : ((f.defaultValue as string[] | undefined) ?? []).map((k) => ({
+            key: k,
+            description: k,
+          }));
+    return (
+      <fieldset
+        key={f.key}
+        className={`field field--wide ${err ? "invalid" : ""}`}
+      >
+        <legend className="field-label">{f.label}</legend>
+        <div className="tool-checks">
+          {options.map((t) => {
+            const checked = selected.includes(t.key);
+            return (
+              <label key={t.key} className="tool-check">
+                <input
+                  type="checkbox"
+                  disabled={locked}
+                  checked={checked}
+                  onChange={() => {
+                    const next = checked
+                      ? selected.filter((x) => x !== t.key)
+                      : [...selected, t.key];
+                    updateField(f.key, next);
+                  }}
+                />
+                <span>
+                  {t.description}
+                </span>
+              </label>
+            );
+          })}
+        </div>
+        {f.hint ? <span className="hint">{f.hint}</span> : null}
+      </fieldset>
+    );
+  }
+  if (f.kind === "enum") {
+    return (
+      <label key={f.key} className={`field ${err ? "invalid" : ""}`}>
+        <span className="field-label">{f.label}</span>
+        <select
+          disabled={locked}
+          value={String(raw ?? f.defaultValue ?? "")}
+          onChange={(e) => updateField(f.key, e.target.value)}
+        >
+          {(f.options ?? []).map((opt) => (
+            <option key={opt} value={opt}>
+              {f.optionLabels?.[opt] ?? opt}
+            </option>
+          ))}
+        </select>
+        {f.hint ? <span className="hint">{f.hint}</span> : null}
+      </label>
+    );
+  }
+  if (f.kind === "boolean") {
+    return (
+      <label key={f.key} className={`field checkbox ${err ? "invalid" : ""}`}>
+        <input
+          type="checkbox"
+          disabled={locked}
+          checked={Boolean(raw)}
+          onChange={(e) => updateField(f.key, e.target.checked)}
+        />
+        <span className="field-label">{f.label}</span>
+      </label>
+    );
+  }
+  if (f.kind === "number") {
+    return (
+      <label key={f.key} className={`field ${err ? "invalid" : ""}`}>
+        <span className="field-label">{f.label}</span>
+        <input
+          type="number"
+          disabled={locked}
+          min={f.min}
+          max={f.max}
+          value={raw === "" || raw == null ? "" : Number(raw)}
+          onChange={(e) => {
+            const n = e.target.value;
+            updateField(f.key, n === "" ? "" : Number(n));
+          }}
+        />
+        {f.hint ? <span className="hint">{f.hint}</span> : null}
+      </label>
+    );
+  }
+  return (
+    <label key={f.key} className={`field ${err ? "invalid" : ""}`}>
+      <span className="field-label">{f.label}</span>
+      <input
+        disabled={locked}
+        value={String(raw ?? "")}
+        onChange={(e) => updateField(f.key, e.target.value)}
+      />
+      {f.hint ? <span className="hint">{f.hint}</span> : null}
+    </label>
+  );
 }

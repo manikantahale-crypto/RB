@@ -1,5 +1,5 @@
 import type { LLMClient, LLMCompleteRequest, LLMCompleteResult } from "./types.js";
-import { noopLlm } from "./noop.js";
+import { createFixtureLlm } from "./fixture-llm.js";
 
 export type LlmProvider =
   | "openai"
@@ -394,7 +394,8 @@ async function completeGeminiLegacy(
 
 export function createLlmClient(cfg: LlmEnvConfig): LLMClient {
   if (cfg.provider === "noop") {
-    return noopLlm;
+    // Deterministic English → graph for local dev + smoke tests (no API key).
+    return createFixtureLlm();
   }
   if (cfg.provider === "anthropic") {
     return createAnthropicClient(cfg);

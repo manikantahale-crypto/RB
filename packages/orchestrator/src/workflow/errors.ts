@@ -45,19 +45,26 @@ export function classifyError(err: unknown): ErrorClass {
 
   // Permanent-system: deployment/CI invariants violated
   if (
+    err instanceof TypeError ||
+    err instanceof ReferenceError ||
     /DEFINITION_INVALID/i.test(message) ||
     /Node implementation not found/i.test(message) ||
     /state.?schema/i.test(message) ||
     /Invalid graph definition/i.test(message) ||
     /Invalid node in/i.test(message) ||
-    /Invalid edge in/i.test(message)
+    /Invalid edge in/i.test(message) ||
+    /is not a function/i.test(message) ||
+    /Cannot read propert(y|ies) of (undefined|null)/i.test(message)
   ) {
     return 'permanent-system';
   }
 
   // Permanent-input: bad payload / precondition — not worth retrying
+  // (include "no resumeId/jobId in payload" from syntra.* nodes — otherwise poison jobs retry forever)
   if (
     /Missing (jobId|resumeId|jobId or resumeId)/i.test(message) ||
+    /no (resumeId|jobId) in payload/i.test(message) ||
+    /need jobId and resumeId/i.test(message) ||
     /unparseable|unprocessable|precondition/i.test(message) ||
     statusCode === 400 ||
     statusCode === 404 ||

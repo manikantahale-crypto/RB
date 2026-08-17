@@ -23,6 +23,65 @@ export type AgentListItem = {
   activeVersion: number | null;
   activeUpdatedAt?: string | null;
   lastGenerated: LastGeneratedSummary | null;
+  binding?: {
+    eventType: string;
+    graphKey: string;
+    version: number | null;
+    source: string;
+  } | null;
+};
+
+export type BuilderOverviewAgent = {
+  id: string;
+  name: string;
+  agentKey: string;
+  purpose: string;
+  policyStatus: string | null;
+  policyVersion: number | null;
+  policyText: string;
+  triggerEventType: string | null;
+  graphVersion: number | null;
+  graphStatus: string | null;
+  graphChecksum: string | null;
+  graphKey: string | null;
+  workflowSteps: Array<{
+    order: number;
+    id: string;
+    impl: string;
+    label: string;
+    detail?: string;
+  }>;
+  workflowEmpty: boolean;
+  definition: {
+    graphKey: string;
+    nodes: Array<{ id: string; impl: string; config?: Record<string, unknown> }>;
+    edges: Array<[string, string]>;
+  } | null;
+  binding: {
+    eventType: string;
+    graphKey: string;
+    version: number | null;
+    moduleQueue: string;
+    source: string;
+  } | null;
+};
+
+export type BuilderOverview = {
+  orgId: string | null;
+  agents: BuilderOverviewAgent[];
+  tools: Array<{
+    key: string;
+    description: string;
+    triggeredBy: string;
+    outputEvent: string;
+    outputShape: string;
+  }>;
+  triggerEvents: Array<{
+    eventType: string;
+    label: string;
+    description: string;
+    defaultGraphKey: string;
+  }>;
 };
 
 export type AgentDetail = {
@@ -77,7 +136,55 @@ export type AgentDetail = {
     };
     version: number;
     checksum: string;
+    status?: string;
+    generatedAt?: string;
   } | null;
+  generation?: {
+    mode: "llm" | "template";
+    model?: string | null;
+    userRequest?: string | null;
+    systemPrompt?: string | null;
+    policyPrompt?: string | null;
+    allowedTools: string[];
+    triggerEventType?: string | null;
+    toolsUsed: string[];
+    graphKey?: string | null;
+    builtSummary?: string | null;
+    unsupported?: string[];
+    generatedAt: string;
+    triggerEventSchema?: {
+      eventType: string;
+      schemaVersion: string;
+      description: string;
+      payloadSchema: unknown;
+      envelopeFields: unknown;
+    } | null;
+  } | null;
+  triggerEventSchema?: {
+    eventType: string;
+    schemaVersion: string;
+    description: string;
+    payloadSchema: unknown;
+    envelopeFields: unknown;
+    producedWhen: string | null;
+    primaryConsumer: string | null;
+  } | null;
+  runtime?: {
+    binding: {
+      eventType: string;
+      graphKey: string;
+      moduleQueue: string;
+      version: number | null;
+      source: string;
+      status: string;
+    } | null;
+    activeCompiledGraph: {
+      graphKey: string;
+      version: number;
+      checksum: string;
+      status: string;
+    } | null;
+  };
 };
 
 export type FieldError = { path: string; message: string };
@@ -88,6 +195,11 @@ export type ApiErrorBody = {
   fields?: FieldError[];
   currentVersion?: number;
   status?: string;
+  blockedBy?: string[];
+  checks?: Array<{ id: string; ok: boolean; message: string }>;
+  eventType?: string;
+  existingAgentId?: string | null;
+  existingGraphKey?: string | null;
 };
 
 const API_BASE = import.meta.env.VITE_ADMIN_API_URL ?? "/api";
@@ -96,24 +208,108 @@ async function request<T>(
   path: string,
   init?: RequestInit,
 ): Promise<{ ok: true; data: T } | { ok: false; status: number; body: ApiErrorBody }> {
-  const res = await fetch(`${API_BASE}${path}`, {
-    ...init,
-    headers: {
-      "Content-Type": "application/json",
-      "x-admin-id": "admin-local",
-      ...(init?.headers ?? {}),
-    },
-  });
+  let res: Response;
+  try {
+    res = await fetch(`${API_BASE}${path}`, {
+      ...init,
+      headers: {
+        "Content-Type": "application/json",
+        "x-admin-id": "admin-local",
+        ...(init?.headers ?? {}),
+      },
+    });
+  } catch {
+    return {
+      ok: false,
+      status: 0,
+      body: {
+        error: "NETWORK_ERROR",
+        message:
+          "Cannot reach the admin API on port 4200. Start it with: npm run dev:admin",
+      },
+    };
+  }
 
   const body = (await res.json().catch(() => ({}))) as T & ApiErrorBody;
   if (!res.ok) {
+    if (res.status === 500 && !body.message && !body.error) {
+      return {
+        ok: false,
+        status: res.status,
+        body: {
+          error: "SERVER_ERROR",
+          message:
+            "Admin API returned 500. Check the api terminal for the stack trace.",
+        },
+      };
+    }
     return { ok: false, status: res.status, body };
   }
   return { ok: true, data: body as T };
 }
 
+export function listCatalogTools() {
+  return request<{
+    tools: Array<{
+      key: string;
+      description: string;
+      input: Record<string, string>;
+      output: { event: string; shape: string };
+      triggeredBy: string;
+    }>;
+  }>("/catalog/tools");
+}
+
+export function listCatalogEvents() {
+  return request<{
+    events: Array<{
+      eventType: string;
+      label: string;
+      description: string;
+      moduleQueue: string;
+      defaultGraphKey: string;
+    }>;
+  }>("/catalog/events?kind=trigger");
+}
+
+export function createAgent(body: {
+  name: string;
+  purpose?: string;
+  baseTemplateKey?: string;
+  cloneFromAgentId?: string;
+}) {
+  return request<{
+    id: string;
+    name: string;
+    agentKey: string;
+    purpose: string;
+    policyExt: string;
+    status: string;
+    version: number;
+  }>("/agents", {
+    method: "POST",
+    body: JSON.stringify(body),
+  });
+}
+
+export function getEventSchema(eventType: string, version = "1.0") {
+  return request<{
+    eventType: string;
+    schemaVersion: string;
+    description: string;
+    payloadSchema: unknown;
+    envelopeFields: unknown;
+    producedWhen: string | null;
+    primaryConsumer: string | null;
+  }>(`/catalog/events/${encodeURIComponent(eventType)}/schema?version=${encodeURIComponent(version)}`);
+}
+
 export function listAgents() {
   return request<{ orgId: string | null; agents: AgentListItem[] }>("/agents");
+}
+
+export function getBuilderOverview() {
+  return request<BuilderOverview>("/builder/overview");
 }
 
 export function getAgent(id: string) {
@@ -166,6 +362,20 @@ export type GenerateAgentResult = {
   unsupported?: string[];
   builtSummary?: string | null;
   message?: string;
+  generationTrace?: {
+    mode: "llm" | "template";
+    pipeline: string;
+    userRequest?: string | null;
+    systemPrompt?: string | null;
+    rawText?: string | null;
+    model?: string | null;
+    extracted?: {
+      matchThreshold?: number;
+      rerank?: boolean;
+      hardFilters?: string[];
+    };
+    codePaths: string[];
+  } | null;
 };
 
 export function generateAgent(
