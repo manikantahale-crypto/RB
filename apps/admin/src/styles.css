@@ -1266,6 +1266,28 @@ code {
   width: 100%;
 }
 
+.builder-error-fallback {
+  max-width: 42rem;
+  margin: 2rem auto;
+  padding: 1.5rem;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--surface);
+}
+
+.builder-error-pre {
+  margin: 1rem 0;
+  padding: 0.75rem;
+  background: #fdeaea;
+  border-radius: 8px;
+  font-size: 0.85rem;
+  overflow-x: auto;
+}
+
+.builder-missing-agent {
+  margin: 1rem;
+}
+
 .builder-shell {
   display: grid;
   grid-template-columns: minmax(300px, 360px) minmax(0, 1fr);
@@ -1422,6 +1444,106 @@ code {
   white-space: pre-wrap;
   line-height: 1.55;
   color: var(--ink);
+}
+
+.policy-workflow-sync {
+  margin-top: 0.85rem;
+  padding: 0.65rem 0.75rem;
+  border-radius: 8px;
+  background: var(--surface-2, #f4f6f8);
+  border: 1px solid var(--line);
+}
+
+.policy-workflow-sync-label {
+  display: block;
+  font-size: 0.72rem;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--muted);
+  margin-bottom: 0.35rem;
+}
+
+.policy-workflow-sync-line {
+  margin: 0;
+  font-size: 0.9rem;
+  line-height: 1.45;
+  color: var(--ink);
+}
+
+.policy-box-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  margin-top: 0.75rem;
+  padding-top: 0.75rem;
+  border-top: 1px dashed var(--line);
+}
+
+.policy-box-actions--workflow {
+  margin-top: 0.85rem;
+  padding-top: 0;
+  border-top: none;
+}
+
+.workflow-foot-actions {
+  margin-top: 1rem;
+  padding-top: 1rem;
+  border-top: 1px solid var(--line);
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.workflow-foot-actions .btn {
+  width: 100%;
+}
+
+.workflow-generate-bar {
+  margin-top: 1rem;
+  padding: 0.9rem 1rem;
+  background: var(--surface-soft, #f6f8f7);
+  border: 1px solid var(--line);
+  border-radius: 10px;
+}
+
+.workflow-generate-bar--policy {
+  margin-top: 0.85rem;
+}
+
+.workflow-generate-bar--workflow {
+  margin-top: 1rem;
+}
+
+.workflow-generate-bar--stale {
+  border-color: var(--accent, #1a6b4a);
+  background: color-mix(in srgb, var(--accent, #1a6b4a) 6%, transparent);
+}
+
+.workflow-generate-bar-title {
+  margin: 0 0 0.35rem;
+  font-size: 0.82rem;
+  font-weight: 650;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--ink-soft, #444);
+}
+
+.workflow-generate-bar-hint {
+  margin: 0 0 0.65rem;
+  font-size: 0.88rem;
+  line-height: 1.45;
+}
+
+.workflow-generate-bar-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+}
+
+.workflow-generate-bar-actions .btn {
+  min-width: 9.5rem;
+  flex: 1 1 auto;
 }
 
 .agent-live-hint {

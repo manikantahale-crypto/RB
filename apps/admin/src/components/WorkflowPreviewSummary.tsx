@@ -4,7 +4,6 @@ import { summarizeGraphWorkflow } from "@tekisho/authoring/src/summarize-graph.j
 
 type WorkflowPreviewSummaryProps = {
   definition: GraphDefinition;
-  builtSummary?: string | null;
   trace?: GenerationTrace | null;
 };
 
@@ -13,7 +12,6 @@ type WorkflowPreviewSummaryProps = {
  */
 export function WorkflowPreviewSummary({
   definition,
-  builtSummary,
   trace,
   isPreviewOnly = false,
 }: WorkflowPreviewSummaryProps & { isPreviewOnly?: boolean }) {
@@ -37,10 +35,16 @@ export function WorkflowPreviewSummary({
             : trace.userRequest}
         </p>
       ) : null}
-      <p className="preview-built-line">
-        <strong>Steps:</strong>{" "}
-        {builtSummary ?? summary.line}
-      </p>
+      <ol className="workflow-steps workflow-steps--plain preview-step-list">
+        {summary.steps.map((s) => (
+          <li key={s.id}>
+            <span className="workflow-step-label">{s.label}</span>
+            {s.detail ? (
+              <span className="workflow-step-detail">{s.detail}</span>
+            ) : null}
+          </li>
+        ))}
+      </ol>
       {extracted && (
         <ul className="preview-settings">
           {extracted.matchThreshold != null ? (

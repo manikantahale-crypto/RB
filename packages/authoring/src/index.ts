@@ -183,3 +183,11 @@ export {
   isBuilderVisibleAgentId,
   canDeleteAgentFromBuilder,
 } from "./mock-product-agents.js";
+export {
+  defaultDraftPolicyForTemplate,
+  policyExtFromTemplate,
+} from "./product-agent-defaults.js";
+export {
+  mergeWorkflowIntoPolicyValues,
+  stripWorkflowSectionFromPrompt,
+} from "./sync-policy-from-workflow.js";

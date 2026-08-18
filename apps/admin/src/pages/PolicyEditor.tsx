@@ -15,6 +15,10 @@ import {
   parseStoredGraphArtifact,
   summarizeGraphWorkflow,
 } from "@tekisho/authoring/src/summarize-graph.js";
+import {
+  mergeWorkflowIntoPolicyValues,
+  stripWorkflowSectionFromPrompt,
+} from "@tekisho/authoring/src/sync-policy-from-workflow.js";
 import type { GraphDefinition } from "@tekisho/authoring/src/graph-definition.js";
 import {
   readGenerationMeta,
@@ -228,7 +232,8 @@ export function PolicyEditorPage({
     let cleanedPrompt = "";
     setValues(() => {
       const vals = valuesFromPolicy(res.data.policy?.policy ?? null, enrichFields);
-      cleanedPrompt = adminFacingPrompt(String(getPath(vals, "prompt") ?? ""));
+      const rawPrompt = String(getPath(vals, "prompt") ?? "");
+      cleanedPrompt = adminFacingPrompt(stripWorkflowSectionFromPrompt(rawPrompt));
       return setPath(vals, "prompt", cleanedPrompt);
     });
     setSavedPolicyPrompt(cleanedPrompt);
@@ -301,7 +306,13 @@ export function PolicyEditorPage({
     [workflowDef],
   );
 
+  const displayWorkflowSummary = useMemo(() => {
+    const def = pendingPreview?.definition ?? workflowDef;
+    return summarizeGraphWorkflow(def);
+  }, [pendingPreview, workflowDef]);
+
   const policyText = String(getPath(values, "prompt") ?? "").trim();
+  const displayPolicyText = stripWorkflowSectionFromPrompt(policyText);
   const policyDirty =
     savedPolicyPrompt.trim() !== policyText &&
     policyText.length > 0 &&
@@ -344,6 +355,7 @@ export function PolicyEditorPage({
     pendingPreview,
     policyExt,
     clientValidation,
+    policyText,
   ]);
 
   const generateDisabled =
@@ -368,7 +380,11 @@ export function PolicyEditorPage({
       return;
     }
     setUi("saving");
-    const saved = await savePolicy(id, v.policy, version);
+    const strippedPrompt = stripWorkflowSectionFromPrompt(
+      String(v.policy.prompt ?? ""),
+    );
+    const policyToSave = { ...v.policy, prompt: strippedPrompt };
+    const saved = await savePolicy(id, policyToSave, version);
     if (!saved.ok) {
       if (saved.body.error === "STALE_POLICY") {
         await handleStale(saved.body.currentVersion);
@@ -380,7 +396,8 @@ export function PolicyEditorPage({
     }
     setVersion(saved.data.version);
     setStatus(saved.data.status);
-    setSavedPolicyPrompt(policyText);
+    setSavedPolicyPrompt(strippedPrompt);
+    setValues((prev) => setPath(prev, "prompt", strippedPrompt));
     setUi("success");
     setBanner(`Saved draft v${saved.data.version}.`);
     pushActivity(`Saved policy draft v${saved.data.version}`);
@@ -397,6 +414,13 @@ export function PolicyEditorPage({
     setBanner(null);
   }
 
+  function applyWorkflowToPolicyValues(
+    def: GraphDefinition | null | undefined,
+  ): Record<string, unknown> {
+    if (!def) return values;
+    return mergeWorkflowIntoPolicyValues(values, def, allPolicyFields);
+  }
+
   async function onGenerate() {
     const v = validateAgentPolicy(payload, { policyExt });
     if (!v.ok) {
@@ -407,7 +431,30 @@ export function PolicyEditorPage({
     }
 
     let expectedVersion = version;
-    if (status !== "generated" && status !== "pending_go_live") {
+    if (policyDirty) {
+      setUi("saving");
+      const saved = await savePolicy(id, v.policy, version);
+      if (!saved.ok) {
+        if (saved.body.error === "STALE_POLICY") {
+          await handleStale(saved.body.currentVersion);
+          return;
+        }
+        setUi("server");
+        setBanner(
+          saved.body.message ??
+            saved.body.error ??
+            "Save before generate failed.",
+        );
+        return;
+      }
+      expectedVersion = saved.data.version;
+      setVersion(saved.data.version);
+      setStatus(saved.data.status);
+      setSavedPolicyPrompt(policyText);
+      if (workflowDef) {
+        setWorkflowOutOfDate(true);
+      }
+    } else if (status !== "generated" && status !== "pending_go_live") {
       if (expectedVersion === undefined || status !== "draft") {
         setUi("saving");
         const saved = await savePolicy(id, v.policy, version);
@@ -530,7 +577,13 @@ export function PolicyEditorPage({
   async function onAcceptPreview() {
     if (!pendingPreview || !id) return;
 
-    const v = validateAgentPolicy(payload, { policyExt });
+    const syncedValues = applyWorkflowToPolicyValues(pendingPreview.definition);
+    setValues(syncedValues);
+    const syncedPayload = enrichPolicyFromDefaults(
+      buildPolicyFromForm(id, agentKey, syncedValues, allPolicyFields),
+      policyExt,
+    );
+    const v = validateAgentPolicy(syncedPayload, { policyExt });
     if (!v.ok) {
       setUi("validation");
       setFields(v.fields);
@@ -547,7 +600,7 @@ export function PolicyEditorPage({
       accept: true,
       definition: pendingPreview.definition,
       unsupported: pendingPreview.unsupported,
-      request: pendingPreview.request,
+      request: String(getPath(syncedValues, "prompt") ?? "").trim(),
     });
     if (!res.ok) {
       if (res.body.error === "STALE_POLICY") {
@@ -577,8 +630,9 @@ export function PolicyEditorPage({
     setWorkflowOutOfDate(false);
     setUi("success");
     setBanner(
-      "Workflow saved. When you're happy with it, make it live below.",
+      "Workflow saved. Policy text updated to match steps — make it live when ready.",
     );
+    setSavedPolicyPrompt(String(getPath(syncedValues, "prompt") ?? "").trim());
     pushActivity(`Accepted workflow v${res.data.version}`);
     onAgentUpdated?.();
   }
@@ -734,7 +788,14 @@ export function PolicyEditorPage({
       return;
     }
 
-    const v = validateAgentPolicy(payload, { policyExt });
+    const syncedValues = applyWorkflowToPolicyValues(def);
+    setValues(syncedValues);
+
+    const syncedPayload = enrichPolicyFromDefaults(
+      buildPolicyFromForm(id, agentKey, syncedValues, allPolicyFields),
+      policyExt,
+    );
+    const v = validateAgentPolicy(syncedPayload, { policyExt });
     if (!v.ok) {
       setUi("validation");
       setFields(v.fields);
@@ -748,7 +809,7 @@ export function PolicyEditorPage({
       mode: "llm",
       accept: true,
       definition: def,
-      request: policyText,
+      request: String(getPath(syncedValues, "prompt") ?? "").trim(),
     });
     if (!res.ok) {
       if (res.body.error === "STALE_POLICY") {
@@ -776,7 +837,8 @@ export function PolicyEditorPage({
     setEditingWorkflow(false);
     setLastGenerationTrace(res.data.generationTrace ?? null);
     setUi("success");
-    setBanner("Workflow saved — no AI call needed.");
+    setBanner("Workflow saved — policy updated to match steps.");
+    setSavedPolicyPrompt(String(getPath(syncedValues, "prompt") ?? "").trim());
     onAgentUpdated?.();
   }
 
@@ -859,6 +921,77 @@ export function PolicyEditorPage({
       bannerClass === "err" ||
       bannerClass === "warn" ||
       ui === "preview");
+
+  const hasWorkflow = !displayWorkflowSummary.empty;
+
+  function renderWorkflowGenerateActions(placement: "policy" | "workflow") {
+    const barDisabled =
+      placement === "policy"
+        ? generateDisabled || editingWorkflow
+        : generateDisabled;
+    const barReason =
+      placement === "policy" && editingWorkflow
+        ? "Finish editing workflow steps first, or cancel with ✕."
+        : generateDisabledReason;
+
+    return (
+      <div
+        className={`workflow-generate-bar workflow-generate-bar--${placement}${
+          workflowOutOfDate && hasWorkflow && !editingWorkflow
+            ? " workflow-generate-bar--stale"
+            : ""
+        }`}
+      >
+        <p className="workflow-generate-bar-title">
+          {placement === "policy"
+            ? "Workflow from policy"
+            : "Build workflow from policy"}
+        </p>
+        {placement === "workflow" && editingWorkflow ? (
+          <p className="workflow-generate-bar-hint muted">
+            You are editing steps manually — save with <strong>Save steps</strong>,
+            or regenerate from policy below (replaces manual edits).
+          </p>
+        ) : workflowOutOfDate && hasWorkflow ? (
+          <p className="workflow-generate-bar-hint" role="status">
+            Policy was saved — click <strong>Regenerate workflow</strong> to
+            rebuild steps from your latest policy.
+          </p>
+        ) : !hasWorkflow ? (
+          <p className="workflow-generate-bar-hint muted">
+            Save your policy first, then generate a workflow from that text.
+          </p>
+        ) : null}
+        <div className="workflow-generate-bar-actions">
+          <button
+            type="button"
+            className="btn btn--compact"
+            disabled={barDisabled || hasWorkflow}
+            onClick={() => void onGenerate()}
+          >
+            {ui === "generating" ? "Generating…" : "Generate workflow"}
+          </button>
+          <button
+            type="button"
+            className={`btn btn--compact${
+              workflowOutOfDate && hasWorkflow && !editingWorkflow
+                ? ""
+                : " secondary"
+            }`}
+            disabled={barDisabled || !hasWorkflow}
+            onClick={() => void onGenerate()}
+          >
+            {ui === "generating" ? "Generating…" : "Regenerate workflow"}
+          </button>
+        </div>
+        {barDisabled && barReason ? (
+          <p className="hint generate-hint" role="status">
+            {barReason}
+          </p>
+        ) : null}
+      </div>
+    );
+  }
 
   return (
     <section className={`editor-page${embedded ? " editor-page--embedded editor-page--simple" : ""}`}>
@@ -991,29 +1124,32 @@ export function PolicyEditorPage({
                 </ul>
               ) : null}
               {editingPolicy ? (
-                <div className="policy-fields policy-fields--builder">
-                  {mainPolicyFields.map((f) => {
-                    const raw = getPath(values, f.key);
-                    const err = fields.find(
-                      (e) =>
-                        e.path === f.key || e.path.startsWith(f.key + "."),
-                    );
-                    return renderPolicyField(
-                      f,
-                      raw,
-                      err,
-                      locked,
-                      updateField,
-                      toolCatalog,
-                    );
-                  })}
-                </div>
+                <>
+                  <div className="policy-fields policy-fields--builder">
+                    {mainPolicyFields.map((f) => {
+                      const raw = getPath(values, f.key);
+                      const err = fields.find(
+                        (e) =>
+                          e.path === f.key || e.path.startsWith(f.key + "."),
+                      );
+                      return renderPolicyField(
+                        f,
+                        raw,
+                        err,
+                        locked,
+                        updateField,
+                        toolCatalog,
+                      );
+                    })}
+                  </div>
+                </>
               ) : (
                 <p className="policy-readonly">
-                  {policyText ||
+                  {displayPolicyText ||
                     "Click the pencil to describe what this agent should do."}
                 </p>
               )}
+              {renderWorkflowGenerateActions("policy")}
             </div>
           ) : null}
 
@@ -1129,16 +1265,16 @@ export function PolicyEditorPage({
                       <button
                         type="button"
                         className="btn btn--compact"
-                        disabled={locked || ui === "accepting"}
+                        disabled={busy}
                         onClick={() => void onSaveWorkflowManual()}
                       >
-                        {ui === "accepting" ? "Saving…" : "Save"}
+                        {ui === "accepting" ? "Saving…" : "Save steps"}
                       </button>
                       <button
                         type="button"
                         className="icon-btn"
-                        title="Cancel"
-                        disabled={ui === "accepting"}
+                        title="Cancel editing"
+                        disabled={busy}
                         onClick={() => setEditingWorkflow(false)}
                       >
                         ✕
@@ -1146,15 +1282,24 @@ export function PolicyEditorPage({
                     </>
                   ) : (
                     <>
+                      {hasWorkflow ? (
+                        <button
+                          type="button"
+                          className="btn secondary btn--compact"
+                          title="Regenerate workflow from policy"
+                          disabled={generateDisabled}
+                          onClick={() => void onGenerate()}
+                        >
+                          {ui === "generating" ? "Generating…" : "Regenerate"}
+                        </button>
+                      ) : null}
                       <button
                         type="button"
                         className="icon-btn"
-                        title="Edit workflow steps"
+                        title="Edit workflow steps manually"
                         disabled={locked}
                         onClick={() => {
-                          const steps = workflowStepsFromDefinition(
-                            pendingPreview?.definition ?? workflowDef,
-                          );
+                          const steps = workflowStepsFromDefinition(workflowDef);
                           setWorkflowSteps(
                             steps.length > 0
                               ? steps
@@ -1170,15 +1315,6 @@ export function PolicyEditorPage({
                       >
                         ✎
                       </button>
-                      <button
-                        type="button"
-                        className="icon-btn"
-                        title="Rebuild from policy using AI (costs tokens)"
-                        disabled={generateDisabled}
-                        onClick={() => void onGenerate()}
-                      >
-                        {ui === "generating" ? "…" : "AI"}
-                      </button>
                     </>
                   )}
                 </div>
@@ -1187,12 +1323,6 @@ export function PolicyEditorPage({
 
             {simpleLayout ? (
               <>
-              {workflowOutOfDate && !pendingPreview && !editingWorkflow ? (
-                <p className="workflow-stale-hint" role="status">
-                  Policy changed. Edit workflow steps here, or use <strong>AI</strong> to
-                  rebuild from policy.
-                </p>
-              ) : null}
               <div
                 className={
                   workflowOutOfDate && !pendingPreview && !editingWorkflow
@@ -1206,14 +1336,10 @@ export function PolicyEditorPage({
                   editable={editingWorkflow}
                   steps={editingWorkflow ? workflowSteps : undefined}
                   onStepsChange={editingWorkflow ? setWorkflowSteps : undefined}
-                  emptyHint="Click ✎ to add steps manually (free), or AI to build from policy."
+                  emptyHint="Edit steps with ✎, or use Generate workflow below to build from policy."
                 />
               </div>
-              {generateDisabled && generateDisabledReason && !editingWorkflow ? (
-                <p className="hint generate-hint" role="status">
-                  {generateDisabledReason}
-                </p>
-              ) : null}
+              {!pendingPreview ? renderWorkflowGenerateActions("workflow") : null}
               </>
             ) : (
               <div className="form-block">
@@ -1245,13 +1371,6 @@ export function PolicyEditorPage({
                 {!simpleLayout ? (
                   <h3 className="form-block-title">Review before saving</h3>
                 ) : null}
-                {!simpleLayout ? (
-                  <p className="gap-report-built">
-                    <strong>Built:</strong>{" "}
-                    {pendingPreview.builtSummary ??
-                      summarizeGraphWorkflow(pendingPreview.definition).line}
-                  </p>
-                ) : null}
                 {pendingPreview.unsupported.length > 0 && !simpleLayout ? (
                   <p className="gap-report-unsupported">
                     <strong>Could NOT add:</strong>{" "}
@@ -1280,7 +1399,6 @@ export function PolicyEditorPage({
                 {!simpleLayout ? (
                   <WorkflowPreviewSummary
                     definition={pendingPreview.definition}
-                    builtSummary={pendingPreview.builtSummary}
                     trace={pendingPreview.generationTrace}
                     isPreviewOnly
                   />
@@ -1321,10 +1439,10 @@ export function PolicyEditorPage({
                   onClick={() => void onGenerate()}
                 >
                   {ui === "generating"
-                    ? "Creating…"
-                    : status === "generated" || !workflowSummary.empty
-                      ? "Update workflow"
-                      : "Create workflow"}
+                    ? "Generating…"
+                    : workflowSummary.empty
+                      ? "Generate workflow"
+                      : "Regenerate workflow"}
                 </button>
                 {generateDisabled && generateDisabledReason ? (
                   <p className="hint generate-hint" role="status">

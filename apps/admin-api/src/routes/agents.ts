@@ -310,6 +310,8 @@ export type AgentRouteOptions = {
    * Required when the client sends a non-empty `request` body field.
    */
   llm?: LLMClient;
+  /** Migrator pool for writes the relay role cannot perform (e.g. soft-delete). */
+  privilegedPool?: Pool;
 };
 
 export function registerAgentRoutes(
@@ -317,6 +319,7 @@ export function registerAgentRoutes(
   pool: Pool,
   opts: AgentRouteOptions = {},
 ): void {
+  const writePool = opts.privilegedPool ?? pool;
   app.get("/templates", async (req: any, reply: any) => {
     const orgId = readOrgId(req.headers);
     return withOrgScope(pool, orgId, async (client) => {
@@ -2819,7 +2822,7 @@ export function registerAgentRoutes(
     const orgId = readOrgId(req.headers);
     const adminId = readAdminId(req.headers);
 
-    return withOrgScope(pool, orgId, async (client) => {
+    return withOrgScope(writePool, orgId, async (client) => {
       const def = await agentExists(client, agentId);
       if (!def || !def.is_active) {
         return reply.code(404).send({ error: "AGENT_NOT_FOUND" });

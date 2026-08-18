@@ -88,7 +88,7 @@ async function main(): Promise<void> {
 
   registerCatalogAndCreateRoutes(app, pool, migratorPool);
   registerBuilderOverviewRoutes(app, pool);
-  registerAgentRoutes(app, pool, { llm });
+  registerAgentRoutes(app, pool, { llm, privilegedPool: migratorPool });
 
   const shutdown = async () => {
     await app.close();

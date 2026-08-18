@@ -258,9 +258,10 @@ export function BuilderPage() {
                           className="builder-agent-delete"
                           title="Delete agent"
                           disabled={deletingId === a.id}
-                          onClick={() =>
-                            void onDeleteFromSidebar(a.id, a.name)
-                          }
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            void onDeleteFromSidebar(a.id, a.name);
+                          }}
                         >
                           {deletingId === a.id ? "…" : "×"}
                         </button>
@@ -291,6 +292,17 @@ export function BuilderPage() {
               <p className="muted">
                 Pick an agent from the list, or create a new one.
               </p>
+            </div>
+          ) : id && !overviewLoading && !selectedAgent ? (
+            <div className="banner warn builder-missing-agent">
+              Could not load this agent.{" "}
+              <button
+                type="button"
+                className="btn secondary btn--compact"
+                onClick={() => navigate("/builder")}
+              >
+                Back to list
+              </button>
             </div>
           ) : null}
 

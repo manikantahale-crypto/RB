@@ -272,8 +272,7 @@ export function policyBoxFieldsFor(policyExt: string): PolicyFieldDesc[] {
         ...prompt,
         label: "Policy",
         hint:
-          "Write everything here in plain English (what to do, threshold, filters, steps). " +
-          "Click Create workflow — the AI builds steps from this text using platform tools.",
+          "Write what this agent should do in plain English, then use Generate workflow below.",
       },
     ];
   }
@@ -283,8 +282,7 @@ export function policyBoxFieldsFor(policyExt: string): PolicyFieldDesc[] {
       label: "Policy",
       kind: "textarea",
       hint:
-        "Write everything here in plain English (what to do, threshold, filters, steps). " +
-        "Click Create workflow — the AI builds steps from this text using platform tools.",
+        "Write what this agent should do in plain English, then use Generate workflow below.",
       defaultValue: "",
     },
   ];

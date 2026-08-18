@@ -208,15 +208,26 @@ async function request<T>(
   path: string,
   init?: RequestInit,
 ): Promise<{ ok: true; data: T } | { ok: false; status: number; body: ApiErrorBody }> {
+  const headers: Record<string, string> = {
+    "x-admin-id": "admin-local",
+  };
+  if (init?.headers) {
+    for (const [key, value] of Object.entries(init.headers)) {
+      if (value != null && value !== "") {
+        headers[key] = String(value);
+      }
+    }
+  }
+  const hasBody = init?.body != null && init.body !== "";
+  if (hasBody && !headers["Content-Type"]) {
+    headers["Content-Type"] = "application/json";
+  }
+
   let res: Response;
   try {
     res = await fetch(`${API_BASE}${path}`, {
       ...init,
-      headers: {
-        "Content-Type": "application/json",
-        "x-admin-id": "admin-local",
-        ...(init?.headers ?? {}),
-      },
+      headers,
     });
   } catch {
     return {
