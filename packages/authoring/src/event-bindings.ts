@@ -222,6 +222,18 @@ export async function ensureEventBindingsSchema(pool: Pool): Promise<void> {
       moduleQueue: "module.design.duplicate",
       agentId: "01900000-0000-7000-8000-000000000502",
     },
+    {
+      eventType: "syntra.jd.parsed",
+      graphKey: "syntra.continuous.match",
+      moduleQueue: "module.syntra.match",
+      agentId: "01900000-0000-7000-8000-000000000501",
+    },
+    {
+      eventType: "syntra.profile.prepared",
+      graphKey: "syntra.duplicate.detect",
+      moduleQueue: "module.design.duplicate",
+      agentId: "01900000-0000-7000-8000-000000000502",
+    },
   ];
 
   for (const s of seeds) {

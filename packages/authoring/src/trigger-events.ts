@@ -43,6 +43,20 @@ export const TRIGGER_EVENT_CATALOG: readonly TriggerEventCatalogEntry[] = [
     moduleQueue: "module.design.duplicate",
     defaultGraphKey: "duplicate.review",
   },
+  {
+    eventType: "syntra.jd.parsed",
+    label: "Job description parsed",
+    description: "Fired when structured JD requirements are persisted.",
+    moduleQueue: "module.syntra.match",
+    defaultGraphKey: "syntra.continuous.match",
+  },
+  {
+    eventType: "syntra.profile.prepared",
+    label: "Profile prepared",
+    description: "Fired when resume parse, skills, and embedding are done.",
+    moduleQueue: "module.design.duplicate",
+    defaultGraphKey: "syntra.duplicate.detect",
+  },
 ] as const;
 
 export function isTriggerEventType(eventType: string): boolean {

@@ -32,6 +32,12 @@ export const DEFAULT_IMPL_ACTION_CLASS: Record<string, ActionClass> = {
   'syntra.jd.process': 'INTERNAL_WRITE',
   'syntra.resume.process': 'INTERNAL_WRITE',
   'syntra.match.process': 'INTERNAL_WRITE',
+  'syntra.continuous.match': 'INTERNAL_WRITE',
+  'syntra.duplicate.detect': 'INTERNAL_WRITE',
+  'syntra.bench.alert': 'INTERNAL_WRITE',
+  'syntra.shortlist.notify': 'EXTERNAL_COMM',
+  'syntra.duplicate.merge': 'INTERNAL_WRITE',
+  'syntra.run.retry': 'CONTROL',
   'human.gate': 'CONTROL',
 };
 

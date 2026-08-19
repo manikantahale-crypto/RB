@@ -13,6 +13,7 @@ import {
 import {
   ensureEventBindingsSchema,
   resolveActiveEventBinding,
+  type DbQueryable,
 } from "@tekisho/authoring/src/event-bindings.js";
 import { startOutboxRelay } from "./workers/outbox-relay.worker.js";
 import { startIngressRouter } from "./workers/ingress-router.worker.js";
@@ -83,9 +84,10 @@ async function bootstrapPgBoss(): Promise<void> {
   const resolveGraphKey = async (
     eventType: string,
     organizationId?: string,
+    db: DbQueryable = pool,
   ) => {
     const binding = await resolveActiveEventBinding(
-      pool,
+      db,
       eventType,
       organizationId,
     );
@@ -95,13 +97,25 @@ async function bootstrapPgBoss(): Promise<void> {
   const stopOutboxRelay = await startOutboxRelay({
     boss,
     pool,
-    resolvePin: async (eventType, organizationId) => {
-      const graphKey = await resolveGraphKey(eventType, organizationId);
+    resolvePin: async (eventType, organizationId, db) => {
+      const graphKey = await resolveGraphKey(eventType, organizationId, db);
       if (!graphKey) return null;
-      const graphVersion = await compiler.resolveActiveVersion(
-        graphKey,
-        organizationId,
+      // Query on the same TX client — pool.max is 1, so compiler.resolveActiveVersion
+      // would block waiting for this connection to be released.
+      const { rows } = await db.query(
+        `SELECT version
+           FROM graph_definitions
+          WHERE graph_key = $1
+            AND status = 'active'
+            AND (org_id = $2 OR org_id IS NULL)
+          ORDER BY org_id NULLS LAST
+          LIMIT 1`,
+        [graphKey, organizationId],
       );
+      const graphVersion = Number(
+        (rows[0] as { version?: number } | undefined)?.version,
+      );
+      if (!Number.isFinite(graphVersion)) return null;
       return { graphKey, graphVersion };
     },
   });

@@ -36,6 +36,7 @@ import {
   type FieldError,
 } from "../api";
 import type { GenerationTrace } from "@tekisho/authoring/src/generation-meta.js";
+import { outOfScopeLabels } from "@tekisho/authoring/src/request-scope.js";
 import { WorkflowPreviewSummary } from "../components/WorkflowPreviewSummary";
 import {
   WorkflowCanvas,
@@ -133,6 +134,7 @@ export function PolicyEditorPage({
   const [workflowOutOfDate, setWorkflowOutOfDate] = useState(false);
   const [editingWorkflow, setEditingWorkflow] = useState(false);
   const [workflowSteps, setWorkflowSteps] = useState<WorkflowStep[]>([]);
+  const [lastUnsupported, setLastUnsupported] = useState<string[]>([]);
   const policySectionRef = useRef<HTMLDivElement>(null);
 
   function pushActivity(message: string) {
@@ -257,6 +259,9 @@ export function PolicyEditorPage({
       setLastGenerationTrace(
         generationMetaToTrace(genMeta, parsed ?? workflowDef),
       );
+      setLastUnsupported(genMeta.unsupported ?? []);
+    } else {
+      setLastUnsupported([]);
     }
     if (!res.data.template) {
       setLoadError("This agent is missing a template. Ask an engineer for help.");
@@ -535,12 +540,16 @@ export function PolicyEditorPage({
         message: res.data.message,
         generationTrace: res.data.generationTrace ?? null,
       });
-    setWorkflowOutOfDate(false);
-    setEditingWorkflow(false);
-    setLastGenerationTrace(res.data.generationTrace ?? null);
+      setWorkflowOutOfDate(false);
+      setEditingWorkflow(false);
+      setLastGenerationTrace(res.data.generationTrace ?? null);
+      const gaps = res.data.unsupported ?? [];
+      setLastUnsupported(gaps);
       setUi("preview");
       setBanner(
-        "Preview created — not saved yet. Review below, then Accept & save to persist.",
+        gaps.length > 0
+          ? `Could not add: ${gaps.join(", ")} — not in Syntra's current tool scope. The workflow was built without those steps.`
+          : "Preview created — not saved yet. Review below, then Accept & save to persist.",
       );
       pushActivity(
         `LLM preview: ${res.data.graphKey ?? "graph"} — ${request.slice(0, 80)}${
@@ -891,11 +900,15 @@ export function PolicyEditorPage({
     );
   }
 
+  const policyScopeGaps = outOfScopeLabels(policyText);
+  const previewGaps = pendingPreview?.unsupported ?? [];
   const bannerClass =
     ui === "success" || (ui === "idle" && banner?.startsWith("Saved"))
       ? "ok"
       : ui === "preview"
-        ? "warn"
+        ? previewGaps.length > 0
+          ? "err"
+          : "warn"
         : ui === "stale"
           ? "warn"
           : ui === "server" || ui === "validation"
@@ -1139,6 +1152,7 @@ export function PolicyEditorPage({
                         locked,
                         updateField,
                         toolCatalog,
+                        f.key === "prompt" ? policyScopeGaps : undefined,
                       );
                     })}
                   </div>
@@ -1192,6 +1206,7 @@ export function PolicyEditorPage({
                   locked,
                   updateField,
                   toolCatalog,
+                  f.key === "prompt" ? policyScopeGaps : undefined,
                 );
               })}
             </div>
@@ -1340,6 +1355,14 @@ export function PolicyEditorPage({
                 />
               </div>
               {!pendingPreview ? renderWorkflowGenerateActions("workflow") : null}
+              {simpleLayout &&
+              !pendingPreview &&
+              lastUnsupported.length > 0 ? (
+                <p className="gap-report-unsupported" role="alert">
+                  <strong>Could NOT add:</strong> {lastUnsupported.join(", ")}{" "}
+                  (no Syntra tool available yet).
+                </p>
+              ) : null}
               </>
             ) : (
               <div className="form-block">
@@ -1371,11 +1394,11 @@ export function PolicyEditorPage({
                 {!simpleLayout ? (
                   <h3 className="form-block-title">Review before saving</h3>
                 ) : null}
-                {pendingPreview.unsupported.length > 0 && !simpleLayout ? (
-                  <p className="gap-report-unsupported">
+                {pendingPreview.unsupported.length > 0 ? (
+                  <p className="gap-report-unsupported" role="alert">
                     <strong>Could NOT add:</strong>{" "}
-                    {pendingPreview.unsupported.join(", ")} (no tool available
-                    yet).
+                    {pendingPreview.unsupported.join(", ")} (no Syntra tool
+                    available yet). The steps below were built without it.
                   </p>
                 ) : !simpleLayout ? (
                   <p className="muted">
@@ -1810,6 +1833,7 @@ function renderPolicyField(
   locked: boolean,
   updateField: (key: string, value: unknown) => void,
   toolCatalog: Array<{ key: string; description: string }> = [],
+  scopeGaps?: string[],
 ): ReactNode {
   if (f.kind === "textarea") {
     return (
@@ -1825,6 +1849,12 @@ function renderPolicyField(
           onChange={(e) => updateField(f.key, e.target.value)}
         />
         {f.hint ? <span className="hint">{f.hint}</span> : null}
+        {scopeGaps && scopeGaps.length > 0 ? (
+          <span className="hint policy-scope-hint" role="status">
+            “{scopeGaps.join(", ")}” is not in scope and cannot be added as a
+            workflow step.
+          </span>
+        ) : null}
       </label>
     );
   }

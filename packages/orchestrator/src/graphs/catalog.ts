@@ -81,4 +81,40 @@ export const graphSeedCatalog: GraphSeed[] = [
     },
     { id: 'graph_duplicate_review_v1', version: 1, status: 'active' },
   ),
+  defineGraph(
+    {
+      graphKey: 'syntra.continuous.match',
+      agentName: 'matching-agent',
+      nodes: [
+        {
+          id: 'continuous',
+          impl: 'syntra.continuous.match',
+          config: { actionClass: 'INTERNAL_WRITE' },
+        },
+      ],
+      edges: [
+        ['__start__', 'continuous'],
+        ['continuous', '__end__'],
+      ],
+    },
+    { id: 'graph_syntra_continuous_match_v1', version: 1, status: 'active' },
+  ),
+  defineGraph(
+    {
+      graphKey: 'syntra.duplicate.detect',
+      agentName: 'intake-agent',
+      nodes: [
+        {
+          id: 'detect',
+          impl: 'syntra.duplicate.detect',
+          config: { actionClass: 'INTERNAL_WRITE' },
+        },
+      ],
+      edges: [
+        ['__start__', 'detect'],
+        ['detect', '__end__'],
+      ],
+    },
+    { id: 'graph_syntra_duplicate_detect_v1', version: 1, status: 'active' },
+  ),
 ];
