@@ -136,7 +136,7 @@ If unset, Syntra keeps legacy local queues only.
 | `graph_definitions` | Runtime recipes (compiled from authoring or seeds) |
 | `graph_event_bindings` | **Ingress routing** — which graph runs for each `event_type` |
 | `agent_definitions` | Agent catalog row (name, tools contract) |
-| `agent_templates` | Product agent display names (SYNTRA, Copilot, Intake, ASTRA, …) |
+| `agent_templates` | Product agent display names (SYNTRA, Intake, ASTRA, …) |
 | `agent_policies` | Authoring policy JSON + status (`draft`→`generated`→`compiled`→`active`) |
 | `agent_versions` | Generated artifact + `meta` trace (LLM mode, thresholds, warnings) |
 | `orch.runs` / `orch.steps` | Execution audit (always) |
@@ -209,7 +209,7 @@ npm run demo:flow
 |---------------|-------|---------------------|
 | JD upload | `syntra.jd.received` | SYNTRA (`syntra.authored`) |
 | Resume upload | `syntra.resume.received` | Intake (`intake.authored`) |
-| Match request | `syntra.match.requested` | Copilot (`copilot.authored`) |
+| Match request | `syntra.match.requested` | SYNTRA (`syntra.match.workflow`) |
 
 Only agents with **active** `graph_event_bindings` run. Draft/mock agents (ASTRA,
 ORBIT, HELIX, …) do nothing until go-live.
@@ -298,7 +298,7 @@ Policy textarea (+ tools, trigger event)
 
 ### Product agents (seeded)
 
-SYNTRA, Intake, Copilot (functional templates) + mock peers ASTRA, ORBIT, HELIX,
+SYNTRA, Intake (functional templates) + mock peers ASTRA, ORBIT, HELIX,
 TEMPO, PRISM, TAYLN (draft policies only until authored and go-live).
 
 ### Proven with real LLM

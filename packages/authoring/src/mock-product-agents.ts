@@ -12,7 +12,6 @@ export const MOCK_PRODUCT_AGENT_IDS: readonly string[] = [
 export const PROTECTED_PRODUCT_AGENT_IDS: readonly string[] = [
   "01900000-0000-7000-8000-000000000501", // SYNTRA
   "01900000-0000-7000-8000-000000000502", // Intake
-  "01900000-0000-7000-8000-000000000503", // Copilot
 ] as const;
 
 const mockSet = new Set<string>(MOCK_PRODUCT_AGENT_IDS);

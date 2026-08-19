@@ -31,7 +31,7 @@ export {
 export {
   SyntraPolicyExt,
   IntakePolicyExt,
-  CopilotPolicyExt,
+  AstraPolicyExt,
   POLICY_EXT_REGISTRY,
   type PolicyExtKey,
   getPolicyExtSchema,

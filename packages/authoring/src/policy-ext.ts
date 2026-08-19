@@ -26,17 +26,19 @@ export const IntakePolicyExt = z.object({
   triggerEventType: z.string().min(1),
 });
 
-export const CopilotPolicyExt = z.object({
-  maxTurns: z.number().int().min(1).max(50).default(12),
+/** ASTRA intake gate — normalize + route (Option B front door). */
+export const AstraPolicyExt = z.object({
   prompt: z.string().min(1),
   allowedTools: z.array(z.string().min(1)).min(1),
   triggerEventType: z.string().min(1),
+  /** Temporary permissive default until calibrated (Stage 4 follow-up). */
+  minConfidence: z.number().min(0).max(1).default(0),
 });
 
 export const POLICY_EXT_REGISTRY = {
   SyntraPolicyExt,
   IntakePolicyExt,
-  CopilotPolicyExt,
+  AstraPolicyExt,
 } as const;
 
 export type PolicyExtKey = keyof typeof POLICY_EXT_REGISTRY;

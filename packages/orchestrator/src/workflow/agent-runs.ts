@@ -21,7 +21,6 @@ export type AgentStepStatus = 'OK' | 'RETRIED' | 'FAILED' | 'SKIPPED';
 const FALLBACK_AGENT: Record<string, string> = {
   'matching-agent': '01900000-0000-7000-8000-000000000501',
   'intake-agent': '01900000-0000-7000-8000-000000000502',
-  copilot: '01900000-0000-7000-8000-000000000503',
 };
 
 let auditTablesReady: Promise<void> | null = null;

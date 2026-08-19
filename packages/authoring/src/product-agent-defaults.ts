@@ -28,10 +28,18 @@ export function defaultDraftPolicyForTemplate(args: {
     delete base.matchThreshold;
     delete base.hardFilters;
     delete base.rerank;
-  } else if (args.policyExt === "CopilotPolicyExt") {
-    base.allowedTools = ["syntra.match.process"];
-    base.triggerEventType = "syntra.match.requested";
-    base.maxTurns = 12;
+  }
+
+  if (args.policyExt === "AstraPolicyExt") {
+    base.allowedTools = [
+      "astra.requirement.normalize",
+      "astra.route.decision",
+    ];
+    base.triggerEventType = "syntra.jd.received";
+    base.minConfidence = 0;
+    base.prompt =
+      "When a job description is received, normalize and score it with ASTRA. " +
+      "If actionable, emit syntra.jd.normalized for SYNTRA matching; otherwise reject.";
     delete base.matchThreshold;
     delete base.hardFilters;
     delete base.rerank;

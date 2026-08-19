@@ -118,47 +118,9 @@ INSERT INTO agent_definitions (
     "cost_budget_usd_per_run": 0.25,
     "timeout_ms":            300000
   }'::jsonb,
- true),
-
--- ---------------------------------------------------------------------------
--- 3. copilot — the recruiter's conversational surface (§9)
--- ---------------------------------------------------------------------------
--- §9: "Nothing is possible in chat that is not possible (and audited) in the
--- runtime." That is why the copilot is an agent_definitions row with an explicit
--- tool list and its own autonomy policy, rather than a chat endpoint with
--- ambient database access. Its runs land in agent_runs like any other.
---
--- Note it holds no persist_match_results: "re-run matching without the rate
--- filter" starts a matching-agent run rather than writing results itself.
-('01900000-0000-7000-8000-000000000503',
- 'copilot',
- '1.0.0',
- 'Answer recruiter questions over their own bench and pipeline, and take policy-bounded actions on request.',
- 'prompts/copilot@1.0.0',
- '[
-    { "name": "syntra.match.process", "min_version": "1.0.0" }
-  ]'::jsonb,
- -- Stricter than the autonomous agents on data shaping: a merge asked for in
- -- conversation is far more likely to be a misunderstanding than one derived
- -- from the identity graph, so it goes through an approval card.
- '{
-    "READ":           "AUTO",
-    "INTERNAL_WRITE": "AUTO",
-    "DATA_SHAPING":   "APPROVE",
-    "CONTROL":        "AUTO",
-    "EXTERNAL_COMM":  "SUGGEST"
-  }'::jsonb,
- -- Interactive, so a tighter timeout and a smaller budget than a batch run.
- '{
-    "provider":              "anthropic",
-    "model":                 "claude-sonnet-5",
-    "temperature":           0,
-    "max_output_tokens":     4096,
-    "embedding": { "provider": "voyage", "model": "voyage-3-large", "dims": 1024 },
-    "cost_budget_usd_per_run": 0.10,
-    "timeout_ms":            60000
-  }'::jsonb,
  true)
+
+-- Copilot (…503) retired — see V21__retire_copilot_agent.sql. Do not re-seed.
 
 -- Conflict on (name, version), never on id: agent_runs and agent_steps point at
 -- these ids, so a re-run must not renumber them.
@@ -190,8 +152,7 @@ BEGIN
   FROM agent_definitions d
   JOIN (VALUES
     ('matching-agent', 12, 'AUTO'),
-    ('intake-agent',    9, 'AUTO'),
-    ('copilot',         6, 'APPROVE')
+    ('intake-agent',    9, 'AUTO')
   ) AS expected (name, tool_count, data_shaping)
     ON expected.name = d.name
   WHERE d.version = '1.0.0'

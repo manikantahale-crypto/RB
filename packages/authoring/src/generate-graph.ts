@@ -65,6 +65,18 @@ export function generateGraphFromTemplate(
         }
       }
     }
+    // ASTRA route defaults (Option B bridge) — same as graph_definitions seed.
+    if (n.impl === "astra.route.decision") {
+      if (config.onActionable === undefined) {
+        config.onActionable = "syntra.jd.normalized";
+      }
+      if (config.onRejected === undefined) {
+        config.onRejected = "astra.requirement.rejected";
+      }
+      if (config.minConfidence === undefined) {
+        config.minConfidence = 0;
+      }
+    }
     return { id: n.id, impl: n.impl, config };
   });
 

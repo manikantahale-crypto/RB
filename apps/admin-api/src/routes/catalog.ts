@@ -332,10 +332,6 @@ export function registerCatalogAndCreateRoutes(
           defaultPolicy.autoClassify = true;
           defaultPolicy.allowedTools = ["syntra.resume.process"];
           defaultPolicy.triggerEventType = "syntra.resume.received";
-        } else if (policyExt === "CopilotPolicyExt") {
-          defaultPolicy.maxTurns = 12;
-          defaultPolicy.allowedTools = ["syntra.match.process"];
-          defaultPolicy.triggerEventType = "syntra.match.requested";
         }
       }
 

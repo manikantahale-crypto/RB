@@ -45,7 +45,7 @@ CREATE POLICY admin_agent_entitlements_migrator ON admin_agent_entitlements
 INSERT INTO admin_agent_entitlements (admin_id, agent_id, org_id, can_edit)
 SELECT 'admin-local', d.id, NULL, true
   FROM agent_definitions d
- WHERE d.name IN ('matching-agent', 'intake-agent', 'copilot')
+ WHERE d.name IN ('matching-agent', 'intake-agent')
   AND NOT EXISTS (
     SELECT 1 FROM admin_agent_entitlements e
      WHERE e.admin_id = 'admin-local' AND e.agent_id = d.id AND e.org_id IS NULL

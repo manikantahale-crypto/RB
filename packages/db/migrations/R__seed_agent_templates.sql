@@ -67,29 +67,7 @@ INSERT INTO agent_templates (
   true
 ),
 
--- Copilot — recruiter conversational surface
--- Reuses Syntra match node until dedicated copilot nodes exist.
-(
-  '01900000-0000-7000-8000-000000000603',
-  'copilot',
-  '01900000-0000-7000-8000-000000000503',
-  'Copilot — Recruiter Assistant',
-  1,
-  '{
-    "agentKey": "copilot",
-    "displayName": "Copilot — Recruiter Assistant",
-    "policyExt": "CopilotPolicyExt",
-    "nodes": [
-      { "id": "match", "impl": "syntra.match.process" }
-    ],
-    "wiring": [
-      ["__start__", "match"],
-      ["match", "__end__"]
-    ],
-    "conditionalOn": {}
-  }'::jsonb,
-  true
-),
+-- Copilot template retired — see V21__retire_copilot_agent.sql. Do not re-seed.
 
 -- Mock product agents (authoring placeholders until dedicated runtime nodes exist)
 (

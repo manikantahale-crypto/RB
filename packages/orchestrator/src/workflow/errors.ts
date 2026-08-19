@@ -60,11 +60,14 @@ export function classifyError(err: unknown): ErrorClass {
   }
 
   // Permanent-input: bad payload / precondition — not worth retrying
-  // (include "no resumeId/jobId in payload" from syntra.* nodes — otherwise poison jobs retry forever)
+  // (include "no resumeId/jobId in payload" from syntra.* / astra.* nodes — otherwise poison jobs retry forever)
   if (
     /Missing (jobId|resumeId|jobId or resumeId)/i.test(message) ||
     /no (resumeId|jobId) in payload/i.test(message) ||
     /need jobId and resumeId/i.test(message) ||
+    /empty raw_text/i.test(message) ||
+    /unprocessable JD/i.test(message) ||
+    /missing trigger_event/i.test(message) ||
     /unparseable|unprocessable|precondition/i.test(message) ||
     statusCode === 400 ||
     statusCode === 404 ||
@@ -79,6 +82,7 @@ export function classifyError(err: unknown): ErrorClass {
     statusCode === 502 ||
     statusCode === 503 ||
     statusCode === 504 ||
+    /Syntra unreachable/i.test(message) ||
     /timeout|ECONNRESET|ECONNREFUSED|ETIMEDOUT|deadlock|40P01|40001/i.test(message) ||
     code === '40P01' ||
     code === '40001' ||

@@ -180,18 +180,25 @@ export const POLICY_EXT_UI: Record<string, PolicyFieldDesc[]> = {
       defaultValue: true,
     },
   ],
-  CopilotPolicyExt: [
+  AstraPolicyExt: [
     {
       key: "prompt",
-      label: "System prompt",
+      label: "Policy statement (natural language)",
       kind: "textarea",
-      defaultValue: "Assist recruiters with match explanations.",
+      hint: "Describe the ASTRA gate: normalize JD quality, then route actionable work to SYNTRA.",
+      defaultValue:
+        "When a job description is received, normalize and score it with ASTRA. " +
+        "If actionable, emit syntra.jd.normalized for SYNTRA matching; otherwise reject.",
     },
     {
       key: "allowedTools",
       label: "Steps this agent may use",
       kind: "tools",
-      defaultValue: ["syntra.match.process"],
+      hint: "ASTRA runtime tools only (must match orchestrator nodeRegistry).",
+      defaultValue: [
+        "astra.requirement.normalize",
+        "astra.route.decision",
+      ],
     },
     {
       key: "triggerEventType",
@@ -199,25 +206,24 @@ export const POLICY_EXT_UI: Record<string, PolicyFieldDesc[]> = {
       kind: "enum",
       options: [
         "syntra.jd.received",
-        "syntra.resume.received",
-        "syntra.match.requested",
-        "syntra.duplicate.review_required",
+        "astra.requirement.received",
+        "astra.requirement.normalized",
       ],
       optionLabels: {
-        "syntra.jd.received": "Job description received",
-        "syntra.resume.received": "Resume received",
-        "syntra.match.requested": "Match requested",
-        "syntra.duplicate.review_required": "Duplicate review required",
+        "syntra.jd.received": "Job description received (Option B front door)",
+        "astra.requirement.received": "ASTRA requirement received",
+        "astra.requirement.normalized": "ASTRA already normalized (thin route)",
       },
-      defaultValue: "syntra.match.requested",
+      defaultValue: "syntra.jd.received",
     },
     {
-      key: "maxTurns",
-      label: "Max back-and-forth messages in one chat",
+      key: "minConfidence",
+      label: "Minimum confidence (0–1)",
       kind: "number",
-      min: 1,
-      max: 50,
-      defaultValue: 12,
+      min: 0,
+      max: 1,
+      hint: "Temporary default 0 (permissive). Raise after calibrating live scores.",
+      defaultValue: 0,
     },
   ],
 };

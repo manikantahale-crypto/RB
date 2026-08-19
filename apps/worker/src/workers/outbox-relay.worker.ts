@@ -118,6 +118,9 @@ export async function relayOnce(
       };
 
       if (plan.kind === "graph") {
+        console.log(
+          `[Relay] plan=${plan.kind} ${row.event_type} → ${INGRESS_QUEUE}`,
+        );
         try {
           await boss.send(INGRESS_QUEUE, envelope, sendOpts);
         } catch (err) {
@@ -137,10 +140,20 @@ export async function relayOnce(
           __graphVersion?: number;
         };
         if (resolvePin) {
-          const pin = await resolvePin(row.event_type, row.organization_id);
-          if (pin) {
-            stamped.__graphKey = pin.graphKey;
-            stamped.__graphVersion = pin.graphVersion;
+          // Optional stamp only — never block outbox publish on pin lookup
+          // (pooler timeouts would otherwise roll back the whole batch,
+          // stranding graph siblings like syntra.jd.normalized).
+          try {
+            const pin = await resolvePin(row.event_type, row.organization_id);
+            if (pin) {
+              stamped.__graphKey = pin.graphKey;
+              stamped.__graphVersion = pin.graphVersion;
+            }
+          } catch (err) {
+            console.warn(
+              `[OutboxRelay] resolvePin fail-open for ${row.event_type}:`,
+              err instanceof Error ? err.message : err,
+            );
           }
         }
         try {

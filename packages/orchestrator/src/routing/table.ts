@@ -24,6 +24,17 @@ export const PLATFORM_EVENT_PLAN: Record<string, PlatformEventPlan> = {
     kind: 'terminal',
     note: 'Outcome of JD process — UI / audit only',
   },
+  /** ASTRA route bridge — must be graph or ingress silently terminal-acks. */
+  [EVENT_TYPES.JD_NORMALIZED]: {
+    kind: 'graph',
+    note: 'ASTRA bridge — routed via graph_event_bindings (DB)',
+  },
+  // Literal duplicate so a stale @tekisho/domain without JD_NORMALIZED
+  // cannot collapse this key to "undefined" and terminal-ack the bridge.
+  'syntra.jd.normalized': {
+    kind: 'graph',
+    note: 'ASTRA bridge — routed via graph_event_bindings (DB)',
+  },
   [EVENT_TYPES.RESUME_RECEIVED]: {
     kind: 'graph',
     note: 'Trigger — routed via graph_event_bindings (DB)',
@@ -55,6 +66,10 @@ export const PLATFORM_EVENT_PLAN: Record<string, PlatformEventPlan> = {
   [EVENT_TYPES.AGENT_RUN_FAILED]: {
     kind: 'fail',
     note: 'Ops — persist to failed_workflows for replay',
+  },
+  [EVENT_TYPES.ASTRA_REQUIREMENT_REJECTED]: {
+    kind: 'terminal',
+    note: 'ASTRA gate rejected — UI / audit only',
   },
 };
 
@@ -96,6 +111,8 @@ export const EVENT_TO_MODULE_QUEUE: Record<string, string> = {};
 export const GRAPH_TO_MODULE_QUEUE: Record<string, string> = {
   'syntra.jd.workflow': 'module.syntra.jd',
   'syntra.authored': 'module.syntra.jd',
+  'astra.requirement.workflow': 'module.syntra.jd',
+  'astra.requirement.normalized.workflow': 'module.syntra.jd',
   'resume.intake': 'module.design.resume',
   'duplicate.review': 'module.design.duplicate',
   'syntra.match.workflow': 'module.syntra.match',

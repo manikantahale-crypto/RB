@@ -243,6 +243,15 @@ async function widenAuthoringStatusChecks(pool: Pool): Promise<void> {
 export async function seedAgentTemplates(pool: Pool): Promise<void> {
   for (const s of TEMPLATE_SEED_CATALOG) {
     const template = AgentTemplateSchema.parse(s.template);
+    const payload = [
+      s.agentId,
+      s.displayName,
+      JSON.stringify(template),
+      s.agentKey,
+      s.version,
+    ];
+
+    // Match exact (agent_key, version) first.
     const updated = await pool.query(
       `UPDATE agent_templates
           SET agent_id = $1,
@@ -251,30 +260,39 @@ export async function seedAgentTemplates(pool: Pool): Promise<void> {
               is_active = true,
               updated_at = now()
         WHERE agent_key = $4 AND version = $5`,
-      [
-        s.agentId,
-        s.displayName,
-        JSON.stringify(template),
-        s.agentKey,
-        s.version,
-      ],
+      payload,
     );
 
-    if ((updated.rowCount ?? 0) === 0) {
-      await pool.query(
-        `INSERT INTO agent_templates (
-           id, agent_key, agent_id, display_name, version, template, is_active
-         ) VALUES ($1, $2, $3, $4, $5, $6::jsonb, true)`,
-        [
-          s.id,
-          s.agentKey,
-          s.agentId,
-          s.displayName,
-          s.version,
-          JSON.stringify(template),
-        ],
-      );
-    }
+    if ((updated.rowCount ?? 0) > 0) continue;
+
+    // Version bump of the same catalog id (avoids PK collision on re-seed).
+    const bumped = await pool.query(
+      `UPDATE agent_templates
+          SET agent_id = $1,
+              display_name = $2,
+              template = $3::jsonb,
+              version = $5,
+              is_active = true,
+              updated_at = now()
+        WHERE id = $6`,
+      [...payload, s.id],
+    );
+
+    if ((bumped.rowCount ?? 0) > 0) continue;
+
+    await pool.query(
+      `INSERT INTO agent_templates (
+         id, agent_key, agent_id, display_name, version, template, is_active
+       ) VALUES ($1, $2, $3, $4, $5, $6::jsonb, true)`,
+      [
+        s.id,
+        s.agentKey,
+        s.agentId,
+        s.displayName,
+        s.version,
+        JSON.stringify(template),
+      ],
+    );
   }
 
   console.log(
@@ -322,6 +340,13 @@ export async function seedProductAgentDefinitions(pool: Pool): Promise<void> {
       [s.agentId],
     );
     if ((defRow.rowCount ?? 0) === 0) {
+      const toolsJson =
+        s.agentKey === "astra"
+          ? JSON.stringify([
+              { name: "astra.requirement.normalize", min_version: "1.0.0" },
+              { name: "astra.route.decision", min_version: "1.0.0" },
+            ])
+          : PRODUCT_AGENT_RUNTIME_TOOLS;
       await pool.query(
         `INSERT INTO agent_definitions (
            id, name, version, purpose, system_prompt_ref,
@@ -332,26 +357,44 @@ export async function seedProductAgentDefinitions(pool: Pool): Promise<void> {
           s.agentKey,
           s.purpose,
           `prompts/${s.agentKey}@1.0.0`,
-          PRODUCT_AGENT_RUNTIME_TOOLS,
+          toolsJson,
           PRODUCT_AGENT_AUTONOMY,
           PRODUCT_AGENT_MODEL,
         ],
       );
       defs++;
+    } else if (s.agentKey === "astra") {
+      // Align existing ASTRA definition with real runtime tools (was Syntra placeholder).
+      await pool.query(
+        `UPDATE agent_definitions
+            SET allowed_tools = $2::jsonb,
+                purpose = $3,
+                updated_at = now()
+          WHERE id = $1`,
+        [
+          s.agentId,
+          JSON.stringify([
+            { name: "astra.requirement.normalize", min_version: "1.0.0" },
+            { name: "astra.route.decision", min_version: "1.0.0" },
+          ]),
+          s.purpose,
+        ],
+      );
     }
 
+    const policy = defaultDraftPolicyForTemplate({
+      agentId: s.agentId,
+      agentKey: s.agentKey,
+      displayName: s.displayName,
+      policyExt: s.template.policyExt,
+    });
+
     const polRow = await pool.query(
-      `SELECT 1 FROM agent_policies
+      `SELECT policy FROM agent_policies
         WHERE agent_id = $1 AND org_id IS NULL AND version = 1`,
       [s.agentId],
     );
     if ((polRow.rowCount ?? 0) === 0) {
-      const policy = defaultDraftPolicyForTemplate({
-        agentId: s.agentId,
-        agentKey: s.agentKey,
-        displayName: s.displayName,
-        policyExt: s.template.policyExt,
-      });
       await pool.query(
         `INSERT INTO agent_policies (
            org_id, agent_id, policy, status, version, created_by
@@ -359,6 +402,18 @@ export async function seedProductAgentDefinitions(pool: Pool): Promise<void> {
         [s.agentId, JSON.stringify(policy)],
       );
       policies++;
+    } else if (s.agentKey === "astra") {
+      // Align draft/generated ASTRA policy tools with runtime (was Syntra placeholder).
+      await pool.query(
+        `UPDATE agent_policies
+            SET policy = $2::jsonb,
+                updated_at = now()
+          WHERE agent_id = $1
+            AND org_id IS NULL
+            AND version = 1
+            AND status IN ('draft', 'generated')`,
+        [s.agentId, JSON.stringify(policy)],
+      );
     }
   }
 

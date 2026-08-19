@@ -326,6 +326,63 @@ INSERT INTO _seed_event_schemas VALUES
       "failed_step_seq":{ "type": ["integer", "null"], "minimum": 1 },
       "attempts":       { "type": "integer", "minimum": 1 }
     }
+  }'),
+
+
+-- ---------------------------------------------------------------------------
+-- 10. syntra.jd.normalized — ASTRA gate → SYNTRA matching bridge
+-- ---------------------------------------------------------------------------
+-- Emitted by astra.route.decision when a requirement is actionable.
+-- Intentionally DISTINCT from syntra.jd.received so ASTRA can bind first on
+-- the raw upload without re-entering itself (Option B bridge).
+('syntra.jd.normalized',
+ 'ASTRA accepted a requirement as actionable; SYNTRA matching may proceed.',
+ 'ASTRA route decision passed (actionable + minConfidence)',
+ 'SYNTRA matching-agent / syntra.jd.process',
+ '{
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "title": "syntra.jd.normalized payload",
+    "type": "object",
+    "required": ["requirement_id"],
+    "additionalProperties": false,
+    "properties": {
+      "requirement_id":   { "type": "string", "format": "uuid" },
+      "jobId":            { "type": "string", "format": "uuid",
+                            "description": "Alias of requirement_id for Syntra HTTP adapters." },
+      "status":           { "type": "string" },
+      "is_actionable":    { "type": "boolean" },
+      "confidence_score": { "type": "number", "minimum": 0 },
+      "parser_version":   { "type": ["string", "null"] },
+      "source_event_id":  { "type": ["string", "null"], "format": "uuid" },
+      "title":            { "type": "string", "maxLength": 500 },
+      "channel_type":     { "type": "string" },
+      "priority":         { "type": "string", "enum": ["HOT", "NORMAL", "LOW"] }
+    }
+  }'),
+
+-- ---------------------------------------------------------------------------
+-- 11. astra.requirement.rejected — ASTRA gate blocked non-actionable input
+-- ---------------------------------------------------------------------------
+('astra.requirement.rejected',
+ 'ASTRA rejected a requirement (not actionable or below minConfidence). Terminal for matching.',
+ 'ASTRA route decision failed the actionable gate',
+ 'UI notify; audit; no SYNTRA match trigger',
+ '{
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "title": "astra.requirement.rejected payload",
+    "type": "object",
+    "required": ["requirement_id", "reason"],
+    "additionalProperties": false,
+    "properties": {
+      "requirement_id":   { "type": "string", "format": "uuid" },
+      "jobId":            { "type": "string", "format": "uuid" },
+      "status":           { "type": "string" },
+      "is_actionable":    { "type": "boolean" },
+      "confidence_score": { "type": "number" },
+      "reason":           { "type": "string",
+                            "description": "not_actionable | confidence_below_min (...)" },
+      "source_event_id":  { "type": ["string", "null"], "format": "uuid" }
+    }
   }');
 
 
@@ -424,7 +481,7 @@ BEGIN
       offenders;
   END IF;
 
-  RAISE NOTICE 'event_schemas: % day-1 event contracts registered at version 1.0.',
+  RAISE NOTICE 'event_schemas: % event contracts registered at version 1.0.',
     (SELECT count(*) FROM _seed_event_schemas);
 END
 $$;

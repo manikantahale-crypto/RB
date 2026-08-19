@@ -5,12 +5,14 @@
 // Plain TypeScript types (no runtime deps). Runtime validation, if needed,
 // belongs in the relay/producer, not in this shared package.
 
-// The 9 day-1 event types. Names must match event_schemas exactly —
+// The event types. Names must match event_schemas exactly —
 // event_outbox has an FK to event_schemas, so an unregistered event_type
 // cannot be published at all.
 export const EVENT_TYPES = {
     JD_RECEIVED: "syntra.jd.received",
     JD_PARSED: "syntra.jd.parsed",
+    /** ASTRA gate → SYNTRA bridge (never re-emit JD_RECEIVED). */
+    JD_NORMALIZED: "syntra.jd.normalized",
     RESUME_RECEIVED: "syntra.resume.received",
     PROFILE_PREPARED: "syntra.profile.prepared",
     DUPLICATE_REVIEW_REQUIRED: "syntra.duplicate.review_required",
@@ -19,6 +21,7 @@ export const EVENT_TYPES = {
     APPROVAL_REQUESTED: "syntra.approval.requested",
     APPROVAL_DECIDED: "syntra.approval.decided",
     AGENT_RUN_FAILED: "syntra.agent_run.failed",
+    ASTRA_REQUIREMENT_REJECTED: "astra.requirement.rejected",
   } as const;
   
   export type EventType = (typeof EVENT_TYPES)[keyof typeof EVENT_TYPES];
@@ -64,6 +67,30 @@ export const EVENT_TYPES = {
     agent_run_id?: string | null;
     mandatory_skill_count?: number;
     optional_skill_count?: number;
+  }
+
+  /** ASTRA → SYNTRA bridge after route.decision passes. */
+  export interface JdNormalizedPayload {
+    requirement_id: string;
+    jobId?: string;
+    status?: string;
+    is_actionable?: boolean;
+    confidence_score?: number;
+    parser_version?: string | null;
+    source_event_id?: string | null;
+    title?: string;
+    channel_type?: string;
+    priority?: "HOT" | "NORMAL" | "LOW";
+  }
+
+  export interface AstraRequirementRejectedPayload {
+    requirement_id: string;
+    reason: string;
+    jobId?: string;
+    status?: string;
+    is_actionable?: boolean;
+    confidence_score?: number;
+    source_event_id?: string | null;
   }
   
   export interface ResumeReceivedPayload {
@@ -151,6 +178,7 @@ export const EVENT_TYPES = {
   export interface EventPayloadMap {
     [EVENT_TYPES.JD_RECEIVED]: JdReceivedPayload;
     [EVENT_TYPES.JD_PARSED]: JdParsedPayload;
+    [EVENT_TYPES.JD_NORMALIZED]: JdNormalizedPayload;
     [EVENT_TYPES.RESUME_RECEIVED]: ResumeReceivedPayload;
     [EVENT_TYPES.PROFILE_PREPARED]: ProfilePreparedPayload;
     [EVENT_TYPES.DUPLICATE_REVIEW_REQUIRED]: DuplicateReviewRequiredPayload;
@@ -159,6 +187,7 @@ export const EVENT_TYPES = {
     [EVENT_TYPES.APPROVAL_REQUESTED]: ApprovalRequestedPayload;
     [EVENT_TYPES.APPROVAL_DECIDED]: ApprovalDecidedPayload;
     [EVENT_TYPES.AGENT_RUN_FAILED]: AgentRunFailedPayload;
+    [EVENT_TYPES.ASTRA_REQUIREMENT_REJECTED]: AstraRequirementRejectedPayload;
   }
   
   export type PlatformEvent<T extends EventType = EventType> =

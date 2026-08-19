@@ -42,45 +42,53 @@ export async function startIngressRouter(args: {
         continue;
       }
 
-      const binding = await resolveActiveEventBinding(
-        pool,
-        envelope.event_type,
-        envelope.organization_id,
-      );
-
-      if (!binding) {
-        console.warn(
-          `[Router] no active DB binding for ${envelope.event_type} ` +
-            `(org=${envelope.organization_id ?? '~global~'}) — unroutable; ack. ` +
-            `Activate an agent for this event in Admin, or re-seed graph_event_bindings.`,
+      try {
+        const binding = await resolveActiveEventBinding(
+          pool,
+          envelope.event_type,
+          envelope.organization_id,
         );
-        continue;
+
+        if (!binding) {
+          console.warn(
+            `[Router] no active DB binding for ${envelope.event_type} ` +
+              `(org=${envelope.organization_id ?? '~global~'}) — unroutable; ack. ` +
+              `Activate an agent for this event in Admin, or re-seed graph_event_bindings.`,
+          );
+          continue;
+        }
+
+        const graphKey = binding.graph_key;
+        const moduleQueue = binding.module_queue;
+
+        const graphVersion = await compiler.resolveActiveVersion(
+          graphKey,
+          envelope.organization_id,
+        );
+
+        const routed: RoutedEnvelope = {
+          ...envelope,
+          __graphKey: graphKey,
+          __graphVersion: graphVersion,
+        };
+
+        await boss.send(moduleQueue, routed, {
+          ...MODULE_SEND_OPTIONS,
+          singletonKey: envelope.event_id,
+        });
+        console.log(
+          `[Router] ${envelope.event_type} → ${moduleQueue} ${graphKey}@${graphVersion} ` +
+            `via binding source=${binding.source}` +
+            (binding.agent_id ? ` agent=${binding.agent_id}` : '') +
+            ` (${envelope.event_id})`,
+        );
+      } catch (err) {
+        console.error(
+          `[Router] FAILED ${envelope.event_type} (${envelope.event_id}):`,
+          err,
+        );
+        throw err;
       }
-
-      const graphKey = binding.graph_key;
-      const moduleQueue = binding.module_queue;
-
-      const graphVersion = await compiler.resolveActiveVersion(
-        graphKey,
-        envelope.organization_id,
-      );
-
-      const routed: RoutedEnvelope = {
-        ...envelope,
-        __graphKey: graphKey,
-        __graphVersion: graphVersion,
-      };
-
-      await boss.send(moduleQueue, routed, {
-        ...MODULE_SEND_OPTIONS,
-        singletonKey: envelope.event_id,
-      });
-      console.log(
-        `[Router] ${envelope.event_type} → ${moduleQueue} ${graphKey}@${graphVersion} ` +
-          `via binding source=${binding.source}` +
-          (binding.agent_id ? ` agent=${binding.agent_id}` : '') +
-          ` (${envelope.event_id})`,
-      );
     }
   });
 

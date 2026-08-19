@@ -15,7 +15,7 @@ export function AdminHelpPanel() {
           </p>
         </section>
         <section>
-          <h4>Existing agents (SYNTRA, Intake, Copilot)</h4>
+          <h4>Existing agents (SYNTRA, Intake)</h4>
           <p>
             Their first policy was set when the product was installed. You see that
             text when you open the agent. When you edit and save, your new text
@@ -52,8 +52,8 @@ export function AdminHelpPanel() {
           <p>
             <strong>SYNTRA (matching)</strong> is the product agent for candidate
             matching when a job description or resume is uploaded.{" "}
-            <strong>Intake</strong> and <strong>Copilot</strong> are other product
-            agents with their own policies. <strong>Custom agents</strong> are copies
+            <strong>Intake</strong> handles resume / channel intake.{" "}
+            <strong>Custom agents</strong> are copies
             you create to try a different policy without changing product defaults.
           </p>
         </section>

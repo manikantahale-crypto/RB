@@ -32,6 +32,8 @@ export const DEFAULT_IMPL_ACTION_CLASS: Record<string, ActionClass> = {
   'syntra.jd.process': 'INTERNAL_WRITE',
   'syntra.resume.process': 'INTERNAL_WRITE',
   'syntra.match.process': 'INTERNAL_WRITE',
+  'astra.requirement.normalize': 'INTERNAL_WRITE',
+  'astra.route.decision': 'CONTROL',
   'human.gate': 'CONTROL',
 };
 

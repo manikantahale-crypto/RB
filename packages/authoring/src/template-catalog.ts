@@ -64,25 +64,7 @@ export const TEMPLATE_SEED_CATALOG: Array<{
       conditionalOn: {},
     }),
   },
-  {
-    id: "01900000-0000-7000-8000-000000000603",
-    agentKey: "copilot",
-    agentId: "01900000-0000-7000-8000-000000000503",
-    displayName: "Copilot — Recruiter Assistant",
-    version: 1,
-    template: AgentTemplateSchema.parse({
-      agentKey: "copilot",
-      displayName: "Copilot — Recruiter Assistant",
-      policyExt: "CopilotPolicyExt",
-      // No dedicated copilot runtime nodes yet — reuse Syntra match node.
-      nodes: [{ id: "match", impl: "syntra.match.process" }],
-      wiring: [
-        ["__start__", "match"],
-        ["match", "__end__"],
-      ],
-      conditionalOn: {},
-    }),
-  },
+  // Copilot (…503 / template …603) retired — see V21__retire_copilot_agent.sql.
 ];
 
 const SYNTA_MATCH_NODES = [
@@ -110,13 +92,6 @@ const MOCK_PRODUCT_AGENTS: Array<{
   displayName: string;
   purpose: string;
 }> = [
-  {
-    id: "01900000-0000-7000-8000-000000000604",
-    agentKey: "astra",
-    agentId: "01900000-0000-7000-8000-000000000504",
-    displayName: "ASTRA — Workforce Analytics",
-    purpose: "Analyze bench talent, pipeline health, and hiring signals.",
-  },
   {
     id: "01900000-0000-7000-8000-000000000605",
     agentKey: "orbit",
@@ -153,6 +128,36 @@ const MOCK_PRODUCT_AGENTS: Array<{
     purpose: "Draft tailored outreach and messaging for candidates and clients.",
   },
 ];
+
+/** ASTRA — real runtime tools (normalize → route), not Syntra placeholder. */
+TEMPLATE_SEED_CATALOG.push({
+  id: "01900000-0000-7000-8000-000000000604",
+  agentKey: "astra",
+  agentId: "01900000-0000-7000-8000-000000000504",
+  displayName: "ASTRA — Requirement Intake Gate",
+  purpose:
+    "Normalize inbound JDs and route actionable requirements to SYNTRA matching.",
+  version: 2,
+  template: AgentTemplateSchema.parse({
+    agentKey: "astra",
+    displayName: "ASTRA — Requirement Intake Gate",
+    policyExt: "AstraPolicyExt",
+    nodes: [
+      { id: "normalize", impl: "astra.requirement.normalize" },
+      {
+        id: "route",
+        impl: "astra.route.decision",
+        configFrom: ["minConfidence"],
+      },
+    ],
+    wiring: [
+      ["__start__", "normalize"],
+      ["normalize", "route"],
+      ["route", "__end__"],
+    ],
+    conditionalOn: {},
+  }),
+});
 
 for (const m of MOCK_PRODUCT_AGENTS) {
   TEMPLATE_SEED_CATALOG.push({

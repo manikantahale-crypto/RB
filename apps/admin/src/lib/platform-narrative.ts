@@ -235,7 +235,6 @@ export function friendlyAgentTitle(raw: string): string {
   t = t.replace(/^SYNTRA\s*[—–-]\s*/i, "");
   t = t.replace(/^matching-agent$/i, "Candidate matching");
   t = t.replace(/^intake-agent$/i, "Intake");
-  t = t.replace(/^copilot$/i, "Recruiter assistant");
   t = t.replace(/^astra$/i, "ASTRA");
   t = t.replace(/^orbit$/i, "ORBIT");
   t = t.replace(/^helix$/i, "HELIX");

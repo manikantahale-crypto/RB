@@ -57,6 +57,39 @@ export const MatchRequestedPayloadSchema = z
     message: 'jobId or requirement_id required',
   });
 
+/** ASTRA ingress — raw channel / Syntra JD handoff into normalize. */
+export const AstraRequirementReceivedPayloadSchema = z
+  .object({
+    requirement_id: z.string().uuid().optional(),
+    jobId: z.string().uuid().optional(),
+    raw_text: z.string().optional(),
+    rawText: z.string().optional(),
+    title: z.string().max(500).optional(),
+    channel_type: z.string().optional(),
+    priority: z.enum(['HOT', 'NORMAL', 'LOW']).optional(),
+  })
+  .passthrough()
+  .refine((p) => Boolean(p.requirement_id ?? p.jobId), {
+    message: 'requirement_id or jobId required',
+  });
+
+/** ASTRA normalized — route gate input (is_actionable / confidence). */
+export const AstraRequirementNormalizedPayloadSchema = z
+  .object({
+    requirement_id: z.string().uuid().optional(),
+    jobId: z.string().uuid().optional(),
+    parser_version: z.string().optional(),
+    is_actionable: z.boolean().optional(),
+    isActionable: z.boolean().optional(),
+    confidence_score: z.number().optional(),
+    confidenceScore: z.number().optional(),
+    status: z.string().optional(),
+  })
+  .passthrough()
+  .refine((p) => Boolean(p.requirement_id ?? p.jobId), {
+    message: 'requirement_id or jobId required',
+  });
+
 /** Loose object for terminal / control events (validated at envelope layer). */
 const LoosePayload = z.record(z.string(), z.unknown());
 
@@ -98,6 +131,8 @@ export const entryInputSchemas = {
   ResumeReceivedPayload: ResumeReceivedPayloadSchema,
   JdReceivedPayload: JdReceivedPayloadSchema,
   MatchRequestedPayload: MatchRequestedPayloadSchema,
+  AstraRequirementReceivedPayload: AstraRequirementReceivedPayloadSchema,
+  AstraRequirementNormalizedPayload: AstraRequirementNormalizedPayloadSchema,
 } as const;
 
 export type EntryInputName = keyof typeof entryInputSchemas;

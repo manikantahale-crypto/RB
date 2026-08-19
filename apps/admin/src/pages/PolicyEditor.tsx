@@ -1733,7 +1733,6 @@ function friendlyAgentTitle(raw: string): string {
   t = t.replace(/^SYNTRA\s*[â€”â€“-]\s*/i, "");
   t = t.replace(/^matching-agent$/i, "Candidate matching");
   t = t.replace(/^intake-agent$/i, "Intake");
-  t = t.replace(/^copilot$/i, "Recruiter assistant");
   t = t.replace(/-agent$/i, "");
   return t.trim() || "Agent";
 }

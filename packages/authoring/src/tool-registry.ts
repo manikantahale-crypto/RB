@@ -1,7 +1,7 @@
 /**
  * Enriched tool catalog for the LLM graph generator (llm-graph-generator-design §4.1).
  *
- * Keys must match runtime `nodeRegistry` (same four production impls).
+ * Keys must match runtime `nodeRegistry` (Syntra + ASTRA + human.gate).
  * Teammate tools land here as catalog data only — no engine change (A6 / §9 #5).
  */
 
@@ -19,7 +19,7 @@ export type ToolCatalogEntry = {
 
 /**
  * The LLM's entire tool universe today (design §3).
- * Sourced from packages/orchestrator/src/nodes/syntra.ts.
+ * Sourced from packages/orchestrator/src/nodes/{syntra,astra,human-gate}.ts.
  */
 export const TOOL_CATALOG: readonly ToolCatalogEntry[] = [
   {
@@ -65,6 +65,38 @@ export const TOOL_CATALOG: readonly ToolCatalogEntry[] = [
       shape: "{ jobId, resumeId, candidateId, skillMatchScore, status, syntra }",
     },
     triggeredBy: "syntra.match.requested",
+  },
+  {
+    key: "astra.requirement.normalize",
+    description:
+      "Normalize / enrich an ASTRA requirement via Syntra (quality score, " +
+      "is_actionable). Emits astra.requirement.normalized for the route gate.",
+    input: {
+      jobId: "string (required) — requirement / job id",
+      raw_text: "string (optional) — JD body; empty string is permanent-input",
+    },
+    output: {
+      event: "astra.requirement.normalized",
+      shape: "{ jobId, requirement_id, is_actionable, confidence_score, parser_version }",
+    },
+    triggeredBy: "astra.requirement.received",
+  },
+  {
+    key: "astra.route.decision",
+    description:
+      "Route a normalized requirement: actionable → syntra.jd.normalized (bridge); " +
+      "else → astra.requirement.rejected. Config: onActionable, onRejected, minConfidence.",
+    input: {
+      jobId: "string (required)",
+      is_actionable: "boolean — from normalize",
+      confidence_score: "number — from normalize",
+      minConfidence: "number (optional, node.config) — default 0",
+    },
+    output: {
+      event: "syntra.jd.normalized",
+      shape: "{ jobId, requirement_id, is_actionable, confidence_score } or rejected payload",
+    },
+    triggeredBy: "astra.requirement.normalized",
   },
   {
     key: "human.gate",
