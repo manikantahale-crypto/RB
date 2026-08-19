@@ -11,7 +11,17 @@ export function defaultDraftPolicyForTemplate(args: {
     agentId: args.agentId,
     agentKey: args.agentKey,
     prompt: defaultPromptForProduct(args.displayName, args.agentKey),
-    allowedTools: ["syntra.jd.process", "syntra.resume.process", "syntra.match.process"],
+    allowedTools: [
+      "syntra.jd.process",
+      "syntra.resume.process",
+      "syntra.match.process",
+      // Shared platform tools — selectable by every agent (ASTRA + branch + human).
+      "astra.requirement.quality",
+      "astra.requirement.normalize",
+      "astra.route.decision",
+      "orch.branch.decision",
+      "human.gate",
+    ],
     triggerEventType: "syntra.jd.received",
     retry: { max: 3, fallback: "human_review" },
     escalation: "none",
@@ -32,14 +42,22 @@ export function defaultDraftPolicyForTemplate(args: {
 
   if (args.policyExt === "AstraPolicyExt") {
     base.allowedTools = [
+      "astra.requirement.intake",
+      "astra.requirement.ingest",
+      "astra.jobboard.fetch",
+      "astra.requirement.quality",
       "astra.requirement.normalize",
+      "orch.branch.decision",
+      "human.gate",
       "astra.route.decision",
     ];
     base.triggerEventType = "syntra.jd.received";
     base.minConfidence = 0;
+    base.passMin = 0.6;
+    base.humanMin = 0.35;
     base.prompt =
-      "When a job description is received, normalize and score it with ASTRA. " +
-      "If actionable, emit syntra.jd.normalized for SYNTRA matching; otherwise reject.";
+      "When a job description arrives (upload, email, or job board), score quality, " +
+      "branch to normalize or human review, then route actionable work to SYNTRA via syntra.jd.normalized.";
     delete base.matchThreshold;
     delete base.hardFilters;
     delete base.rerank;

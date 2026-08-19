@@ -11,6 +11,10 @@ export const JdReceivedPayloadSchema = z
     channel_type: z.string().optional(),
     priority: z.enum(['HOT', 'NORMAL', 'LOW']).optional(),
     title: z.string().max(500).optional(),
+    /** ASTRA Option B — body text for quality/normalize when job row not yet enriched. */
+    raw_text: z.string().optional(),
+    rawText: z.string().optional(),
+    body: z.string().optional(),
   })
   .refine((p) => Boolean(p.requirement_id ?? p.jobId), {
     message: 'requirement_id or jobId required',

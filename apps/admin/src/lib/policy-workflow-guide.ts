@@ -34,7 +34,12 @@ export function buildPlannedSteps(
 ): PlannedStep[] {
   if (!template?.nodes?.length) return [];
 
-  const order = orderNodesFromWiring(template.nodes, template.wiring ?? []);
+  const order = orderNodesFromWiring(
+    template.nodes,
+    template.wiring ?? [],
+    (template as { conditionalEdges?: Array<{ from: string; map: Record<string, string> }> })
+      .conditionalEdges,
+  );
   return order.map((node, idx) => {
     const tool = TOOL_BY_KEY[node.impl];
     return {
@@ -50,6 +55,7 @@ export function buildPlannedSteps(
 function orderNodesFromWiring(
   nodes: Array<{ id: string; impl: string }>,
   wiring: Array<[string, string]>,
+  conditionalEdges?: Array<{ from: string; map: Record<string, string> }>,
 ): Array<{ id: string; impl: string }> {
   const byId = new Map(nodes.map((n) => [n.id, n]));
   const adj = new Map<string, string[]>();
@@ -57,6 +63,11 @@ function orderNodesFromWiring(
     const list = adj.get(from) ?? [];
     list.push(to);
     adj.set(from, list);
+  }
+  for (const ce of conditionalEdges ?? []) {
+    const list = adj.get(ce.from) ?? [];
+    for (const dest of Object.values(ce.map ?? {})) list.push(dest);
+    adj.set(ce.from, list);
   }
   const ordered: Array<{ id: string; impl: string }> = [];
   const seen = new Set<string>();
@@ -85,8 +96,26 @@ function policyHintForNode(_nodeId: string, impl: string): string {
   if (impl === "syntra.match.process") {
     return "Match settings (threshold, filters) appear after you create a workflow.";
   }
+  if (impl === "astra.requirement.quality") {
+    return "Scores JD quality (confidence_score) before branching.";
+  }
+  if (impl === "orch.branch.decision") {
+    return "Plans pass / human_review / reject from passMin & humanMin vs confidence_score.";
+  }
+  if (impl === "astra.requirement.normalize") {
+    return "Full ASTRA enrich via Syntra before routing to matching.";
+  }
+  if (impl === "astra.route.decision") {
+    return "Emits syntra.jd.normalized for SYNTRA, or astra.requirement.rejected.";
+  }
+  if (impl === "astra.requirement.intake" || impl === "astra.requirement.ingest") {
+    return "Creates a requirement in Syntra (email or API channel).";
+  }
+  if (impl === "astra.jobboard.fetch") {
+    return "Pulls job-board listings into ASTRA / Syntra.";
+  }
   if (impl === "human.gate") {
-    return "Human review step — added when your policy asks for it.";
+    return "Human review step — pause until approve/reject resume.";
   }
   return "Step shape from this agent’s template until you create a workflow.";
 }

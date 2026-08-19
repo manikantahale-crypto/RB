@@ -1,7 +1,9 @@
 import { BrowserRouter, Link, Navigate, Route, Routes, useLocation } from "react-router-dom";
+import { BenchSalesOverviewPage } from "./pages/BenchSalesOverview";
 import { BuilderPage } from "./pages/BuilderPage";
 import { GoLiveRequestsPage } from "./pages/GoLiveRequests";
 import { PolicyEditorPage } from "./pages/PolicyEditor";
+import { RunTracePage } from "./pages/RunTrace";
 
 function AppShell() {
   const location = useLocation();
@@ -14,17 +16,21 @@ function AppShell() {
           Tekisho <span>Authoring</span>
         </p>
         <nav className="brand-nav">
+          <Link to="/ops">BenchSales</Link>
           <Link to="/builder">Builder</Link>
           <Link to="/go-live-requests">Go-live</Link>
+          <Link to="/runs">Runs</Link>
         </nav>
       </header>
       <Routes>
+        <Route path="/ops" element={<BenchSalesOverviewPage />} />
         <Route path="/builder" element={<BuilderPage />} />
         <Route path="/builder/:id" element={<BuilderPage />} />
         <Route path="/agents/:id" element={<PolicyEditorPage />} />
-        <Route path="/" element={<Navigate to="/builder" replace />} />
+        <Route path="/" element={<Navigate to="/ops" replace />} />
         <Route path="/go-live-requests" element={<GoLiveRequestsPage />} />
-        <Route path="*" element={<Navigate to="/builder" replace />} />
+        <Route path="/runs" element={<RunTracePage />} />
+        <Route path="*" element={<Navigate to="/ops" replace />} />
       </Routes>
     </div>
   );

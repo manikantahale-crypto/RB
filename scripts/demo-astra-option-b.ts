@@ -4,7 +4,8 @@
  *   npx tsx scripts/demo-astra-option-b.ts           # DB align + bindings + generate preview
  *   npx tsx scripts/demo-astra-option-b.ts --run     # also POST JD and print trace
  *
- * Requires worker (ORCH_STUB_SYNTRA=1) + API :4100 for --run.
+ * Requires worker + API :4100 for --run.
+ * Use ORCH_STUB_SYNTRA=1 if Syntra HTTP is down; otherwise live Syntra :4000.
  */
 import { randomUUID } from "node:crypto";
 import { readFileSync } from "node:fs";
@@ -29,7 +30,13 @@ const pool = new pg.Pool({
 });
 
 const astraTools = [
+  { name: "astra.requirement.intake", min_version: "1.0.0" },
+  { name: "astra.requirement.ingest", min_version: "1.0.0" },
+  { name: "astra.jobboard.fetch", min_version: "1.0.0" },
+  { name: "astra.requirement.quality", min_version: "1.0.0" },
   { name: "astra.requirement.normalize", min_version: "1.0.0" },
+  { name: "orch.branch.decision", min_version: "1.0.0" },
+  { name: "human.gate", min_version: "1.0.0" },
   { name: "astra.route.decision", min_version: "1.0.0" },
 ];
 
@@ -37,10 +44,16 @@ const astraPolicy = {
   agentId: ASTRA_ID,
   agentKey: "astra",
   prompt:
-    "When a job description is received, normalize and score it with ASTRA. " +
-    "If actionable, emit syntra.jd.normalized for SYNTRA matching; otherwise reject.",
+    "When a job description arrives (upload, email, or job board), score quality, " +
+    "branch to normalize or human review, then route actionable work to SYNTRA via syntra.jd.normalized.",
   allowedTools: [
+    "astra.requirement.intake",
+    "astra.requirement.ingest",
+    "astra.jobboard.fetch",
+    "astra.requirement.quality",
     "astra.requirement.normalize",
+    "orch.branch.decision",
+    "human.gate",
     "astra.route.decision",
   ],
   triggerEventType: "syntra.jd.received",
@@ -48,6 +61,8 @@ const astraPolicy = {
   escalation: "none",
   guardrails: { piiRedact: false },
   minConfidence: 0,
+  passMin: 0.6,
+  humanMin: 0.35,
 } as const;
 
 const astraTemplate: AgentTemplate = {
@@ -55,7 +70,14 @@ const astraTemplate: AgentTemplate = {
   displayName: "ASTRA — Requirement Intake Gate",
   policyExt: "AstraPolicyExt",
   nodes: [
+    { id: "quality", impl: "astra.requirement.quality" },
+    {
+      id: "branch",
+      impl: "orch.branch.decision",
+      configFrom: ["passMin", "humanMin"],
+    },
     { id: "normalize", impl: "astra.requirement.normalize" },
+    { id: "human", impl: "human.gate" },
     {
       id: "route",
       impl: "astra.route.decision",
@@ -63,11 +85,27 @@ const astraTemplate: AgentTemplate = {
     },
   ],
   wiring: [
-    ["__start__", "normalize"],
+    ["__start__", "quality"],
+    ["quality", "branch"],
     ["normalize", "route"],
+    ["human", "route"],
     ["route", "__end__"],
   ],
-  conditionalOn: {},
+  conditionalEdges: [
+    {
+      from: "branch",
+      router: "branch_key",
+      map: {
+        pass: "normalize",
+        human_review: "human",
+        reject: "__end__",
+      },
+    },
+  ],
+  conditionalOn: {
+    humanLoop:
+      "orch.branch.decision → human.gate when confidence in [humanMin, passMin)",
+  },
 };
 
 async function alignDb() {
@@ -79,7 +117,7 @@ async function alignDb() {
       WHERE id = $3`,
     [
       JSON.stringify(astraTools),
-      "Normalize inbound JDs and route actionable requirements to SYNTRA matching.",
+      "Ingest/score/normalize inbound JDs and route actionable requirements to SYNTRA.",
       ASTRA_ID,
     ],
   );
@@ -98,7 +136,7 @@ async function alignDb() {
     `UPDATE agent_templates
         SET template = $1::jsonb,
             display_name = $2,
-            version = 2,
+            version = 3,
             is_active = true,
             updated_at = now()
       WHERE id = $3`,
@@ -113,11 +151,9 @@ async function alignDb() {
   console.log("\n=== GRAPH GENERATION (Admin Create workflow source) ===");
   console.log("Pipeline: agent_policies.policy + agent_templates.template");
   console.log("       → generateGraphFromTemplate() → astra.authored JSON");
+  console.log("Runtime live ingress graph comes from graph_definitions:");
   console.log(
-    "Runtime live ingress graph still comes from graph_definitions:",
-  );
-  console.log(
-    "  astra.requirement.workflow@2 (V22) — authored draft needs go-live to replace it.",
+    "  astra.requirement.workflow@3 — quality → branch → normalize|human → route",
   );
   console.log(JSON.stringify(gen.definition, null, 2));
 
@@ -130,7 +166,7 @@ async function alignDb() {
     await pool.query(
       `INSERT INTO agent_versions (
          org_id, agent_id, version, artifact_source, checksum, status, created_by
-       ) VALUES (NULL, $1, $2, $3, $4, 'generated', 'demo-stage5')`,
+       ) VALUES (NULL, $1, $2, $3, $4, 'generated', 'demo-astra-v3')`,
       [ASTRA_ID, nextV, gen.source, gen.checksum],
     );
     console.log(`Stored agent_versions astra@${nextV} status=generated`);
@@ -138,32 +174,41 @@ async function alignDb() {
     console.log("agent_versions note:", e.message);
   }
 
-  const sql = readFileSync(
-    resolve(
-      process.cwd(),
-      "packages/db/migrations/V23__astra_option_b_bindings.sql",
-    ),
-    "utf8",
-  );
-  await pool.query(sql);
+  for (const file of [
+    "packages/db/migrations/V23__astra_option_b_bindings.sql",
+    "packages/db/migrations/V24__astra_workflow_v3_branch.sql",
+    "packages/db/migrations/V25__astra_event_schemas.sql",
+  ]) {
+    const sql = readFileSync(resolve(process.cwd(), file), "utf8");
+    await pool.query(sql);
+    console.log(`Applied ${file}`);
+  }
 
   const binds = await pool.query(
     `SELECT event_type, graph_key, version, status,
             agent_id::text AS agent_id, module_queue, source
        FROM graph_event_bindings
-      WHERE event_type IN ('syntra.jd.received', 'syntra.jd.normalized')
+      WHERE event_type IN (
+        'syntra.jd.received',
+        'syntra.jd.normalized',
+        'astra.requirement.received',
+        'astra.email.received',
+        'astra.jobboard.fetch_requested'
+      )
       ORDER BY event_type,
                CASE status WHEN 'active' THEN 0 ELSE 1 END,
                created_at DESC`,
   );
-  console.log("\n=== BINDINGS (Option B) ===");
+  console.log("\n=== BINDINGS (ASTRA ↔ SYNTRA) ===");
   console.table(binds.rows);
 
   const pol = await pool.query(
     `SELECT status,
             policy->'allowedTools' AS tools,
             policy->>'triggerEventType' AS trigger,
-            policy->>'minConfidence' AS min_confidence
+            policy->>'minConfidence' AS min_confidence,
+            policy->>'passMin' AS pass_min,
+            policy->>'humanMin' AS human_min
        FROM agent_policies
       WHERE agent_id = $1 AND org_id IS NULL AND version = 1`,
     [ASTRA_ID],
@@ -173,7 +218,8 @@ async function alignDb() {
 
   const graphs = await pool.query(
     `SELECT graph_key, version, status,
-            jsonb_pretty(definition->'nodes') AS nodes
+            jsonb_pretty(definition->'nodes') AS nodes,
+            jsonb_pretty(definition->'conditionalEdges') AS conditional
        FROM graph_definitions
       WHERE graph_key LIKE 'astra%'
       ORDER BY graph_key, version`,
@@ -182,6 +228,9 @@ async function alignDb() {
   for (const g of graphs.rows) {
     console.log(`${g.graph_key}@${g.version} [${g.status}]`);
     console.log(g.nodes);
+    if (g.conditional && g.conditional !== "null") {
+      console.log("conditionalEdges:", g.conditional);
+    }
   }
 }
 
@@ -206,9 +255,10 @@ async function postJd() {
     payload_ref: {
       jobId,
       requirement_id: jobId,
-      title: "Demo JD — ASTRA gate → SYNTRA",
+      title: "Demo JD — ASTRA quality→branch→normalize → SYNTRA",
       raw_text:
-        "Senior React engineer. 5+ years TypeScript. Remote US. Immediate start.",
+        "Senior React engineer. 5+ years TypeScript. Remote US. Immediate start. " +
+        "Must have strong system design and CI/CD experience.",
     },
     producer: "demo-astra-option-b",
   };
@@ -270,13 +320,14 @@ async function postJd() {
   try {
     const steps = await pool.query(
       `SELECT s.seq, s.node, s.status, s.latency_ms,
-              r.graph_key, r.status AS run_status
+              r.graph_key, r.status AS run_status,
+              s.output_ref->>'branch_key' AS branch_key,
+              s.output_ref->>'confidence_score' AS confidence_score
          FROM orch.steps s
          JOIN orch.runs r ON r.id = s.run_id
         WHERE r.trigger_event_id = $1::uuid
-           OR r.correlation_id = $2::uuid
         ORDER BY r.started_at, s.seq`,
-      [eventId, corr],
+      [eventId],
     );
     if (steps.rows.length) {
       console.log("\n=== orch.steps (tool calls) ===");
@@ -293,7 +344,7 @@ async function main() {
     await postJd();
   } else {
     console.log(
-      "\nDB aligned. Re-run with --run after worker+API are up (ORCH_STUB_SYNTRA=1).",
+      "\nDB aligned. Re-run with --run after worker+API are up.",
     );
   }
   await pool.end();

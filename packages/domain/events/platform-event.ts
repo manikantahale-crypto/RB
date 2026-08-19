@@ -21,7 +21,12 @@ export const EVENT_TYPES = {
     APPROVAL_REQUESTED: "syntra.approval.requested",
     APPROVAL_DECIDED: "syntra.approval.decided",
     AGENT_RUN_FAILED: "syntra.agent_run.failed",
+    ASTRA_REQUIREMENT_RECEIVED: "astra.requirement.received",
+    ASTRA_REQUIREMENT_NORMALIZED: "astra.requirement.normalized",
+    ASTRA_REQUIREMENT_SCORED: "astra.requirement.scored",
     ASTRA_REQUIREMENT_REJECTED: "astra.requirement.rejected",
+    ASTRA_EMAIL_RECEIVED: "astra.email.received",
+    ASTRA_JOBBOARD_FETCH_REQUESTED: "astra.jobboard.fetch_requested",
   } as const;
   
   export type EventType = (typeof EVENT_TYPES)[keyof typeof EVENT_TYPES];

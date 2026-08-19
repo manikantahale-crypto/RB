@@ -41,6 +41,14 @@ const DEFAULT_RULES = [
   "When the admin asks for a match score cutoff, set node.config.matchThreshold (0–100) on syntra.match.process.",
   "When the admin asks to rerank (or not), set node.config.rerank true/false on syntra.match.process.",
   "Example match config: { \"hardFilters\": [\"visa\"], \"matchThreshold\": 80 }",
+  "For ASTRA intake quality gates: use astra.requirement.quality then orch.branch.decision " +
+    "(config.passMin / humanMin) with conditionalEdges map pass|human_review|reject, then " +
+    "astra.requirement.normalize and/or human.gate, then astra.route.decision to emit syntra.jd.normalized.",
+  "When branching, include graph.conditionalEdges as an ARRAY of objects, e.g. " +
+    '[{ "from": "branch", "router": "branch_key", "map": { "pass": "normalize", "human_review": "human", "reject": "__end__" } }]. ' +
+    "Never emit conditionalEdges as a bare object.",
+  "ASTRA tools (intake, ingest, jobboard, quality, normalize, route) and orch.branch.decision / human.gate " +
+    "are shared platform tools — any agent may use them when the admin request needs intake gating.",
   "For duplicate review or human approval, use human.gate with config.reason (e.g. duplicate_review). " +
     "Typical graph: single human.gate node for syntra.duplicate.review_required triggers.",
   "CRITICAL: Never invent tools. Never silently pretend you fulfilled something you cannot.",

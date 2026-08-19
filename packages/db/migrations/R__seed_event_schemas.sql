@@ -383,6 +383,114 @@ INSERT INTO _seed_event_schemas VALUES
                             "description": "not_actionable | confidence_below_min (...)" },
       "source_event_id":  { "type": ["string", "null"], "format": "uuid" }
     }
+  }'),
+
+-- ---------------------------------------------------------------------------
+-- 12. astra.requirement.received — channel / ingest created a JD row
+-- ---------------------------------------------------------------------------
+('astra.requirement.received',
+ 'ASTRA ingested a requirement (email, board, API). Triggers quality→branch gate.',
+ 'ASTRA intake / ingest / jobboard tools succeeded',
+ 'ASTRA requirement.workflow (quality → branch → normalize|human → route)',
+ '{
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "title": "astra.requirement.received payload",
+    "type": "object",
+    "required": ["requirement_id"],
+    "additionalProperties": true,
+    "properties": {
+      "requirement_id": { "type": "string", "format": "uuid" },
+      "jobId":          { "type": "string", "format": "uuid" },
+      "title":          { "type": "string", "maxLength": 500 },
+      "channel_type":   { "type": "string" },
+      "raw_text":       { "type": "string" }
+    }
+  }'),
+
+-- ---------------------------------------------------------------------------
+-- 13. astra.requirement.scored — cheap quality pre-filter
+-- ---------------------------------------------------------------------------
+('astra.requirement.scored',
+ 'ASTRA quality score without full LLM normalize. Feeds orch.branch.decision.',
+ 'astra.requirement.quality completed',
+ 'Same-graph branch planner; audit',
+ '{
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "title": "astra.requirement.scored payload",
+    "type": "object",
+    "required": ["is_actionable", "confidence_score"],
+    "additionalProperties": true,
+    "properties": {
+      "requirement_id":     { "type": ["string", "null"], "format": "uuid" },
+      "jobId":              { "type": ["string", "null"], "format": "uuid" },
+      "is_actionable":      { "type": "boolean" },
+      "confidence_score":   { "type": "number", "minimum": 0 },
+      "validation_details": { "type": ["string", "null"] }
+    }
+  }'),
+
+-- ---------------------------------------------------------------------------
+-- 14. astra.requirement.normalized — enrich finished (pre-route)
+-- ---------------------------------------------------------------------------
+('astra.requirement.normalized',
+ 'ASTRA full enrich finished. Route may emit syntra.jd.normalized next.',
+ 'astra.requirement.normalize completed',
+ 'Same-graph astra.route.decision; audit',
+ '{
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "title": "astra.requirement.normalized payload",
+    "type": "object",
+    "required": ["requirement_id"],
+    "additionalProperties": true,
+    "properties": {
+      "requirement_id":   { "type": "string", "format": "uuid" },
+      "jobId":            { "type": "string", "format": "uuid" },
+      "status":           { "type": "string" },
+      "is_actionable":    { "type": "boolean" },
+      "confidence_score": { "type": "number", "minimum": 0 },
+      "parser_version":   { "type": ["string", "null"] }
+    }
+  }'),
+
+-- ---------------------------------------------------------------------------
+-- 15. astra.email.received — email JD ingress trigger
+-- ---------------------------------------------------------------------------
+('astra.email.received',
+ 'Inbound email JD should be ingested by ASTRA.',
+ 'Email webhook / mailbox adapter',
+ 'astra.email.intake.workflow',
+ '{
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "title": "astra.email.received payload",
+    "type": "object",
+    "required": ["body"],
+    "additionalProperties": true,
+    "properties": {
+      "subject": { "type": "string" },
+      "body":    { "type": "string" },
+      "from":    { "type": "string" },
+      "title":   { "type": "string" }
+    }
+  }'),
+
+-- ---------------------------------------------------------------------------
+-- 16. astra.jobboard.fetch_requested — market batch intake
+-- ---------------------------------------------------------------------------
+('astra.jobboard.fetch_requested',
+ 'Request ASTRA to fetch/ingest job-board listings.',
+ 'Admin / scheduler / market adapter',
+ 'astra.jobboard.fetch.workflow',
+ '{
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "title": "astra.jobboard.fetch_requested payload",
+    "type": "object",
+    "additionalProperties": true,
+    "properties": {
+      "source":   { "type": "string" },
+      "keyword":  { "type": "string" },
+      "location": { "type": "string" },
+      "raw_text": { "type": "string" }
+    }
   }');
 
 

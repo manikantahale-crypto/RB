@@ -18,6 +18,8 @@ type PolicyGraphExplainerProps = {
   graphVersion?: number | null;
   mode: "planned" | "generated" | "preview";
   generationTrace?: GenerationTrace | null;
+  triggerEventType?: string | null;
+  isLive?: boolean;
 };
 
 export function PolicyGraphExplainer({
@@ -28,6 +30,8 @@ export function PolicyGraphExplainer({
   graphVersion,
   mode,
   generationTrace,
+  triggerEventType,
+  isLive,
 }: PolicyGraphExplainerProps) {
   const planned: PlannedStep[] = buildPlannedSteps(template);
   const mapping =
@@ -77,7 +81,12 @@ export function PolicyGraphExplainer({
       )}
 
       {mode !== "planned" && definition ? (
-        <WorkflowCanvas definition={definition} version={graphVersion} />
+        <WorkflowCanvas
+          definition={definition}
+          version={graphVersion}
+          triggerEventType={triggerEventType}
+          isLive={isLive}
+        />
       ) : null}
     </div>
   );

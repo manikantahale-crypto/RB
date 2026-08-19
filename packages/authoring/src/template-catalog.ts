@@ -129,33 +129,63 @@ const MOCK_PRODUCT_AGENTS: Array<{
   },
 ];
 
-/** ASTRA — real runtime tools (normalize → route), not Syntra placeholder. */
+/** ASTRA — intake channels + quality branch + normalize → SYNTRA bridge. */
 TEMPLATE_SEED_CATALOG.push({
   id: "01900000-0000-7000-8000-000000000604",
   agentKey: "astra",
   agentId: "01900000-0000-7000-8000-000000000504",
   displayName: "ASTRA — Requirement Intake Gate",
   purpose:
-    "Normalize inbound JDs and route actionable requirements to SYNTRA matching.",
-  version: 2,
+    "Ingest/score/normalize inbound JDs (email, board, API) and route actionable work to SYNTRA.",
+  version: 3,
   template: AgentTemplateSchema.parse({
     agentKey: "astra",
     displayName: "ASTRA — Requirement Intake Gate",
     policyExt: "AstraPolicyExt",
     nodes: [
+      {
+        id: "quality",
+        impl: "astra.requirement.quality",
+      },
+      {
+        id: "branch",
+        impl: "orch.branch.decision",
+        configFrom: ["passMin", "humanMin", "minConfidence"],
+      },
       { id: "normalize", impl: "astra.requirement.normalize" },
+      {
+        id: "human",
+        impl: "human.gate",
+      },
       {
         id: "route",
         impl: "astra.route.decision",
         configFrom: ["minConfidence"],
       },
     ],
+    // Fixed edges only — branch fan-out is conditionalEdges.
     wiring: [
-      ["__start__", "normalize"],
+      ["__start__", "quality"],
+      ["quality", "branch"],
       ["normalize", "route"],
+      ["human", "route"],
       ["route", "__end__"],
     ],
-    conditionalOn: {},
+    conditionalEdges: [
+      {
+        from: "branch",
+        router: "branch_key",
+        map: {
+          pass: "normalize",
+          human_review: "human",
+          reject: "__end__",
+        },
+      },
+    ],
+    conditionalOn: {
+      humanLoop:
+        "orch.branch.decision → human.gate when confidence in [humanMin, passMin)",
+    },
   }),
 });
 

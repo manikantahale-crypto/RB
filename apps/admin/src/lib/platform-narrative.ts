@@ -63,7 +63,8 @@ export function buildAdminPlatformNarrative(
   }
 
   lines.push(
-    "Platform tools available to workflows: process job description, process resume, score matches, pause for human review.",
+    "Platform tools (shared by every agent): Syntra process/match, ASTRA intake/quality/normalize/route, " +
+      "orch.branch.decision (passMin/humanMin), human.gate.",
   );
 
   return lines.join("\n");
@@ -72,9 +73,13 @@ export function buildAdminPlatformNarrative(
 function friendlyTriggerLabel(eventType: string): string {
   const map: Record<string, string> = {
     "syntra.jd.received": "When a job description arrives",
+    "syntra.jd.normalized": "When ASTRA routes a normalized JD to SYNTRA",
     "syntra.resume.received": "When a resume arrives",
     "syntra.match.requested": "When a match is requested",
     "syntra.duplicate.review_required": "When duplicate review is needed",
+    "astra.requirement.received": "When ASTRA ingests a requirement",
+    "astra.email.received": "When an email JD arrives",
+    "astra.jobboard.fetch_requested": "When a job-board fetch is requested",
   };
   return map[eventType] ?? eventType;
 }

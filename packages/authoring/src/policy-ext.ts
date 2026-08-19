@@ -17,6 +17,10 @@ export const SyntraPolicyExt = z.object({
   allowedTools: z.array(z.string().min(1)).min(1),
   /** Primary trigger event_type (v1: single trigger per agent). */
   triggerEventType: z.string().min(1),
+  /** Optional when orch.branch.decision is in the graph. */
+  passMin: z.number().min(0).max(1).optional(),
+  humanMin: z.number().min(0).max(1).optional(),
+  minConfidence: z.number().min(0).max(1).optional(),
 });
 
 export const IntakePolicyExt = z.object({
@@ -26,13 +30,17 @@ export const IntakePolicyExt = z.object({
   triggerEventType: z.string().min(1),
 });
 
-/** ASTRA intake gate — normalize + route (Option B front door). */
+/** ASTRA intake gate — channels + quality branch + normalize + route. */
 export const AstraPolicyExt = z.object({
   prompt: z.string().min(1),
   allowedTools: z.array(z.string().min(1)).min(1),
   triggerEventType: z.string().min(1),
-  /** Temporary permissive default until calibrated (Stage 4 follow-up). */
+  /** Route gate minimum confidence (0–1). */
   minConfidence: z.number().min(0).max(1).default(0),
+  /** Branch: score >= passMin → normalize (default 0.6). */
+  passMin: z.number().min(0).max(1).default(0.6),
+  /** Branch: score >= humanMin → human.gate (default 0.35). */
+  humanMin: z.number().min(0).max(1).default(0.35),
 });
 
 export const POLICY_EXT_REGISTRY = {

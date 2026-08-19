@@ -77,6 +77,14 @@ export function generateGraphFromTemplate(
         config.minConfidence = 0;
       }
     }
+    // Branch planner defaults for human-loop conditioning.
+    if (n.impl === "orch.branch.decision") {
+      if (config.passMin === undefined) config.passMin = 0.6;
+      if (config.humanMin === undefined) config.humanMin = 0.35;
+      if (config.onRejectEvent === undefined) {
+        config.onRejectEvent = "astra.requirement.rejected";
+      }
+    }
     return { id: n.id, impl: n.impl, config };
   });
 
@@ -92,6 +100,9 @@ export function generateGraphFromTemplate(
     graphKey: graph.graphKey,
     nodes: graph.nodes,
     edges: graph.edges,
+    ...(template.conditionalEdges && template.conditionalEdges.length > 0
+      ? { conditionalEdges: template.conditionalEdges }
+      : {}),
   });
   validateGraphTopology(definition);
 

@@ -557,3 +557,78 @@ export function rollbackAgent(id: string, targetVersion: number) {
     body: JSON.stringify({ targetVersion }),
   });
 }
+
+export function getRuntimeTrace(eventId: string) {
+  return request<{
+    eventId: string;
+    outbox_count: number;
+    runs_count: number;
+    steps_count: number;
+    outbox: Array<Record<string, unknown>>;
+    runs: Array<Record<string, unknown>>;
+    steps: Array<Record<string, unknown>>;
+  }>(`/runtime/trace/${encodeURIComponent(eventId)}`);
+}
+
+export function listRuntimeRuns(limit = 40) {
+  return request<{ runs: Array<Record<string, unknown>> }>(
+    `/runtime/runs?limit=${limit}`,
+  );
+}
+
+export function getRuntimeRunSteps(runId: string) {
+  return request<{
+    runId: string;
+    steps: Array<Record<string, unknown>>;
+  }>(`/runtime/runs/${encodeURIComponent(runId)}/steps`);
+}
+
+export function resumeRuntimeThread(body: {
+  thread_id: string;
+  graph_key: string;
+  organization_id: string;
+  graph_version?: number;
+  decision?: { approved?: boolean; note?: string };
+}) {
+  return request<{ status: string; thread_id?: string }>(
+    "/runtime/threads/resume",
+    {
+      method: "POST",
+      body: JSON.stringify(body),
+    },
+  );
+}
+
+export function getRuntimeOverview() {
+  return request<{
+    stats: {
+      runsTotal: number;
+      graphsGenerated: number;
+      graphsActive: number;
+      runsByStatus: Array<{ status: string; n: number }>;
+      runsByGraph: Array<{
+        graph_key: string;
+        n: number;
+        last_run_at: string | null;
+      }>;
+      handoffs14d: {
+        bridge_to_syntra?: number;
+        astra_rejected?: number;
+        astra_scored?: number;
+        syntra_parsed?: number;
+        human_gates?: number;
+      };
+    };
+    liveBindings: Array<{
+      event_type: string;
+      graph_key: string;
+      version: number;
+      agent_id: string | null;
+      module_queue: string;
+      source: string;
+      status: string;
+    }>;
+    recentRuns: Array<Record<string, unknown>>;
+    howOrchPicksUp: string;
+  }>("/runtime/overview");
+}

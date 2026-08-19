@@ -74,6 +74,12 @@ export function validateGraphTopology(def: GraphDefinition): void {
     if (from !== "__start__" && from !== "__end__") onEdge.add(from);
     if (to !== "__start__" && to !== "__end__") onEdge.add(to);
   }
+  for (const ce of def.conditionalEdges ?? []) {
+    if (ce.from !== "__start__" && ce.from !== "__end__") onEdge.add(ce.from);
+    for (const dest of Object.values(ce.map)) {
+      if (dest !== "__start__" && dest !== "__end__") onEdge.add(dest);
+    }
+  }
   for (const id of nodeIds) {
     if (!onEdge.has(id)) {
       throw new Error(`DEFINITION_INVALID: orphan node "${id}"`);
@@ -85,6 +91,13 @@ export function validateGraphTopology(def: GraphDefinition): void {
     const list = adj.get(from) ?? [];
     list.push(to);
     adj.set(from, list);
+  }
+  for (const ce of def.conditionalEdges ?? []) {
+    const list = adj.get(ce.from) ?? [];
+    for (const dest of Object.values(ce.map)) {
+      list.push(dest);
+    }
+    adj.set(ce.from, list);
   }
   const reachable = new Set<string>(["__start__"]);
   const queue = ["__start__"];

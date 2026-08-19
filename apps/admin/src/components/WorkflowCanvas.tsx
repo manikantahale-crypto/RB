@@ -2,6 +2,11 @@ import { useMemo } from "react";
 import type { GraphDefinition } from "@tekisho/authoring/src/graph-definition.js";
 import { getToolCatalog } from "@tekisho/authoring/src/tool-registry.js";
 import { summarizeGraphWorkflow } from "@tekisho/authoring/src/summarize-graph.js";
+import {
+  friendlyEventLabel,
+  friendlyToolBlurb,
+  friendlyToolTitle,
+} from "../lib/friendly-labels";
 
 export type WorkflowStep = {
   id: string;
@@ -16,12 +21,14 @@ type WorkflowCanvasProps = {
   steps?: WorkflowStep[];
   onStepsChange?: (steps: WorkflowStep[]) => void;
   emptyHint?: string;
+  /** Event that starts this live workflow (shown on Start). */
+  triggerEventType?: string | null;
+  /** Whether this graph is bound live for orchestrator pickup. */
+  isLive?: boolean;
 };
 
 function toolLabel(impl: string): string {
-  const tool = getToolCatalog().find((t) => t.key === impl);
-  if (!tool) return impl;
-  return tool.description.split(":")[0]?.trim() || impl;
+  return friendlyToolTitle(impl);
 }
 
 export function workflowStepsFromDefinition(
@@ -30,7 +37,9 @@ export function workflowStepsFromDefinition(
   return stepsFromDefinition(def);
 }
 
-function stepsFromDefinition(def: GraphDefinition | null | undefined): WorkflowStep[] {
+function stepsFromDefinition(
+  def: GraphDefinition | null | undefined,
+): WorkflowStep[] {
   if (!def?.nodes?.length) return [];
   const summary = summarizeGraphWorkflow(def);
   const byId = new Map(def.nodes.map((n) => [n.id, n]));
@@ -47,6 +56,9 @@ function stepsFromDefinition(def: GraphDefinition | null | undefined): WorkflowS
 export function stepsToLinearGraph(
   graphKey: string,
   steps: WorkflowStep[],
+  opts?: {
+    conditionalEdges?: GraphDefinition["conditionalEdges"];
+  },
 ): GraphDefinition | null {
   if (steps.length === 0) return null;
   const nodes = steps.map((s) => ({
@@ -59,13 +71,27 @@ export function stepsToLinearGraph(
     edges.push([steps[i].id, steps[i + 1].id]);
   }
   edges.push([steps[steps.length - 1].id, "__end__"]);
-  return { graphKey, nodes, edges };
+  return {
+    graphKey,
+    nodes,
+    edges,
+    ...(opts?.conditionalEdges?.length
+      ? { conditionalEdges: opts.conditionalEdges }
+      : {}),
+  };
 }
 
 function nextStepId(steps: WorkflowStep[]): string {
   let n = steps.length + 1;
   while (steps.some((s) => s.id === `step_${n}`)) n += 1;
   return `step_${n}`;
+}
+
+function branchPlain(key: string): string {
+  if (key === "pass") return "good enough → continue";
+  if (key === "human_review") return "ask a person";
+  if (key === "reject") return "stop / reject";
+  return key;
 }
 
 export function WorkflowCanvas({
@@ -75,11 +101,15 @@ export function WorkflowCanvas({
   steps: stepsProp,
   onStepsChange,
   emptyHint = "No workflow yet. Build from policy with AI, or add steps manually.",
+  triggerEventType,
+  isLive,
 }: WorkflowCanvasProps) {
   const tools = getToolCatalog();
-  const derivedSteps = useMemo(() => stepsFromDefinition(definition), [definition]);
+  const derivedSteps = useMemo(
+    () => stepsFromDefinition(definition),
+    [definition],
+  );
   const steps = stepsProp ?? derivedSteps;
-  const graphKey = definition?.graphKey ?? "";
 
   if (steps.length === 0) {
     return (
@@ -130,12 +160,28 @@ export function WorkflowCanvas({
       <div className="workflow-canvas-head">
         <span className="workflow-canvas-title">Workflow</span>
         {version != null ? (
-          <span className="muted workflow-canvas-version">v{version}</span>
+          <span className="muted workflow-canvas-version">version {version}</span>
+        ) : null}
+        {isLive ? (
+          <span className="workflow-live-badge" title="Orchestrator will run this">
+            Live
+          </span>
         ) : null}
       </div>
 
       <div className="workflow-canvas-flow">
-        <div className="workflow-node workflow-node--pill">Start</div>
+        <div className="workflow-node workflow-node--pill workflow-node--start">
+          <span className="workflow-start-title">Start</span>
+          {triggerEventType ? (
+            <span className="workflow-start-event">
+              Because: {friendlyEventLabel(triggerEventType)}
+            </span>
+          ) : (
+            <span className="workflow-start-event muted">
+              Set a trigger in Policy to go live
+            </span>
+          )}
+        </div>
         <div className="workflow-connector" aria-hidden="true" />
 
         {steps.map((step, index) => (
@@ -178,7 +224,7 @@ export function WorkflowCanvas({
                     </div>
                   </div>
                   <label className="workflow-node-field">
-                    <span className="workflow-node-field-label">Step</span>
+                    <span className="workflow-node-field-label">What this step does</span>
                     <select
                       value={step.impl}
                       onChange={(e) =>
@@ -192,6 +238,11 @@ export function WorkflowCanvas({
                       ))}
                     </select>
                   </label>
+                  {friendlyToolBlurb(step.impl) ? (
+                    <p className="workflow-node-blurb muted">
+                      {friendlyToolBlurb(step.impl)}
+                    </p>
+                  ) : null}
                   {step.impl === "syntra.match.process" ? (
                     <label className="workflow-node-field workflow-node-field--inline">
                       <span className="workflow-node-field-label">Min score</span>
@@ -223,8 +274,14 @@ export function WorkflowCanvas({
                 <>
                   <span className="workflow-node-num">{index + 1}</span>
                   <div className="workflow-node-body">
-                    <span className="workflow-node-label">{toolLabel(step.impl)}</span>
-                    <span className="workflow-node-impl muted">{step.impl}</span>
+                    <span className="workflow-node-label">
+                      {toolLabel(step.impl)}
+                    </span>
+                    {friendlyToolBlurb(step.impl) ? (
+                      <span className="workflow-node-blurb muted">
+                        {friendlyToolBlurb(step.impl)}
+                      </span>
+                    ) : null}
                   </div>
                 </>
               )}
@@ -243,8 +300,24 @@ export function WorkflowCanvas({
           </div>
         ))}
 
-        <div className="workflow-node workflow-node--pill">End</div>
+        <div className="workflow-node workflow-node--pill">Done</div>
       </div>
+
+      {definition?.conditionalEdges && definition.conditionalEdges.length > 0 ? (
+        <div className="workflow-branches">
+          <strong>Decision paths:</strong>{" "}
+          {definition.conditionalEdges.map((ce, i) => (
+            <span key={`${ce.from}-${i}`} className="workflow-branch-chip">
+              {Object.entries(ce.map)
+                .map(([k, v]) => `${branchPlain(k)} → ${v === "__end__" ? "end" : friendlyToolTitle(
+                  definition.nodes.find((n) => n.id === v)?.impl ?? v,
+                )}`)
+                .join(" · ")}
+              {i < definition.conditionalEdges!.length - 1 ? " | " : ""}
+            </span>
+          ))}
+        </div>
+      ) : null}
 
       {editable && onStepsChange ? (
         <button
@@ -254,6 +327,14 @@ export function WorkflowCanvas({
         >
           + Add step at end
         </button>
+      ) : null}
+
+      {editable ? (
+        <p className="muted workflow-edit-hint">
+          Update steps here, then click <strong>Save steps</strong>. After that,
+          use <strong>Make live</strong> so the orchestrator runs this version when
+          the trigger event arrives.
+        </p>
       ) : null}
     </div>
   );

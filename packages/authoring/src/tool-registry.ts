@@ -1,14 +1,11 @@
 /**
- * Enriched tool catalog for the LLM graph generator (llm-graph-generator-design §4.1).
- *
- * Keys must match runtime `nodeRegistry` (Syntra + ASTRA + human.gate).
- * Teammate tools land here as catalog data only — no engine change (A6 / §9 #5).
+ * Enriched tool catalog for the LLM graph generator + Admin Builder.
+ * Keys must match runtime `nodeRegistry`.
  */
 
 export type ToolCatalogEntry = {
   key: string;
   description: string;
-  /** Human-readable required/optional inputs for the system prompt. */
   input: Record<string, string>;
   output: {
     event: string;
@@ -17,22 +14,13 @@ export type ToolCatalogEntry = {
   triggeredBy: string;
 };
 
-/**
- * The LLM's entire tool universe today (design §3).
- * Sourced from packages/orchestrator/src/nodes/{syntra,astra,human-gate}.ts.
- */
 export const TOOL_CATALOG: readonly ToolCatalogEntry[] = [
   {
     key: "syntra.jd.process",
     description:
       "Process a job description: parse it and prepare structured requirements via Syntra.",
-    input: {
-      jobId: "string (required) — the job to process",
-    },
-    output: {
-      event: "syntra.jd.parsed",
-      shape: "{ jobId, status, syntra }",
-    },
+    input: { jobId: "string (required) — the job to process" },
+    output: { event: "syntra.jd.parsed", shape: "{ jobId, status, syntra }" },
     triggeredBy: "syntra.jd.received",
   },
   {
@@ -40,8 +28,8 @@ export const TOOL_CATALOG: readonly ToolCatalogEntry[] = [
     description:
       "Process a resume: parse, normalize skills, and prepare a profile via Syntra.",
     input: {
-      resumeId: "string (required) — the resume to process",
-      candidateId: "string (optional) — provisional candidate id",
+      resumeId: "string (required)",
+      candidateId: "string (optional)",
     },
     output: {
       event: "syntra.profile.prepared",
@@ -52,60 +40,130 @@ export const TOOL_CATALOG: readonly ToolCatalogEntry[] = [
   {
     key: "syntra.match.process",
     description:
-      "Score a job × resume match: via Syntra; persist results. " +
-      "Put matching rules in node.config when the admin asks in English " +
-      "(hardFilters, matchThreshold, rerank) — there is no separate filter tool.",
+      "Score a job × resume match via Syntra. Config: hardFilters, matchThreshold, rerank.",
     input: {
-      jobId: "string (required) — the job",
-      resumeId: "string (required) — the resume",
+      jobId: "string (required)",
+      resumeId: "string (required)",
       candidateId: "string (optional)",
     },
     output: {
       event: "syntra.match.completed",
-      shape: "{ jobId, resumeId, candidateId, skillMatchScore, status, syntra }",
+      shape: "{ jobId, resumeId, skillMatchScore, status }",
     },
     triggeredBy: "syntra.match.requested",
   },
   {
+    key: "astra.requirement.intake",
+    description:
+      "Ingest an email-shaped JD via Syntra ASTRA. Emits astra.requirement.received.",
+    input: {
+      subject: "string — email subject / title",
+      body: "string (required) — email body / raw JD text",
+      from: "string (optional) — sender",
+    },
+    output: {
+      event: "astra.requirement.received",
+      shape: "{ jobId, requirement_id, channel_type: EMAIL }",
+    },
+    triggeredBy: "astra.email.received",
+  },
+  {
+    key: "astra.requirement.ingest",
+    description:
+      "Source-agnostic JD insert (no email shaping). Emits astra.requirement.received.",
+    input: {
+      title: "string (optional)",
+      raw_text: "string (required)",
+      channel_type: "string (optional) — API / CHANNEL",
+    },
+    output: {
+      event: "astra.requirement.received",
+      shape: "{ jobId, requirement_id, channel_type }",
+    },
+    triggeredBy: "astra.requirement.ingest_requested",
+  },
+  {
+    key: "astra.jobboard.fetch",
+    description:
+      "Fetch / ingest job-board listings into ASTRA. Emits astra.requirement.received per job.",
+    input: {
+      source: "string — board name or manual",
+      keyword: "string — search keyword",
+      location: "string (optional)",
+    },
+    output: {
+      event: "astra.requirement.received",
+      shape: "{ jobId, channel_type: JOB_BOARD }",
+    },
+    triggeredBy: "astra.jobboard.fetch_requested",
+  },
+  {
+    key: "astra.requirement.quality",
+    description:
+      "Cheap JD quality score (no full LLM). Sets is_actionable + confidence_score for branching.",
+    input: {
+      jobId: "string (optional if raw_text present)",
+      raw_text: "string (optional)",
+    },
+    output: {
+      event: "astra.requirement.scored",
+      shape: "{ is_actionable, confidence_score, validation_details }",
+    },
+    triggeredBy: "astra.requirement.received",
+  },
+  {
     key: "astra.requirement.normalize",
     description:
-      "Normalize / enrich an ASTRA requirement via Syntra (quality score, " +
-      "is_actionable). Emits astra.requirement.normalized for the route gate.",
+      "Full ASTRA enrich via Syntra (skills, role, quality). Emits astra.requirement.normalized.",
     input: {
-      jobId: "string (required) — requirement / job id",
-      raw_text: "string (optional) — JD body; empty string is permanent-input",
+      jobId: "string (required)",
+      raw_text: "string (optional)",
     },
     output: {
       event: "astra.requirement.normalized",
-      shape: "{ jobId, requirement_id, is_actionable, confidence_score, parser_version }",
+      shape: "{ jobId, is_actionable, confidence_score, parser_version }",
     },
     triggeredBy: "astra.requirement.received",
   },
   {
     key: "astra.route.decision",
     description:
-      "Route a normalized requirement: actionable → syntra.jd.normalized (bridge); " +
-      "else → astra.requirement.rejected. Config: onActionable, onRejected, minConfidence.",
+      "Route gate: actionable → syntra.jd.normalized (SYNTRA bridge); else astra.requirement.rejected.",
     input: {
       jobId: "string (required)",
-      is_actionable: "boolean — from normalize",
-      confidence_score: "number — from normalize",
-      minConfidence: "number (optional, node.config) — default 0",
+      is_actionable: "boolean",
+      confidence_score: "number",
+      minConfidence: "number (config)",
     },
     output: {
       event: "syntra.jd.normalized",
-      shape: "{ jobId, requirement_id, is_actionable, confidence_score } or rejected payload",
+      shape: "{ jobId, is_actionable, confidence_score } or rejected",
     },
     triggeredBy: "astra.requirement.normalized",
   },
   {
+    key: "orch.branch.decision",
+    description:
+      "Conditional planner: sets branch_key pass | human_review | reject from confidence/actionable. " +
+      "Wire graph.conditionalEdges from this node. Use before/with human.gate for human-in-the-loop.",
+    input: {
+      confidence_score: "number — from quality/normalize",
+      is_actionable: "boolean",
+      passMin: "number (config, default 0.6)",
+      humanMin: "number (config, default 0.35)",
+    },
+    output: {
+      event: "astra.requirement.rejected",
+      shape: "state.branch_key; optional reject event when configured",
+    },
+    triggeredBy: "astra.requirement.scored",
+  },
+  {
     key: "human.gate",
     description:
-      "Pause the workflow for human review (duplicate check, approval gate). " +
-      "Set config.reason (e.g. duplicate_review) on the node.",
-    input: {
-      reason: "string (optional) — why review is needed",
-    },
+      "Pause for human review (approval). Resume via orchestration.resume-thread. " +
+      "Pair with orch.branch.decision (human_review → human.gate → route).",
+    input: { reason: "string (optional)" },
     output: {
       event: "syntra.approval.requested",
       shape: "{ reason, gate, source_event_id }",
@@ -114,21 +172,14 @@ export const TOOL_CATALOG: readonly ToolCatalogEntry[] = [
   },
 ] as const;
 
-/**
- * Admin-authorable node impl keys that pass go-live (must exist in orchestrator nodeRegistry).
- * Single source — do not duplicate in go-live-gate.
- */
 export const RUNTIME_RUNNABLE_IMPLS: readonly string[] = TOOL_CATALOG.map(
   (t) => t.key,
 );
 
-/** Registry map used by isRegisteredTool / Generate validation. */
-export const TOOL_REGISTRY: Record<
-  string,
-  { description: string }
-> = Object.fromEntries(
-  TOOL_CATALOG.map((t) => [t.key, { description: t.description }]),
-);
+export const TOOL_REGISTRY: Record<string, { description: string }> =
+  Object.fromEntries(
+    TOOL_CATALOG.map((t) => [t.key, { description: t.description }]),
+  );
 
 export type ToolKey = (typeof TOOL_CATALOG)[number]["key"];
 
@@ -144,7 +195,6 @@ export function getToolCatalog(): readonly ToolCatalogEntry[] {
   return TOOL_CATALOG;
 }
 
-/** Event types the catalog tools emit or are triggered by (for event_schemas lookup). */
 export function catalogRelatedEventTypes(): string[] {
   const set = new Set<string>();
   for (const t of TOOL_CATALOG) {

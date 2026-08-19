@@ -34,9 +34,19 @@ export function AdminHelpPanel() {
           <h4>Create workflow</h4>
           <p>
             Your description is read by the AI assistant on the server. It picks
-            steps (process job, process resume, match, or human review) and
-            settings (threshold, filters). You review the preview, then Accept & save.
+            steps (ASTRA quality/normalize/route, Syntra process/match, branch,
+            or human review) and settings (passMin, humanMin, match threshold).
+            You review the preview, then Accept & save.
             Nothing is stored until you accept — preview is safe to try.
+          </p>
+        </section>
+        <section>
+          <h4>ASTRA ↔ SYNTRA</h4>
+          <p>
+            ASTRA tools are shared — any agent can select them. Typical flow:
+            quality score → branch (pass / human / reject) → normalize → route
+            emits <code>syntra.jd.normalized</code> for SYNTRA matching. Use the{" "}
+            <strong>Runs</strong> page to inspect steps and resume human gates.
           </p>
         </section>
         <section>

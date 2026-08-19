@@ -56,9 +56,14 @@ export type SyntraGraphState = {
   trigger_event: EventInput | null;
   profile: CandidateProfile | null;
   matches: MatchHit[];
-  /** Set by WorkflowRunner when agent_runs insert succeeds. */
+  /** Audit spine — set by WorkflowRunner when agent_runs insert succeeds. */
   agent_run_id: string | null;
   errorsSoft?: Array<{ nodeId: string; class: string; message: string }>;
+  /**
+   * Conditional-edge router key set by orch.branch.decision (or route).
+   * Graph conditionalEdges.map keys must match (pass | human_review | reject).
+   */
+  branch_key?: string | null;
 };
 
 export type NodeImpl = (

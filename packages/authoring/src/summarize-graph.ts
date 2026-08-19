@@ -39,12 +39,21 @@ function configDetail(config: Record<string, unknown> | undefined): string | und
   if (typeof config.rerank === "boolean") {
     bits.push(config.rerank ? "rerank on" : "rerank off");
   }
+  if (typeof config.passMin === "number") {
+    bits.push(`passMin: ${config.passMin}`);
+  }
+  if (typeof config.humanMin === "number") {
+    bits.push(`humanMin: ${config.humanMin}`);
+  }
+  if (typeof config.minConfidence === "number") {
+    bits.push(`minConfidence: ${config.minConfidence}`);
+  }
   return bits.length > 0 ? bits.join(" · ") : undefined;
 }
 
 /**
  * Readable current-workflow view (§9 #4) — not raw JSON.
- * Orders nodes by BFS from __start__ along edges.
+ * Orders nodes by BFS from __start__ along edges + conditionalEdges.
  */
 export function summarizeGraphWorkflow(
   def: GraphDefinition | null | undefined,
@@ -63,6 +72,13 @@ export function summarizeGraphWorkflow(
     const list = adj.get(from) ?? [];
     list.push(to);
     adj.set(from, list);
+  }
+  for (const ce of def.conditionalEdges ?? []) {
+    const list = adj.get(ce.from) ?? [];
+    for (const dest of Object.values(ce.map ?? {})) {
+      list.push(dest);
+    }
+    adj.set(ce.from, list);
   }
 
   const byId = new Map(def.nodes.map((n) => [n.id, n]));
@@ -86,9 +102,21 @@ export function summarizeGraphWorkflow(
     if (!seen.has(n.id)) ordered.push(n.id);
   }
 
+  const branchHints = new Map<string, string>();
+  for (const ce of def.conditionalEdges ?? []) {
+    const parts = Object.entries(ce.map ?? {}).map(
+      ([k, v]) => `${k}→${v === "__end__" ? "end" : v}`,
+    );
+    branchHints.set(ce.from, parts.join(" | "));
+  }
+
   const steps: WorkflowStepSummary[] = ordered.map((id, i) => {
     const node = byId.get(id)!;
-    const detail = configDetail(node.config as Record<string, unknown> | undefined);
+    const detailBits = [
+      configDetail(node.config as Record<string, unknown> | undefined),
+      branchHints.get(id) ? `branches: ${branchHints.get(id)}` : undefined,
+    ].filter(Boolean);
+    const detail = detailBits.length ? detailBits.join(" · ") : undefined;
     const base = IMPL_LABEL[node.impl] ?? node.impl;
     return {
       order: i + 1,

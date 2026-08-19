@@ -79,6 +79,50 @@ export function validateGraphNodeConfigs(def: GraphDefinition): void {
 }
 
 /**
+ * LLMs often emit conditionalEdges as a single object instead of an array.
+ * Coerce { from, router, map } → [{ from, router, map }] before schema parse.
+ */
+export function coerceConditionalEdges(
+  proposal: Record<string, unknown>,
+): Record<string, unknown> {
+  const ce = proposal.conditionalEdges;
+  if (ce === undefined || ce === null) return proposal;
+  if (Array.isArray(ce)) return proposal;
+  if (typeof ce === "object") {
+    const obj = ce as Record<string, unknown>;
+    // Single branch descriptor
+    if (
+      typeof obj.from === "string" &&
+      typeof obj.map === "object" &&
+      obj.map !== null &&
+      !Array.isArray(obj.map)
+    ) {
+      return { ...proposal, conditionalEdges: [obj] };
+    }
+    // Map of from → { router, map } or from → map
+    const entries = Object.entries(obj);
+    if (entries.length > 0) {
+      const asArray = entries.map(([from, val]) => {
+        if (val && typeof val === "object" && !Array.isArray(val)) {
+          const v = val as Record<string, unknown>;
+          if (v.map && typeof v.map === "object") {
+            return {
+              from,
+              router: typeof v.router === "string" ? v.router : "branch_key",
+              map: v.map,
+            };
+          }
+          return { from, router: "branch_key", map: v };
+        }
+        return { from, router: "branch_key", map: {} };
+      });
+      return { ...proposal, conditionalEdges: asArray };
+    }
+  }
+  return proposal;
+}
+
+/**
  * Full authored-graph gate used at Generate **and** before Compile / go-live:
  *
  *  a. every node.impl ∈ real TOOL_REGISTRY
@@ -92,12 +136,25 @@ export function validateLlmGraphProposal(
   proposal: Record<string, unknown>,
   opts: ValidateLlmGraphOptions = {},
 ): GraphDefinition {
-  const withKey =
+  const withKeyRaw =
     typeof proposal.graphKey === "string" && proposal.graphKey.trim()
       ? proposal
       : opts.defaultGraphKey
         ? { ...proposal, graphKey: opts.defaultGraphKey }
         : proposal;
+
+  const withKey = coerceConditionalEdges(withKeyRaw);
+
+  // LLMs sometimes put __start__/__end__ into nodes[]; those are edge-only sentinels.
+  if (Array.isArray(withKey.nodes)) {
+    withKey.nodes = (withKey.nodes as unknown[]).filter((node) => {
+      if (!node || typeof node !== "object" || Array.isArray(node)) return true;
+      const n = node as { id?: unknown; impl?: unknown };
+      const id = typeof n.id === "string" ? n.id : "";
+      const impl = typeof n.impl === "string" ? n.impl : "";
+      return id !== "__start__" && id !== "__end__" && impl !== "__start__" && impl !== "__end__";
+    });
+  }
 
   const nodes = withKey.nodes;
   if (!Array.isArray(nodes)) {

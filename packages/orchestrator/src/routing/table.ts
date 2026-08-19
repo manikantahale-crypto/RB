@@ -67,6 +67,26 @@ export const PLATFORM_EVENT_PLAN: Record<string, PlatformEventPlan> = {
     kind: 'fail',
     note: 'Ops — persist to failed_workflows for replay',
   },
+  [EVENT_TYPES.ASTRA_REQUIREMENT_RECEIVED]: {
+    kind: 'graph',
+    note: 'ASTRA channel intake — routed via graph_event_bindings (DB)',
+  },
+  [EVENT_TYPES.ASTRA_EMAIL_RECEIVED]: {
+    kind: 'graph',
+    note: 'Email JD — routed via graph_event_bindings (DB)',
+  },
+  [EVENT_TYPES.ASTRA_JOBBOARD_FETCH_REQUESTED]: {
+    kind: 'graph',
+    note: 'Job-board fetch — routed via graph_event_bindings (DB)',
+  },
+  [EVENT_TYPES.ASTRA_REQUIREMENT_SCORED]: {
+    kind: 'terminal',
+    note: 'ASTRA quality score — audit / same-graph handoff',
+  },
+  [EVENT_TYPES.ASTRA_REQUIREMENT_NORMALIZED]: {
+    kind: 'terminal',
+    note: 'ASTRA normalize outcome — audit / same-graph handoff',
+  },
   [EVENT_TYPES.ASTRA_REQUIREMENT_REJECTED]: {
     kind: 'terminal',
     note: 'ASTRA gate rejected — UI / audit only',
@@ -113,6 +133,8 @@ export const GRAPH_TO_MODULE_QUEUE: Record<string, string> = {
   'syntra.authored': 'module.syntra.jd',
   'astra.requirement.workflow': 'module.syntra.jd',
   'astra.requirement.normalized.workflow': 'module.syntra.jd',
+  'astra.email.intake.workflow': 'module.syntra.jd',
+  'astra.jobboard.fetch.workflow': 'module.syntra.jd',
   'resume.intake': 'module.design.resume',
   'duplicate.review': 'module.design.duplicate',
   'syntra.match.workflow': 'module.syntra.match',

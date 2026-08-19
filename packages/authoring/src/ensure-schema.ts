@@ -271,11 +271,17 @@ export async function seedAgentTemplates(pool: Pool): Promise<void> {
           SET agent_id = $1,
               display_name = $2,
               template = $3::jsonb,
-              version = $5,
+              version = $4,
               is_active = true,
               updated_at = now()
-        WHERE id = $6`,
-      [...payload, s.id],
+        WHERE id = $5`,
+      [
+        s.agentId,
+        s.displayName,
+        JSON.stringify(template),
+        s.version,
+        s.id,
+      ],
     );
 
     if ((bumped.rowCount ?? 0) > 0) continue;
@@ -324,6 +330,17 @@ const PRODUCT_AGENT_MODEL = JSON.stringify({
   timeout_ms: 300000,
 });
 
+const ASTRA_RUNTIME_TOOLS = JSON.stringify([
+  { name: "astra.requirement.intake", min_version: "1.0.0" },
+  { name: "astra.requirement.ingest", min_version: "1.0.0" },
+  { name: "astra.jobboard.fetch", min_version: "1.0.0" },
+  { name: "astra.requirement.quality", min_version: "1.0.0" },
+  { name: "astra.requirement.normalize", min_version: "1.0.0" },
+  { name: "orch.branch.decision", min_version: "1.0.0" },
+  { name: "human.gate", min_version: "1.0.0" },
+  { name: "astra.route.decision", min_version: "1.0.0" },
+]);
+
 /**
  * Ensure agent_definitions + draft policies exist for catalog product agents
  * (mock agents ASTRA, ORBIT, etc. are not in runtime R__seed_agent_definitions).
@@ -341,12 +358,7 @@ export async function seedProductAgentDefinitions(pool: Pool): Promise<void> {
     );
     if ((defRow.rowCount ?? 0) === 0) {
       const toolsJson =
-        s.agentKey === "astra"
-          ? JSON.stringify([
-              { name: "astra.requirement.normalize", min_version: "1.0.0" },
-              { name: "astra.route.decision", min_version: "1.0.0" },
-            ])
-          : PRODUCT_AGENT_RUNTIME_TOOLS;
+        s.agentKey === "astra" ? ASTRA_RUNTIME_TOOLS : PRODUCT_AGENT_RUNTIME_TOOLS;
       await pool.query(
         `INSERT INTO agent_definitions (
            id, name, version, purpose, system_prompt_ref,
@@ -371,14 +383,7 @@ export async function seedProductAgentDefinitions(pool: Pool): Promise<void> {
                 purpose = $3,
                 updated_at = now()
           WHERE id = $1`,
-        [
-          s.agentId,
-          JSON.stringify([
-            { name: "astra.requirement.normalize", min_version: "1.0.0" },
-            { name: "astra.route.decision", min_version: "1.0.0" },
-          ]),
-          s.purpose,
-        ],
+        [s.agentId, ASTRA_RUNTIME_TOOLS, s.purpose],
       );
     }
 

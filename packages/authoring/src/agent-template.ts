@@ -19,6 +19,16 @@ export const AgentTemplateSchema = z.object({
   nodes: z.array(TemplateNodeSchema).min(1),
   wiring: z.array(z.tuple([z.string().min(1), z.string().min(1)])).min(1),
   conditionalOn: z.record(z.string(), z.string()).default({}),
+  /** Optional LangGraph conditional forks (from → branch_key map). */
+  conditionalEdges: z
+    .array(
+      z.object({
+        from: z.string().min(1),
+        router: z.string().min(1).default("branch_key"),
+        map: z.record(z.string(), z.string()),
+      }),
+    )
+    .optional(),
 });
 
 export type AgentTemplate = z.infer<typeof AgentTemplateSchema>;

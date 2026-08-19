@@ -1337,6 +1337,12 @@ export function PolicyEditorPage({
                   steps={editingWorkflow ? workflowSteps : undefined}
                   onStepsChange={editingWorkflow ? setWorkflowSteps : undefined}
                   emptyHint="Edit steps with ✎, or use Generate workflow below to build from policy."
+                  triggerEventType={
+                    String(getPath(values, "triggerEventType") ?? "").trim() ||
+                    runtime?.binding?.eventType ||
+                    null
+                  }
+                  isLive={Boolean(runtime?.binding?.eventType)}
                 />
               </div>
               {!pendingPreview ? renderWorkflowGenerateActions("workflow") : null}
@@ -1362,6 +1368,12 @@ export function PolicyEditorPage({
                     lastGenerationTrace ??
                     null
                   }
+                  triggerEventType={
+                    String(getPath(values, "triggerEventType") ?? "").trim() ||
+                    runtime?.binding?.eventType ||
+                    null
+                  }
+                  isLive={Boolean(runtime?.binding?.eventType)}
                 />
               </div>
             )}

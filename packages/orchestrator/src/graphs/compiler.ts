@@ -52,6 +52,10 @@ const SyntraState = Annotation.Root({
     reducer: (x, y) => (y !== undefined ? y : x),
     default: () => null,
   }),
+  branch_key: Annotation<string | null>({
+    reducer: (x, y) => (y !== undefined ? y : x),
+    default: () => null,
+  }),
 });
 
 type Cached = {
@@ -353,6 +357,17 @@ export class GraphCompiler {
           });
           await writeStep(state, node.id, node.impl, 'OK', durationMs, {
             emitted: viaCtx.map((e) => e.event_type),
+            result: typeof patch.result === 'string' ? patch.result : undefined,
+            branch_key:
+              typeof patch.branch_key === 'string' ? patch.branch_key : undefined,
+            confidence_score:
+              (patch.trigger_event?.payload as Record<string, unknown> | undefined)
+                ?.confidence_score ??
+              (patch.trigger_event?.payload as Record<string, unknown> | undefined)
+                ?.branch_score,
+            is_actionable: (
+              patch.trigger_event?.payload as Record<string, unknown> | undefined
+            )?.is_actionable,
           });
           if (viaCtx.length === 0) return patch;
           return {
@@ -425,6 +440,24 @@ export class GraphCompiler {
 
     for (const [from, to] of def.edges) {
       builder = builder.addEdge(from, to);
+    }
+
+    // Conditional branches (design: planning / human-loop forks).
+    // `router` is the state field name (usually branch_key).
+    for (const ce of def.conditionalEdges ?? []) {
+      const map = { ...ce.map } as Record<string, string>;
+      builder = builder.addConditionalEdges(
+        ce.from,
+        (state: { branch_key?: string | null }) => {
+          const key = state.branch_key ?? 'reject';
+          if (map[key]) return key;
+          if (map.default) return 'default';
+          if (map.reject) return 'reject';
+          const first = Object.keys(map)[0];
+          return first ?? 'reject';
+        },
+        map,
+      );
     }
 
     return this.checkpointer
