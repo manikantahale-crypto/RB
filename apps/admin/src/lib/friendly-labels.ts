@@ -5,6 +5,30 @@ import { getToolCatalog } from "@tekisho/authoring/src/tool-registry.js";
 import { listTriggerEvents } from "@tekisho/authoring/src/trigger-events.js";
 
 const TOOL_PLAIN: Record<string, { title: string; blurb: string }> = {
+  "syntra.continuous.match": {
+    title: "Match JD against bench",
+    blurb: "After a job is parsed, find bench candidates who may fit",
+  },
+  "syntra.duplicate.detect": {
+    title: "Check for duplicate candidate",
+    blurb: "Flags likely duplicate profiles for review",
+  },
+  "syntra.bench.alert": {
+    title: "Alert matching requirements",
+    blurb: "Notifies live jobs that this candidate may match",
+  },
+  "syntra.shortlist.notify": {
+    title: "Update shortlist UI",
+    blurb: "Pushes match results so recruiters see the shortlist",
+  },
+  "syntra.duplicate.merge": {
+    title: "Merge or keep duplicates",
+    blurb: "Applies the human decision on duplicate candidates",
+  },
+  "syntra.run.retry": {
+    title: "Retry failed agent run",
+    blurb: "Asks Syntra to replay a run that exhausted retries",
+  },
   "astra.requirement.intake": {
     title: "Receive email job description",
     blurb: "Pulls a JD from an email into the system",

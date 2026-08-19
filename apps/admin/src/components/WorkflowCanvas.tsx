@@ -31,6 +31,22 @@ function toolLabel(impl: string): string {
   return friendlyToolTitle(impl);
 }
 
+function stepConfigBits(step: WorkflowStep): string[] {
+  const cfg = step.config;
+  if (!cfg || typeof cfg !== "object") return [];
+  const bits: string[] = [];
+  if (typeof cfg.matchThreshold === "number") {
+    bits.push(`Min score: ${cfg.matchThreshold}`);
+  }
+  if (typeof cfg.rerank === "boolean") {
+    bits.push(cfg.rerank ? "Rerank on" : "Rerank off");
+  }
+  if (Array.isArray(cfg.hardFilters) && cfg.hardFilters.length > 0) {
+    bits.push(`Filters: ${(cfg.hardFilters as string[]).join(", ")}`);
+  }
+  return bits;
+}
+
 export function workflowStepsFromDefinition(
   def: GraphDefinition | null | undefined,
 ): WorkflowStep[] {
@@ -282,6 +298,11 @@ export function WorkflowCanvas({
                         {friendlyToolBlurb(step.impl)}
                       </span>
                     ) : null}
+                    {stepConfigBits(step).map((bit) => (
+                      <span key={bit} className="workflow-node-detail muted">
+                        {bit}
+                      </span>
+                    ))}
                   </div>
                 </>
               )}

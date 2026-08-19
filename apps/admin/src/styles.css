@@ -975,6 +975,13 @@ code {
   color: #8a4b12;
 }
 
+.policy-scope-hint {
+  display: block;
+  margin-top: 0.4rem;
+  color: var(--danger);
+  font-weight: 550;
+}
+
 .gap-report-steps {
   margin: 0.75rem 0 1rem;
 }
@@ -1799,6 +1806,12 @@ code {
   font-weight: 600;
   font-size: 0.92rem;
   line-height: 1.3;
+}
+
+.workflow-node-detail {
+  font-size: 0.8rem;
+  font-weight: 600;
+  color: var(--ink);
 }
 
 .workflow-node-impl {

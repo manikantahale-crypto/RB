@@ -21,8 +21,8 @@ export const PLATFORM_EVENT_PLAN: Record<string, PlatformEventPlan> = {
     note: 'Trigger — routed via graph_event_bindings (DB)',
   },
   [EVENT_TYPES.JD_PARSED]: {
-    kind: 'terminal',
-    note: 'Outcome of JD process — UI / audit only',
+    kind: 'graph',
+    note: 'Trigger — routed via graph_event_bindings (continuous match)',
   },
   /** ASTRA route bridge — must be graph or ingress silently terminal-acks. */
   [EVENT_TYPES.JD_NORMALIZED]: {
@@ -40,8 +40,8 @@ export const PLATFORM_EVENT_PLAN: Record<string, PlatformEventPlan> = {
     note: 'Trigger — routed via graph_event_bindings (DB)',
   },
   [EVENT_TYPES.PROFILE_PREPARED]: {
-    kind: 'terminal',
-    note: 'Outcome of resume/profile prep — UI / audit only',
+    kind: 'graph',
+    note: 'Trigger — routed via graph_event_bindings (duplicate detect)',
   },
   [EVENT_TYPES.DUPLICATE_REVIEW_REQUIRED]: {
     kind: 'graph',

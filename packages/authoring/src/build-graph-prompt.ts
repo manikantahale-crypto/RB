@@ -34,6 +34,7 @@ const DEFAULT_RULES = [
   "Output a single JSON object (no markdown fences) with this shape:",
   '  { "graphKey": string, "nodes": [{ "id": string, "impl": string, "config"?: object }], "edges": [[string, string], ...] }',
   "The graph MUST include edges from __start__ into the workflow and out to __end__.",
+  "Do NOT add __start__ or __end__ as nodes. They are edge endpoints only — never use them as node.id or node.impl.",
   "The graph must be fully connected (no orphan nodes).",
   "Prefer the smallest graph that satisfies the admin request.",
   "Workflow design (tools, order, filters, thresholds) comes from the admin's English — encode it in the graph.",

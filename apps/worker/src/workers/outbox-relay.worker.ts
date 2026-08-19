@@ -9,6 +9,7 @@ import { Pool } from "pg";
 import type { PgBoss } from "pg-boss";
 import { env } from "../env.js";
 import type { EventEnvelope, EventType } from "@tekisho/domain";
+import type { DbQueryable } from "@tekisho/authoring/src/event-bindings.js";
 import {
   planForEvent,
   INGRESS_QUEUE,
@@ -139,12 +140,15 @@ export async function relayOnce(
           __graphKey?: string;
           __graphVersion?: number;
         };
-        if (resolvePin) {
-          // Optional stamp only — never block outbox publish on pin lookup
-          // (pooler timeouts would otherwise roll back the whole batch,
-          // stranding graph siblings like syntra.jd.normalized).
+        // Skip pin lookup for terminal events; fail-open so pooler timeouts
+        // never roll back the batch (would strand siblings like syntra.jd.normalized).
+        if (resolvePin && plan.kind !== "terminal") {
           try {
-            const pin = await resolvePin(row.event_type, row.organization_id);
+            const pin = await resolvePin(
+              row.event_type,
+              row.organization_id,
+              client,
+            );
             if (pin) {
               stamped.__graphKey = pin.graphKey;
               stamped.__graphVersion = pin.graphVersion;
@@ -200,6 +204,8 @@ export type StartOutboxRelayOptions = {
   resolvePin?: (
     eventType: string,
     organizationId: string,
+    /** Must use this client when called inside relayOnce (pool.max is 1). */
+    db: DbQueryable,
   ) => Promise<{ graphKey: string; graphVersion: number } | null>;
 };
 

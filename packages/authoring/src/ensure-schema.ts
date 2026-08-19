@@ -243,6 +243,8 @@ async function widenAuthoringStatusChecks(pool: Pool): Promise<void> {
 export async function seedAgentTemplates(pool: Pool): Promise<void> {
   for (const s of TEMPLATE_SEED_CATALOG) {
     const template = AgentTemplateSchema.parse(s.template);
+    // Prefer keyed update / id bump (handles ASTRA version re-seeds), then insert.
+    // Falls back to ON CONFLICT(id) style when unique (agent_key, version) collides.
     const payload = [
       s.agentId,
       s.displayName,
@@ -251,7 +253,6 @@ export async function seedAgentTemplates(pool: Pool): Promise<void> {
       s.version,
     ];
 
-    // Match exact (agent_key, version) first.
     const updated = await pool.query(
       `UPDATE agent_templates
           SET agent_id = $1,
@@ -265,7 +266,6 @@ export async function seedAgentTemplates(pool: Pool): Promise<void> {
 
     if ((updated.rowCount ?? 0) > 0) continue;
 
-    // Version bump of the same catalog id (avoids PK collision on re-seed).
     const bumped = await pool.query(
       `UPDATE agent_templates
           SET agent_id = $1,
@@ -286,19 +286,50 @@ export async function seedAgentTemplates(pool: Pool): Promise<void> {
 
     if ((bumped.rowCount ?? 0) > 0) continue;
 
-    await pool.query(
-      `INSERT INTO agent_templates (
-         id, agent_key, agent_id, display_name, version, template, is_active
-       ) VALUES ($1, $2, $3, $4, $5, $6::jsonb, true)`,
-      [
-        s.id,
-        s.agentKey,
-        s.agentId,
-        s.displayName,
-        s.version,
-        JSON.stringify(template),
-      ],
-    );
+    try {
+      await pool.query(
+        `INSERT INTO agent_templates (
+           id, agent_key, agent_id, display_name, version, template, is_active
+         ) VALUES ($1, $2, $3, $4, $5, $6::jsonb, true)
+         ON CONFLICT (id) DO UPDATE SET
+           agent_key = EXCLUDED.agent_key,
+           agent_id = EXCLUDED.agent_id,
+           display_name = EXCLUDED.display_name,
+           version = EXCLUDED.version,
+           template = EXCLUDED.template,
+           is_active = true,
+           updated_at = now()`,
+        [
+          s.id,
+          s.agentKey,
+          s.agentId,
+          s.displayName,
+          s.version,
+          JSON.stringify(template),
+        ],
+      );
+    } catch (err: any) {
+      if (err?.code === "23505") {
+        await pool.query(
+          `UPDATE agent_templates
+              SET agent_id = $1,
+                  display_name = $2,
+                  template = $3::jsonb,
+                  is_active = true,
+                  updated_at = now()
+            WHERE agent_key = $4 AND version = $5`,
+          [
+            s.agentId,
+            s.displayName,
+            JSON.stringify(template),
+            s.agentKey,
+            s.version,
+          ],
+        );
+        continue;
+      }
+      throw err;
+    }
   }
 
   console.log(

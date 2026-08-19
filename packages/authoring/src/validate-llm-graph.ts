@@ -145,21 +145,25 @@ export function validateLlmGraphProposal(
 
   const withKey = coerceConditionalEdges(withKeyRaw);
 
-  // LLMs sometimes put __start__/__end__ into nodes[]; those are edge-only sentinels.
-  if (Array.isArray(withKey.nodes)) {
-    withKey.nodes = (withKey.nodes as unknown[]).filter((node) => {
-      if (!node || typeof node !== "object" || Array.isArray(node)) return true;
-      const n = node as { id?: unknown; impl?: unknown };
-      const id = typeof n.id === "string" ? n.id : "";
-      const impl = typeof n.impl === "string" ? n.impl : "";
-      return id !== "__start__" && id !== "__end__" && impl !== "__start__" && impl !== "__end__";
-    });
-  }
-
-  const nodes = withKey.nodes;
-  if (!Array.isArray(nodes)) {
+  const rawNodes = withKey.nodes;
+  if (!Array.isArray(rawNodes)) {
     throw new GenerationFailedError("proposal.nodes must be an array");
   }
+
+  // LangGraph terminals belong only on edges, not in nodes. Gemini often
+  // emits { id: "__start__", impl: "__start__" } which is not a tool.
+  const nodes = rawNodes.filter((node) => {
+    if (!node || typeof node !== "object" || Array.isArray(node)) return true;
+    const id = String((node as { id?: unknown }).id ?? "");
+    const impl = String((node as { impl?: unknown }).impl ?? "");
+    return (
+      id !== "__start__" &&
+      id !== "__end__" &&
+      impl !== "__start__" &&
+      impl !== "__end__"
+    );
+  });
+  const sanitized = { ...withKey, nodes };
 
   const unknownImpls: string[] = [];
   for (const node of nodes) {
@@ -181,7 +185,7 @@ export function validateLlmGraphProposal(
     );
   }
 
-  const parsed = GraphDefinitionSchema.safeParse(withKey);
+  const parsed = GraphDefinitionSchema.safeParse(sanitized);
   if (!parsed.success) {
     const detail = parsed.error.issues
       .slice(0, 5)
