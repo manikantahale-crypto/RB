@@ -86,39 +86,36 @@ export function WorkflowCanvas({
     );
   }
 
-  const startBanner = (
-    <div className="workflow-canvas-meta">
-      <div className="workflow-canvas-head">
-        <span className="workflow-canvas-title">
-          {title
-            ? title
-            : version != null
-              ? `Workflow · v${version}`
-              : "Workflow"}
-        </span>
-        {isLive ? <span className="workflow-live-badge">Live</span> : null}
+  /** Chrome above the diagram — no separate Start pill; Start lives in the graph. */
+  const flowHints =
+    hasHumanLoop || isLive ? (
+      <div className="workflow-canvas-meta">
+        {isLive ? (
+          <div className="workflow-canvas-head">
+            <span className="workflow-live-badge">Live</span>
+          </div>
+        ) : null}
+        {hasHumanLoop ? (
+          <p className="workflow-human-banner" role="status">
+            This flow can pause for a person — Approve / Reject appears in History
+            when a run waits.
+          </p>
+        ) : null}
       </div>
-      <div className="workflow-node workflow-node--pill workflow-node--start workflow-start-inline">
-        <span className="workflow-start-kicker">Starts when</span>
-        <span className="workflow-start-title">
-          {triggerEventType
-            ? friendlyEventLabel(triggerEventType)
-            : "Choose a trigger in Policy"}
-        </span>
-      </div>
-      {hasHumanLoop ? (
-        <p className="workflow-human-banner" role="status">
-          This flow can pause for a person — Approve / Reject appears in History
-          when a run waits.
-        </p>
-      ) : null}
-    </div>
-  );
+    ) : null;
 
   if (editable) {
     return (
       <div className="workflow-canvas workflow-canvas--edit">
-        {startBanner}
+        {flowHints}
+        <div className="workflow-node workflow-node--pill workflow-node--start workflow-start-inline">
+          <span className="workflow-start-kicker">Starts when</span>
+          <span className="workflow-start-title">
+            {triggerEventType
+              ? friendlyEventLabel(triggerEventType)
+              : "Choose a trigger in Policy"}
+          </span>
+        </div>
         <WorkflowEditFlow steps={steps} version={version} />
         <LinearStepEditor
           steps={steps}
@@ -132,11 +129,19 @@ export function WorkflowCanvas({
   if (definition) {
     return (
       <div className="workflow-canvas">
-        {startBanner}
+        {flowHints}
         <WorkflowMermaidView
           definition={definition}
-          title={title}
+          title={
+            title
+              ? title
+              : version != null
+                ? `Workflow · v${version}`
+                : "Workflow"
+          }
           version={version}
+          triggerEventType={triggerEventType}
+          isLive={isLive}
         />
       </div>
     );
@@ -146,11 +151,19 @@ export function WorkflowCanvas({
   if (linearDef) {
     return (
       <div className="workflow-canvas">
-        {startBanner}
+        {flowHints}
         <WorkflowMermaidView
           definition={linearDef}
-          title={title}
+          title={
+            title
+              ? title
+              : version != null
+                ? `Workflow · v${version}`
+                : "Workflow"
+          }
           version={version}
+          triggerEventType={triggerEventType}
+          isLive={isLive}
         />
       </div>
     );
