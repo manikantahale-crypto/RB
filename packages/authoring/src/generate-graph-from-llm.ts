@@ -7,6 +7,8 @@ import { validateLlmGraphProposal } from "./validate-llm-graph.js";
 import { mergeUnsupported, outOfScopeLabels } from "./request-scope.js";
 import type { GraphDefinition } from "./graph-definition.js";
 import { summarizeGraphWorkflow } from "./summarize-graph.js";
+import { compileLlmProposalToGraph } from "./compile-llm-proposal.js";
+import { applyDeterministicPolicyConfig } from "./apply-policy-config.js";
 
 export type GenerateGraphFromLlmArgs = {
   llm: LLMClient;
@@ -32,7 +34,7 @@ export type GenerateGraphFromLlmResult = {
 };
 
 /**
- * Propose via LLM → parse → validate (steps 5–6).
+ * Propose via LLM (structured output) → compile → normalize → validate.
  * On any failure throws GenerationFailedError — nothing to store.
  */
 export async function generateGraphFromLlm(
@@ -47,11 +49,16 @@ export async function generateGraphFromLlm(
       temperature: args.temperature ?? 0.2,
     });
 
-  const definition = validateLlmGraphProposal(proposal, {
-    defaultGraphKey: args.graphKey,
+  let compiled = compileLlmProposalToGraph(proposal, {
+    graphKey: args.graphKey,
   });
+  compiled = applyDeterministicPolicyConfig(compiled, args.userRequest);
 
-  // Canonical key from caller (agent identity), not whatever the model invents.
+  const definition = validateLlmGraphProposal(
+    compiled as unknown as Record<string, unknown>,
+    { defaultGraphKey: args.graphKey },
+  );
+
   const locked: GraphDefinition = {
     ...definition,
     graphKey: args.graphKey,

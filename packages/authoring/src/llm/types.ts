@@ -11,6 +11,11 @@ export type LLMCompleteRequest = {
   maxTokens?: number;
   /** Low temperature preferred for graph generation (§9 #6). */
   temperature?: number;
+  /**
+   * When set, providers that support structured output must return JSON
+   * matching this schema (strict). Used for graph generation.
+   */
+  responseJsonSchema?: Record<string, unknown>;
 };
 
 export type LLMCompleteResult = {

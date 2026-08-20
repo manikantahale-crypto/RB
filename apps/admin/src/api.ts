@@ -250,7 +250,7 @@ async function request<T>(
         body: {
           error: "SERVER_ERROR",
           message:
-            "Admin API returned 500. Check the api terminal for the stack trace.",
+            "Admin API is unreachable or still starting (Vite proxy returned 500). Wait a few seconds and refresh, or check the api terminal — if you see ECONNREFUSED, the UI started before the API was ready.",
         },
       };
     }

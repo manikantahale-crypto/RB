@@ -82,7 +82,7 @@ export function buildLlmGenerationTrace(args: {
   return {
     mode: "llm",
     pipeline:
-      "policy/request → buildGraphSystemPrompt → proposeGraphFromLlm (llm.complete) → validateLlmGraphProposal → graph JSON",
+      "policy/request → buildGraphSystemPrompt → proposeGraphFromLlm (structured JSON schema) → compileLlmProposalToGraph → validateLlmGraphProposal → graph JSON",
     userRequest: args.userRequest,
     systemPrompt: args.systemPrompt,
     rawText: args.rawText,
@@ -125,7 +125,7 @@ export function generationMetaToTrace(
     mode: "llm",
     pipeline:
       meta.pipeline ??
-      "policy/request → buildGraphSystemPrompt → proposeGraphFromLlm → validateLlmGraphProposal",
+      "policy/request → buildGraphSystemPrompt → proposeGraphFromLlm (structured JSON) → compileLlmProposalToGraph → validateLlmGraphProposal",
     userRequest: meta.userRequest,
     systemPrompt: meta.systemPrompt,
     rawText: meta.rawText,
@@ -186,7 +186,7 @@ export function buildGenerationMeta(args: {
       events: args.events ?? [],
     });
     pipeline =
-      "policy/request → buildGraphSystemPrompt → proposeGraphFromLlm → validateLlmGraphProposal";
+      "policy/request → buildGraphSystemPrompt → proposeGraphFromLlm (structured JSON) → compileLlmProposalToGraph → validateLlmGraphProposal";
   } else {
     systemPrompt = [
       "Template-driven graph generation.",

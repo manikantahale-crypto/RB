@@ -113,7 +113,7 @@ function createOpenAiCompatibleClient(cfg: LlmEnvConfig): LLMClient {
     async complete(req: LLMCompleteRequest): Promise<LLMCompleteResult> {
       const model = req.model ?? cfg.model;
       const temperature = req.temperature ?? 0.2;
-      const body = {
+      const body: Record<string, unknown> = {
         model,
         temperature,
         max_tokens: req.maxTokens ?? 4096,
@@ -124,6 +124,16 @@ function createOpenAiCompatibleClient(cfg: LlmEnvConfig): LLMClient {
           { role: "user" as const, content: req.prompt },
         ],
       };
+      if (req.responseJsonSchema) {
+        body.response_format = {
+          type: "json_schema",
+          json_schema: {
+            name: "workflow_graph",
+            strict: true,
+            schema: req.responseJsonSchema,
+          },
+        };
+      }
       const headers: Record<string, string> = {
         "Content-Type": "application/json",
         Authorization: `Bearer ${cfg.apiKey}`,
@@ -236,6 +246,9 @@ function createGeminiClient(cfg: LlmEnvConfig): LLMClient {
           temperature,
           maxOutputTokens: maxOut,
           responseMimeType: "application/json",
+          ...(req.responseJsonSchema
+            ? { responseSchema: req.responseJsonSchema }
+            : {}),
           thinkingConfig: { thinkingBudget: 0 },
         },
       };

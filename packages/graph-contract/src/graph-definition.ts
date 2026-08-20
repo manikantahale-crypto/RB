@@ -18,6 +18,8 @@ export const GraphDefinitionSchema = z.object({
         id: z.string().min(1),
         /** Tool / handler key — must exist in runtime nodeRegistry. */
         impl: z.string().min(1),
+        /** Canvas visual type — assigned at compile time, not by the LLM. */
+        visualType: z.enum(["ai_action", "human_gate"]).optional(),
         config: z.record(z.string(), z.unknown()).optional(),
       }),
     )
@@ -74,15 +76,35 @@ export function validateGraphTopology(def: GraphDefinition): void {
     if (from !== "__start__" && from !== "__end__") onEdge.add(from);
     if (to !== "__start__" && to !== "__end__") onEdge.add(to);
   }
+  // Nodes referenced only through conditionalEdges are not orphans.
   for (const ce of def.conditionalEdges ?? []) {
     if (ce.from !== "__start__" && ce.from !== "__end__") onEdge.add(ce.from);
-    for (const dest of Object.values(ce.map)) {
-      if (dest !== "__start__" && dest !== "__end__") onEdge.add(dest);
+    for (const target of Object.values(ce.map)) {
+      if (target !== "__start__" && target !== "__end__") onEdge.add(target);
     }
   }
   for (const id of nodeIds) {
     if (!onEdge.has(id)) {
       throw new Error(`DEFINITION_INVALID: orphan node "${id}"`);
+    }
+  }
+
+  // Validate conditionalEdges structural refs (router key validation is in the
+  // authoring layer which knows the allowed router list).
+  if (def.conditionalEdges?.length) {
+    for (const ce of def.conditionalEdges) {
+      if (ce.from !== "__start__" && ce.from !== "__end__" && !nodeIds.has(ce.from)) {
+        throw new Error(
+          `DEFINITION_INVALID: conditionalEdges "from" node "${ce.from}" not in nodes`,
+        );
+      }
+      for (const [label, target] of Object.entries(ce.map)) {
+        if (target !== "__end__" && target !== "__start__" && !nodeIds.has(target)) {
+          throw new Error(
+            `DEFINITION_INVALID: conditionalEdges map["${label}"] target "${target}" not in nodes`,
+          );
+        }
+      }
     }
   }
 
@@ -92,10 +114,11 @@ export function validateGraphTopology(def: GraphDefinition): void {
     list.push(to);
     adj.set(from, list);
   }
+  // Include conditional edge targets in adjacency for reachability check.
   for (const ce of def.conditionalEdges ?? []) {
     const list = adj.get(ce.from) ?? [];
-    for (const dest of Object.values(ce.map)) {
-      list.push(dest);
+    for (const target of Object.values(ce.map)) {
+      list.push(target);
     }
     adj.set(ce.from, list);
   }

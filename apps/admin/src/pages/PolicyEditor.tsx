@@ -1372,6 +1372,7 @@ export function PolicyEditorPage({
                   steps={editingWorkflow ? workflowSteps : undefined}
                   onStepsChange={editingWorkflow ? setWorkflowSteps : undefined}
                   emptyHint="Edit steps with ✎, or use Generate workflow below to build from policy."
+                  title={name || undefined}
                   triggerEventType={
                     String(getPath(values, "triggerEventType") ?? "").trim() ||
                     runtime?.binding?.eventType ||

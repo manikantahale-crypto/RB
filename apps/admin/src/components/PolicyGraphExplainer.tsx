@@ -84,6 +84,7 @@ export function PolicyGraphExplainer({
         <WorkflowCanvas
           definition={definition}
           version={graphVersion}
+          title={title}
           triggerEventType={triggerEventType}
           isLive={isLive}
         />

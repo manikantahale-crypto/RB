@@ -8,15 +8,21 @@
     "dev": "vite",
     "build": "tsc -p tsconfig.app.json --noEmit && vite build",
     "preview": "vite preview",
-    "typecheck": "tsc -p tsconfig.app.json --noEmit"
+    "typecheck": "tsc -p tsconfig.app.json --noEmit",
+    "test:e2e": "playwright test"
   },
   "dependencies": {
     "@tekisho/authoring": "*",
+    "@xyflow/react": "^12.11.3",
+    "dagre": "^0.8.5",
+    "mermaid": "^11.12.0",
     "react": "^19.1.0",
     "react-dom": "^19.1.0",
     "react-router-dom": "^7.6.0"
   },
   "devDependencies": {
+    "@playwright/test": "^1.55.0",
+    "@types/dagre": "^0.7.53",
     "@types/node": "*",
     "@types/react": "^19.1.0",
     "@types/react-dom": "^19.1.0",

@@ -133,14 +133,48 @@ export {
   validateAuthoredGraphForGoLive,
   validateGraphNodeConfigs,
   HARD_FILTER_KEYS,
+  ALLOWED_ROUTER_KEYS,
   type ValidateLlmGraphOptions,
   type HardFilterKey,
+  type RouterKey,
 } from "./validate-llm-graph.js";
 export {
   generateGraphFromLlm,
   type GenerateGraphFromLlmArgs,
   type GenerateGraphFromLlmResult,
 } from "./generate-graph-from-llm.js";
+export {
+  resolveNodeType,
+  resolveEdgeLabels,
+  resolveRouterKey,
+  isBranchingTool,
+  isEndVisualTool,
+  resolveNodeCopy,
+  resolveEdgeTone,
+  displayEdgeLabel,
+  type VisualNodeType,
+  type NodeCopy,
+  type NodeRunStatus,
+  type OutcomeTone,
+} from "./graph-visual-registry.js";
+export {
+  LlmGraphProposalSchema,
+  validateLlmGraphProposalSchema,
+  buildLlmGraphJsonSchema,
+  type LlmGraphProposal,
+} from "./llm-graph-proposal-schema.js";
+export {
+  compileLlmProposalToGraph,
+  normalizeLlmProposal,
+  graphStructuralFingerprint,
+  type GraphStructuralFingerprint,
+  type CompileLogEntry,
+} from "./compile-llm-proposal.js";
+export { applyDeterministicPolicyConfig } from "./apply-policy-config.js";
+export {
+  canonicalizeDuplicateReviewProposal,
+  CANONICAL_DUPLICATE_REVIEW,
+} from "./canonicalize-workflows.js";
 export {
   evaluateGoLiveGate,
   buildGapAckMeta,

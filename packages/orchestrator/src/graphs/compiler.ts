@@ -12,6 +12,7 @@ import {
   checksumOf,
   defineGraph,
 } from './recipe.js';
+import { ROUTER_REGISTRY } from './routers.js';
 import { graphSeedCatalog } from './catalog.js';
 import { enrichError, type ErrorClass } from '../workflow/errors.js';
 import {
@@ -442,22 +443,27 @@ export class GraphCompiler {
       builder = builder.addEdge(from, to);
     }
 
-    // Conditional branches (design: planning / human-loop forks).
-    // `router` is the state field name (usually branch_key).
+    // Conditional branches — prefer named routers from ROUTER_REGISTRY;
+    // keep branch_key fallback for ASTRA Option-B graphs.
     for (const ce of def.conditionalEdges ?? []) {
       const map = { ...ce.map } as Record<string, string>;
-      builder = builder.addConditionalEdges(
-        ce.from,
-        (state: { branch_key?: string | null }) => {
-          const key = state.branch_key ?? 'reject';
-          if (map[key]) return key;
-          if (map.default) return 'default';
-          if (map.reject) return 'reject';
-          const first = Object.keys(map)[0];
-          return first ?? 'reject';
-        },
-        map,
-      );
+      const named = ROUTER_REGISTRY[ce.router];
+      const routerFn = named
+        ? named
+        : (state: { branch_key?: string | null; result?: string }) => {
+            // Legacy / ASTRA: router string is the state field (usually branch_key).
+            if (ce.router === 'branch_key' || !ce.router) {
+              const key = state.branch_key ?? 'reject';
+              if (map[key]) return key;
+              if (map.default) return 'default';
+              if (map.reject) return 'reject';
+              return Object.keys(map)[0] ?? 'reject';
+            }
+            throw new Error(
+              `DEFINITION_INVALID: unknown conditional router "${ce.router}"`,
+            );
+          };
+      builder = builder.addConditionalEdges(ce.from, routerFn, map);
     }
 
     return this.checkpointer

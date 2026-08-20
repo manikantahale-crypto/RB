@@ -14,6 +14,26 @@ export const HARD_FILTER_KEYS = [
   "experience",
 ] as const;
 
+/**
+ * Router keys the runtime supports in conditionalEdges.
+ * Must stay in sync with packages/orchestrator/src/graphs/routers.ts.
+ */
+export const ALLOWED_ROUTER_KEYS = [
+  "branch_key",
+  "result.approved_or_end",
+  "result.continue_or_gate",
+  "result.has_duplicate_or_end",
+] as const;
+
+export type RouterKey = (typeof ALLOWED_ROUTER_KEYS)[number];
+
+function isAllowedRouterKey(v: unknown): v is RouterKey {
+  return (
+    typeof v === "string" &&
+    (ALLOWED_ROUTER_KEYS as readonly string[]).includes(v)
+  );
+}
+
 export type HardFilterKey = (typeof HARD_FILTER_KEYS)[number];
 
 export type ValidateLlmGraphOptions = {
@@ -203,6 +223,31 @@ export function validateLlmGraphProposal(
     throw new GenerationFailedError(`graph failed topology validation: ${msg}`, {
       cause: err,
     });
+  }
+
+  // Validate conditionalEdges router keys and map targets.
+  if (parsed.data.conditionalEdges?.length) {
+    const nodeIds = new Set(parsed.data.nodes.map((n) => n.id));
+    for (const ce of parsed.data.conditionalEdges) {
+      if (!isAllowedRouterKey(ce.router)) {
+        throw new GenerationFailedError(
+          `conditionalEdges router "${ce.router}" is not in the allowed list: ` +
+            ALLOWED_ROUTER_KEYS.join(", "),
+        );
+      }
+      if (ce.from !== "__start__" && !nodeIds.has(ce.from)) {
+        throw new GenerationFailedError(
+          `conditionalEdges "from" node "${ce.from}" not found in nodes`,
+        );
+      }
+      for (const [label, target] of Object.entries(ce.map)) {
+        if (target !== "__end__" && target !== "__start__" && !nodeIds.has(target)) {
+          throw new GenerationFailedError(
+            `conditionalEdges map["${label}"] target "${target}" not found in nodes`,
+          );
+        }
+      }
+    }
   }
 
   try {
