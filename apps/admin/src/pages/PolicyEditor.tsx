@@ -38,6 +38,7 @@ import {
 import type { GenerationTrace } from "@tekisho/authoring/src/generation-meta.js";
 import { outOfScopeLabels } from "@tekisho/authoring/src/request-scope.js";
 import { WorkflowPreviewSummary } from "../components/WorkflowPreviewSummary";
+import { GraphArtifactsPanel } from "../components/GraphArtifactsPanel";
 import {
   WorkflowCanvas,
   stepsToLinearGraph,
@@ -938,6 +939,36 @@ export function PolicyEditorPage({
   const hasWorkflow = !displayWorkflowSummary.empty;
 
   function renderWorkflowGenerateActions(placement: "policy" | "workflow") {
+    if (simpleLayout && placement === "policy") return null;
+    if (simpleLayout && placement === "workflow") {
+      if (editingWorkflow || pendingPreview) return null;
+      return (
+        <div className="workflow-generate-bar workflow-generate-bar--workflow workflow-generate-bar--simple">
+          <button
+            type="button"
+            className="btn btn--compact"
+            disabled={generateDisabled}
+            onClick={() => void onGenerate()}
+          >
+            {ui === "generating"
+              ? "Generating…"
+              : hasWorkflow
+                ? "Update workflow"
+                : "Generate workflow"}
+          </button>
+          {generateDisabled && generateDisabledReason ? (
+            <p className="hint generate-hint" role="status">
+              {generateDisabledReason}
+            </p>
+          ) : workflowOutOfDate && hasWorkflow ? (
+            <p className="workflow-generate-bar-hint" role="status">
+              Policy changed — update the workflow to match.
+            </p>
+          ) : null}
+        </div>
+      );
+    }
+
     const barDisabled =
       placement === "policy"
         ? generateDisabled || editingWorkflow
@@ -1297,17 +1328,6 @@ export function PolicyEditorPage({
                     </>
                   ) : (
                     <>
-                      {hasWorkflow ? (
-                        <button
-                          type="button"
-                          className="btn secondary btn--compact"
-                          title="Regenerate workflow from policy"
-                          disabled={generateDisabled}
-                          onClick={() => void onGenerate()}
-                        >
-                          {ui === "generating" ? "Generating…" : "Regenerate"}
-                        </button>
-                      ) : null}
                       <button
                         type="button"
                         className="icon-btn"
@@ -1556,6 +1576,13 @@ export function PolicyEditorPage({
                 </ul>
               ) : null}
             </div>
+          ) : null}
+
+          {simpleLayout ? (
+            <GraphArtifactsPanel
+              agentId={id}
+              refreshKey={`${version}-${status}-${ui}`}
+            />
           ) : null}
 
           {!simpleLayout ? (

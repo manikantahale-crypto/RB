@@ -632,3 +632,79 @@ export function getRuntimeOverview() {
     howOrchPicksUp: string;
   }>("/runtime/overview");
 }
+
+export type AgentArtifacts = {
+  agentId: string;
+  agentName: string | null;
+  agentKey: string | null;
+  liveNow?: {
+    eventType: string;
+    graphKey: string;
+    version: number;
+    status: string;
+    summary: string;
+  } | null;
+  liveBinding: {
+    eventType: string;
+    graphKey: string;
+    version: number;
+    status: string;
+  } | null;
+  versions: Array<{
+    id: string;
+    version: number;
+    status: string;
+    generatedAt: string | null;
+    generatedBy: string | null;
+    checksum: string | null;
+    graphKey: string | null;
+    isLive: boolean;
+    label: string;
+    policyText?: string | null;
+    triggerEventType?: string | null;
+    workflowSteps?: Array<{ order: number; title: string; impl: string }>;
+  }>;
+  runs: Array<{
+    id: string;
+    graphKey: string;
+    status: string;
+    statusLabel?: string;
+    currentAction?: string;
+    triggerEventId: string | null;
+    createdAt: string | null;
+    completedAt: string | null;
+    error: unknown;
+    needsHuman: boolean;
+    threadId: string | null;
+    organizationId: string | null;
+    inputEventType?: string | null;
+    outputEventTypes?: string[];
+    events?: Array<{
+      eventType: string;
+      eventId: string;
+      producer: string | null;
+      occurredAt: string | null;
+      role: "input" | "output";
+    }>;
+    policyText?: string | null;
+    workflowSteps?: Array<{ order: number; title: string; impl: string }>;
+    graphVersion?: number | null;
+    steps: Array<{
+      seq: number;
+      node: string;
+      tool: string | null;
+      status: string;
+      latencyMs: number | null;
+      branchKey: unknown;
+      result: unknown;
+      confidence: unknown;
+      output: Record<string, unknown>;
+    }>;
+  }>;
+};
+
+export function getAgentArtifacts(agentId: string) {
+  return request<AgentArtifacts>(
+    `/runtime/agent-artifacts/${encodeURIComponent(agentId)}`,
+  );
+}

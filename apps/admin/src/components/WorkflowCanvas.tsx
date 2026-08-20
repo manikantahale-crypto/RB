@@ -110,13 +110,21 @@ function branchPlain(key: string): string {
   return key;
 }
 
+function isHumanStep(impl: string): boolean {
+  return impl === "human.gate";
+}
+
+function isBranchStep(impl: string): boolean {
+  return impl === "orch.branch.decision";
+}
+
 export function WorkflowCanvas({
   definition,
   version,
   editable = false,
   steps: stepsProp,
   onStepsChange,
-  emptyHint = "No workflow yet. Build from policy with AI, or add steps manually.",
+  emptyHint = "No workflow yet. Generate from your policy, or add steps with ✎.",
   triggerEventType,
   isLive,
 }: WorkflowCanvasProps) {
@@ -126,6 +134,17 @@ export function WorkflowCanvas({
     [definition],
   );
   const steps = stepsProp ?? derivedSteps;
+
+  const hasHumanLoop = useMemo(
+    () =>
+      steps.some((s) => isHumanStep(s.impl)) ||
+      Boolean(
+        definition?.conditionalEdges?.some((ce) =>
+          Object.keys(ce.map ?? {}).includes("human_review"),
+        ),
+      ),
+    [steps, definition],
+  );
 
   if (steps.length === 0) {
     return (
@@ -167,176 +186,217 @@ export function WorkflowCanvas({
     if (target < 0 || target >= steps.length) return;
     const next = [...steps];
     const [item] = next.splice(index, 1);
+    if (!item) return;
     next.splice(target, 0, item);
     onStepsChange(next);
   }
 
+  const startLabel = triggerEventType
+    ? friendlyEventLabel(triggerEventType)
+    : "Choose a trigger in Policy";
+
   return (
     <div className={`workflow-canvas${editable ? " workflow-canvas--edit" : ""}`}>
       <div className="workflow-canvas-head">
-        <span className="workflow-canvas-title">Workflow</span>
-        {version != null ? (
-          <span className="muted workflow-canvas-version">version {version}</span>
-        ) : null}
-        {isLive ? (
-          <span className="workflow-live-badge" title="Orchestrator will run this">
-            Live
-          </span>
-        ) : null}
+        <span className="workflow-canvas-title">
+          {version != null ? `Workflow · v${version}` : "Workflow"}
+        </span>
+        {isLive ? <span className="workflow-live-badge">Live</span> : null}
       </div>
+
+      {hasHumanLoop ? (
+        <p className="workflow-human-banner" role="status">
+          This flow can pause for a person — Approve / Reject appears in History
+          when a run waits.
+        </p>
+      ) : null}
 
       <div className="workflow-canvas-flow">
         <div className="workflow-node workflow-node--pill workflow-node--start">
-          <span className="workflow-start-title">Start</span>
-          {triggerEventType ? (
-            <span className="workflow-start-event">
-              Because: {friendlyEventLabel(triggerEventType)}
-            </span>
-          ) : (
+          <span className="workflow-start-kicker">Starts when</span>
+          <span className="workflow-start-title">{startLabel}</span>
+          {!triggerEventType ? (
             <span className="workflow-start-event muted">
-              Set a trigger in Policy to go live
+              Set this under Policy before going live
             </span>
-          )}
+          ) : null}
         </div>
         <div className="workflow-connector" aria-hidden="true" />
 
-        {steps.map((step, index) => (
-          <div key={step.id} className="workflow-step-wrap">
-            <div
-              className={`workflow-node${editable ? " workflow-node--editable" : ""}`}
-            >
-              {editable ? (
-                <>
-                  <div className="workflow-node-edit-head">
-                    <span className="workflow-node-num">{index + 1}</span>
-                    <div className="workflow-node-actions">
-                      <button
-                        type="button"
-                        className="icon-btn icon-btn--tiny"
-                        title="Move up"
-                        disabled={index === 0}
-                        onClick={() => moveStep(index, -1)}
-                      >
-                        ↑
-                      </button>
-                      <button
-                        type="button"
-                        className="icon-btn icon-btn--tiny"
-                        title="Move down"
-                        disabled={index === steps.length - 1}
-                        onClick={() => moveStep(index, 1)}
-                      >
-                        ↓
-                      </button>
-                      <button
-                        type="button"
-                        className="icon-btn icon-btn--tiny icon-btn--danger"
-                        title="Remove step"
-                        disabled={steps.length <= 1}
-                        onClick={() => removeStep(index)}
-                      >
-                        ×
-                      </button>
+        {steps.map((step, index) => {
+          const human = isHumanStep(step.impl);
+          const branch = isBranchStep(step.impl);
+          return (
+            <div key={step.id} className="workflow-step-wrap">
+              <div
+                className={`workflow-node${editable ? " workflow-node--editable" : ""}${
+                  human ? " workflow-node--human" : ""
+                }${branch ? " workflow-node--branch" : ""}`}
+              >
+                {editable ? (
+                  <>
+                    <div className="workflow-node-edit-head">
+                      <span className="workflow-node-num">{index + 1}</span>
+                      <div className="workflow-node-actions">
+                        <button
+                          type="button"
+                          className="icon-btn icon-btn--tiny"
+                          title="Move up"
+                          disabled={index === 0}
+                          onClick={() => moveStep(index, -1)}
+                        >
+                          ↑
+                        </button>
+                        <button
+                          type="button"
+                          className="icon-btn icon-btn--tiny"
+                          title="Move down"
+                          disabled={index === steps.length - 1}
+                          onClick={() => moveStep(index, 1)}
+                        >
+                          ↓
+                        </button>
+                        <button
+                          type="button"
+                          className="icon-btn icon-btn--tiny icon-btn--danger"
+                          title="Remove step"
+                          disabled={steps.length <= 1}
+                          onClick={() => removeStep(index)}
+                        >
+                          ×
+                        </button>
+                      </div>
                     </div>
-                  </div>
-                  <label className="workflow-node-field">
-                    <span className="workflow-node-field-label">What this step does</span>
-                    <select
-                      value={step.impl}
-                      onChange={(e) =>
-                        updateStep(index, { impl: e.target.value, config: {} })
-                      }
-                    >
-                      {tools.map((t) => (
-                        <option key={t.key} value={t.key}>
-                          {toolLabel(t.key)}
-                        </option>
-                      ))}
-                    </select>
-                  </label>
-                  {friendlyToolBlurb(step.impl) ? (
-                    <p className="workflow-node-blurb muted">
-                      {friendlyToolBlurb(step.impl)}
-                    </p>
-                  ) : null}
-                  {step.impl === "syntra.match.process" ? (
-                    <label className="workflow-node-field workflow-node-field--inline">
-                      <span className="workflow-node-field-label">Min score</span>
-                      <input
-                        type="number"
-                        min={0}
-                        max={100}
-                        value={
-                          typeof step.config?.matchThreshold === "number"
-                            ? step.config.matchThreshold
-                            : ""
-                        }
-                        placeholder="60"
+                    <label className="workflow-node-field">
+                      <span className="workflow-node-field-label">
+                        What this step does
+                      </span>
+                      <select
+                        value={step.impl}
                         onChange={(e) =>
                           updateStep(index, {
-                            config: {
-                              ...step.config,
-                              matchThreshold: e.target.value
-                                ? Number(e.target.value)
-                                : undefined,
-                            },
+                            impl: e.target.value,
+                            config: {},
                           })
                         }
-                      />
+                      >
+                        {tools.map((t) => (
+                          <option key={t.key} value={t.key}>
+                            {toolLabel(t.key)}
+                          </option>
+                        ))}
+                      </select>
                     </label>
-                  ) : null}
-                </>
-              ) : (
-                <>
-                  <span className="workflow-node-num">{index + 1}</span>
-                  <div className="workflow-node-body">
-                    <span className="workflow-node-label">
-                      {toolLabel(step.impl)}
-                    </span>
                     {friendlyToolBlurb(step.impl) ? (
-                      <span className="workflow-node-blurb muted">
+                      <p className="workflow-node-blurb muted">
                         {friendlyToolBlurb(step.impl)}
+                      </p>
+                    ) : null}
+                    {human ? (
+                      <span className="workflow-tag workflow-tag--human">
+                        Needs a person
                       </span>
                     ) : null}
-                    {stepConfigBits(step).map((bit) => (
-                      <span key={bit} className="workflow-node-detail muted">
-                        {bit}
+                    {branch ? (
+                      <span className="workflow-tag workflow-tag--branch">
+                        Chooses path
                       </span>
-                    ))}
-                  </div>
-                </>
-              )}
+                    ) : null}
+                    {step.impl === "syntra.match.process" ? (
+                      <label className="workflow-node-field workflow-node-field--inline">
+                        <span className="workflow-node-field-label">
+                          Min score
+                        </span>
+                        <input
+                          type="number"
+                          min={0}
+                          max={100}
+                          value={
+                            typeof step.config?.matchThreshold === "number"
+                              ? step.config.matchThreshold
+                              : ""
+                          }
+                          placeholder="60"
+                          onChange={(e) =>
+                            updateStep(index, {
+                              config: {
+                                ...step.config,
+                                matchThreshold: e.target.value
+                                  ? Number(e.target.value)
+                                  : undefined,
+                              },
+                            })
+                          }
+                        />
+                      </label>
+                    ) : null}
+                  </>
+                ) : (
+                  <>
+                    <span className="workflow-node-num">{index + 1}</span>
+                    <div className="workflow-node-body">
+                      <span className="workflow-node-label">
+                        {toolLabel(step.impl)}
+                      </span>
+                      {friendlyToolBlurb(step.impl) ? (
+                        <span className="workflow-node-blurb muted">
+                          {friendlyToolBlurb(step.impl)}
+                        </span>
+                      ) : null}
+                      {human ? (
+                        <span className="workflow-tag workflow-tag--human">
+                          Needs a person
+                        </span>
+                      ) : null}
+                      {branch ? (
+                        <span className="workflow-tag workflow-tag--branch">
+                          Chooses path by score
+                        </span>
+                      ) : null}
+                      {stepConfigBits(step).map((bit) => (
+                        <span key={bit} className="workflow-node-detail muted">
+                          {bit}
+                        </span>
+                      ))}
+                    </div>
+                  </>
+                )}
+              </div>
+              {editable ? (
+                <button
+                  type="button"
+                  className="workflow-add-btn"
+                  title="Add step below"
+                  onClick={() => addStep(index)}
+                >
+                  + Add step
+                </button>
+              ) : null}
+              <div className="workflow-connector" aria-hidden="true" />
             </div>
-            {editable ? (
-              <button
-                type="button"
-                className="workflow-add-btn"
-                title="Add step below"
-                onClick={() => addStep(index)}
-              >
-                + Add step
-              </button>
-            ) : null}
-            <div className="workflow-connector" aria-hidden="true" />
-          </div>
-        ))}
+          );
+        })}
 
         <div className="workflow-node workflow-node--pill">Done</div>
       </div>
 
       {definition?.conditionalEdges && definition.conditionalEdges.length > 0 ? (
         <div className="workflow-branches">
-          <strong>Decision paths:</strong>{" "}
-          {definition.conditionalEdges.map((ce, i) => (
-            <span key={`${ce.from}-${i}`} className="workflow-branch-chip">
-              {Object.entries(ce.map)
-                .map(([k, v]) => `${branchPlain(k)} → ${v === "__end__" ? "end" : friendlyToolTitle(
-                  definition.nodes.find((n) => n.id === v)?.impl ?? v,
-                )}`)
-                .join(" · ")}
-              {i < definition.conditionalEdges!.length - 1 ? " | " : ""}
-            </span>
-          ))}
+          <strong>If the score is…</strong>
+          <ul className="workflow-branch-list">
+            {definition.conditionalEdges.flatMap((ce) =>
+              Object.entries(ce.map).map(([k, v]) => (
+                <li key={`${ce.from}-${k}`}>
+                  {branchPlain(k)} →{" "}
+                  {v === "__end__"
+                    ? "end"
+                    : friendlyToolTitle(
+                        definition.nodes.find((n) => n.id === v)?.impl ?? v,
+                      )}
+                </li>
+              )),
+            )}
+          </ul>
         </div>
       ) : null}
 
@@ -352,9 +412,8 @@ export function WorkflowCanvas({
 
       {editable ? (
         <p className="muted workflow-edit-hint">
-          Update steps here, then click <strong>Save steps</strong>. After that,
-          use <strong>Make live</strong> so the orchestrator runs this version when
-          the trigger event arrives.
+          Save steps, then <strong>Make it live</strong> so this version runs when
+          the start action happens.
         </p>
       ) : null}
     </div>

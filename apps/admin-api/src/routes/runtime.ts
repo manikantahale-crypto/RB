@@ -129,6 +129,420 @@ export function registerRuntimeRoutes(app: FastifyLike, pool: Pool): void {
     }
   });
 
+  /**
+   * Per-agent artifacts: versions + runs with policy, workflow steps,
+   * input/output events for Admin History (tabular UI).
+   */
+  app.get("/runtime/agent-artifacts/:agentId", async (req: any, reply: any) => {
+    const agentId = String(req.params.agentId ?? "");
+    if (!agentId) {
+      return reply.code(400).send({ error: "agentId required" });
+    }
+    try {
+      const versions = await pool.query(
+        `SELECT v.id, v.version, v.status, v.checksum, v.generated_at, v.generated_by,
+                v.artifact_ref, v.artifact_source, v.meta, v.policy_id,
+                p.policy AS policy_json
+           FROM agent_versions v
+           LEFT JOIN agent_policies p ON p.id = v.policy_id
+          WHERE v.agent_id = $1::uuid
+          ORDER BY v.version DESC
+          LIMIT 30`,
+        [agentId],
+      );
+
+      const bindings = await pool.query(
+        `SELECT event_type, graph_key, version, status, source, updated_at
+           FROM graph_event_bindings
+          WHERE agent_id = $1::uuid
+          ORDER BY updated_at DESC NULLS LAST
+          LIMIT 20`,
+        [agentId],
+      );
+
+      const agent = await pool.query(
+        `SELECT d.id, d.name, t.agent_key
+           FROM agent_definitions d
+           LEFT JOIN LATERAL (
+             SELECT agent_key FROM agent_templates
+              WHERE agent_id = d.id AND is_active = true
+              ORDER BY version DESC LIMIT 1
+           ) t ON true
+          WHERE d.id = $1::uuid`,
+        [agentId],
+      );
+      const agentKey = agent.rows[0]?.agent_key
+        ? String(agent.rows[0].agent_key)
+        : null;
+      const authoredKey = agentKey ? `${agentKey}.authored` : null;
+
+      const graphKeys = new Set<string>();
+      for (const b of bindings.rows) {
+        if (b.graph_key) graphKeys.add(String(b.graph_key));
+      }
+      if (authoredKey) graphKeys.add(authoredKey);
+      for (const v of versions.rows) {
+        const meta = v.meta && typeof v.meta === "object" ? v.meta : {};
+        const gk = (meta as { graphKey?: string }).graphKey;
+        if (gk) graphKeys.add(String(gk));
+      }
+
+      const keys = [...graphKeys];
+      let runs: Array<Record<string, unknown>> = [];
+      if (keys.length > 0) {
+        const runQ = await pool.query(
+          `SELECT id, organization_id, agent_name, trigger_event_id, graph_key,
+                  status, langgraph_thread_id, error, input_ref,
+                  started_at, completed_at, created_at
+             FROM orch.runs
+            WHERE graph_key = ANY($1::text[])
+            ORDER BY created_at DESC
+            LIMIT 40`,
+          [keys],
+        );
+        runs = runQ.rows;
+      }
+
+      const runIds = runs
+        .map((r) => r.id)
+        .filter((id): id is string => typeof id === "string");
+
+      let steps: Array<Record<string, unknown>> = [];
+      if (runIds.length > 0) {
+        const stepQ = await pool.query(
+          `SELECT id, run_id, seq, node, tool_name, status, latency_ms,
+                  output_ref, created_at
+             FROM orch.steps
+            WHERE run_id = ANY($1::uuid[])
+            ORDER BY run_id, seq`,
+          [runIds],
+        );
+        steps = stepQ.rows;
+      }
+
+      const stepsByRun = new Map<string, typeof steps>();
+      for (const s of steps) {
+        const rid = String(s.run_id);
+        const list = stepsByRun.get(rid) ?? [];
+        list.push(s);
+        stepsByRun.set(rid, list);
+      }
+
+      const triggerIds = [
+        ...new Set(
+          runs
+            .map((r) => r.trigger_event_id)
+            .filter((id): id is string => id != null && String(id).length > 0)
+            .map(String),
+        ),
+      ];
+
+      const eventsByTrigger = new Map<
+        string,
+        Array<{
+          eventType: string;
+          eventId: string;
+          producer: string | null;
+          occurredAt: string | null;
+          role: "input" | "output";
+        }>
+      >();
+
+      if (triggerIds.length > 0) {
+        const evQ = await pool.query(
+          `SELECT event_id::text AS event_id, event_type, producer,
+                  occurred_at, causation_id::text AS causation_id,
+                  correlation_id::text AS correlation_id
+             FROM event_outbox
+            WHERE event_id::text = ANY($1::text[])
+               OR causation_id::text = ANY($1::text[])
+               OR correlation_id::text IN (
+                    SELECT correlation_id::text FROM event_outbox
+                     WHERE event_id::text = ANY($1::text[])
+                  )
+            ORDER BY occurred_at ASC NULLS LAST
+            LIMIT 400`,
+          [triggerIds],
+        );
+        const triggerSet = new Set(triggerIds);
+        for (const e of evQ.rows) {
+          const eid = String(e.event_id);
+          // Attach to matching trigger(s) in the batch
+          for (const tid of triggerIds) {
+            const related =
+              eid === tid ||
+              String(e.causation_id ?? "") === tid ||
+              // same correlation as this trigger event
+              evQ.rows.some(
+                (t) =>
+                  String(t.event_id) === tid &&
+                  t.correlation_id &&
+                  t.correlation_id === e.correlation_id,
+              );
+            if (!related) continue;
+            const list = eventsByTrigger.get(tid) ?? [];
+            list.push({
+              eventType: String(e.event_type),
+              eventId: eid,
+              producer: e.producer != null ? String(e.producer) : null,
+              occurredAt: e.occurred_at
+                ? new Date(e.occurred_at).toISOString()
+                : null,
+              role: triggerSet.has(eid) ? "input" : "output",
+            });
+            eventsByTrigger.set(tid, list);
+          }
+        }
+      }
+
+      const liveVersion = bindings.rows.find(
+        (b) => String(b.status) === "active",
+      );
+
+      function workflowStepsFromSource(source: unknown): Array<{
+        order: number;
+        title: string;
+        impl: string;
+      }> {
+        if (!source || typeof source !== "string") return [];
+        try {
+          const parsed = JSON.parse(source) as {
+            nodes?: Array<{ id?: string; impl?: string }>;
+          };
+          if (!Array.isArray(parsed.nodes)) return [];
+          return parsed.nodes
+            .filter(
+              (n) =>
+                n?.impl &&
+                n.impl !== "__start__" &&
+                n.impl !== "__end__" &&
+                n.id !== "__start__" &&
+                n.id !== "__end__",
+            )
+            .map((n, i) => ({
+              order: i + 1,
+              title: String(n.impl),
+              impl: String(n.impl),
+            }));
+        } catch {
+          return [];
+        }
+      }
+
+      function policyTextFromJson(policy: unknown): string | null {
+        if (!policy || typeof policy !== "object") return null;
+        const p = policy as Record<string, unknown>;
+        const prompt = p.prompt ?? p.policyText;
+        return typeof prompt === "string" && prompt.trim()
+          ? prompt.trim()
+          : null;
+      }
+
+      function triggerFromPolicy(policy: unknown): string | null {
+        if (!policy || typeof policy !== "object") return null;
+        const t = (policy as Record<string, unknown>).triggerEventType;
+        return typeof t === "string" && t.trim() ? t.trim() : null;
+      }
+
+      const statusFriendly = (status: string, needsHuman: boolean): string => {
+        if (needsHuman) return "Waiting for a person";
+        const s = status.toUpperCase();
+        if (s.includes("COMPLET") || s === "OK") return "Finished";
+        if (s.includes("FAIL") || s.includes("ERROR")) return "Failed";
+        if (s.includes("RUN")) return "Running now";
+        if (s.includes("QUEUE")) return "Queued";
+        if (s.includes("CANCEL")) return "Cancelled";
+        return status;
+      };
+
+      return reply.send({
+        agentId,
+        agentName: agent.rows[0]?.name ?? null,
+        agentKey,
+        liveNow: liveVersion
+          ? {
+              eventType: liveVersion.event_type,
+              graphKey: liveVersion.graph_key,
+              version: liveVersion.version,
+              status: "live",
+              summary: `Live — starts when ${liveVersion.event_type}`,
+            }
+          : null,
+        liveBinding: liveVersion
+          ? {
+              eventType: liveVersion.event_type,
+              graphKey: liveVersion.graph_key,
+              version: liveVersion.version,
+              status: liveVersion.status,
+            }
+          : null,
+        versions: versions.rows.map((v) => {
+          const meta = v.meta && typeof v.meta === "object" ? v.meta : {};
+          const isLive =
+            liveVersion &&
+            Number(liveVersion.version) === Number(v.version) &&
+            String(liveVersion.status) === "active";
+          const steps = workflowStepsFromSource(v.artifact_source);
+          return {
+            id: v.id,
+            version: v.version,
+            status: v.status,
+            generatedAt: v.generated_at,
+            generatedBy: v.generated_by,
+            checksum: v.checksum,
+            graphKey:
+              (meta as { graphKey?: string }).graphKey ??
+              authoredKey ??
+              null,
+            isLive: Boolean(isLive),
+            label:
+              String(v.status) === "active" || isLive
+                ? "Live"
+                : String(v.status) === "generated" ||
+                    String(v.status) === "pending_go_live"
+                  ? "Generated"
+                  : String(v.status) === "compiled" ||
+                      String(v.status) === "published"
+                    ? "Ready"
+                    : String(v.status),
+            policyText: policyTextFromJson(v.policy_json),
+            triggerEventType: triggerFromPolicy(v.policy_json),
+            workflowSteps: steps,
+          };
+        }),
+        runs: runs.map((r) => {
+          const rid = String(r.id);
+          const runSteps = stepsByRun.get(rid) ?? [];
+          const tid = r.trigger_event_id
+            ? String(r.trigger_event_id)
+            : null;
+          const related = tid ? eventsByTrigger.get(tid) ?? [] : [];
+          // Deduplicate by eventId
+          const seen = new Set<string>();
+          const events = related.filter((e) => {
+            if (seen.has(e.eventId)) return false;
+            seen.add(e.eventId);
+            return true;
+          });
+          const inputEvent =
+            events.find((e) => e.role === "input") ?? events[0] ?? null;
+          const outputEvents = events.filter((e) => e.role === "output");
+          const needsHuman =
+            String(r.status).includes("INTERRUPT") ||
+            String(r.status) === "PAUSED" ||
+            String(r.status) === "WAITING_APPROVAL" ||
+            (Boolean(r.langgraph_thread_id) &&
+              !String(r.status).toUpperCase().includes("COMPLET") &&
+              !String(r.status).toUpperCase().includes("FAIL"));
+
+          const mappedSteps = runSteps.map((s) => {
+            const out =
+              s.output_ref && typeof s.output_ref === "object"
+                ? (s.output_ref as Record<string, unknown>)
+                : {};
+            return {
+              seq: s.seq,
+              node: s.node,
+              tool: s.tool_name,
+              status: s.status,
+              latencyMs: s.latency_ms,
+              branchKey: out.branch_key ?? null,
+              result: out.result ?? s.status,
+              confidence:
+                out.confidence_score != null ? out.confidence_score : null,
+              output: out,
+            };
+          });
+
+          const runningStep = [...mappedSteps]
+            .reverse()
+            .find(
+              (s) =>
+                String(s.status).toUpperCase() === "RUNNING" ||
+                String(s.status).toUpperCase() === "OK",
+            );
+          const currentAction = needsHuman
+            ? "Waiting for Approve / Reject"
+            : String(r.status).toUpperCase().includes("RUN")
+              ? runningStep
+                ? `Doing: ${String(runningStep.tool ?? runningStep.node)}`
+                : "Running…"
+              : String(r.status).toUpperCase().includes("COMPLET")
+                ? "Finished"
+                : statusFriendly(String(r.status), needsHuman);
+
+          // Prefer live-bound version, then any version with same graph key + steps,
+          // then latest version that has a stored workflow.
+          const byLive =
+            liveVersion &&
+            versions.rows.find(
+              (v) => Number(v.version) === Number(liveVersion.version),
+            );
+          const byKey = versions.rows.find((v) => {
+            const meta = v.meta && typeof v.meta === "object" ? v.meta : {};
+            const gk =
+              (meta as { graphKey?: string }).graphKey ?? authoredKey;
+            return (
+              gk &&
+              String(gk) === String(r.graph_key) &&
+              workflowStepsFromSource(v.artifact_source).length > 0
+            );
+          });
+          const byLatestWithSteps = versions.rows.find(
+            (v) => workflowStepsFromSource(v.artifact_source).length > 0,
+          );
+          const matchingVersion = byLive || byKey || byLatestWithSteps || null;
+
+          const failMsg =
+            r.error == null
+              ? null
+              : typeof r.error === "string"
+                ? r.error
+                : typeof r.error === "object" &&
+                    r.error &&
+                    "message" in (r.error as object)
+                  ? String((r.error as { message?: unknown }).message ?? "")
+                  : JSON.stringify(r.error);
+
+          return {
+            id: rid,
+            graphKey: r.graph_key,
+            status: r.status,
+            statusLabel: failMsg
+              ? "Failed"
+              : statusFriendly(String(r.status), needsHuman),
+            currentAction: failMsg
+              ? `Failed: ${failMsg.slice(0, 120)}`
+              : currentAction,
+            triggerEventId: tid,
+            createdAt: r.created_at,
+            completedAt: r.completed_at,
+            error: r.error,
+            needsHuman,
+            threadId: r.langgraph_thread_id ?? null,
+            organizationId: r.organization_id,
+            inputEventType: inputEvent?.eventType ?? null,
+            outputEventTypes: outputEvents.map((e) => e.eventType),
+            events,
+            policyText: matchingVersion
+              ? policyTextFromJson(matchingVersion.policy_json)
+              : null,
+            workflowSteps: matchingVersion
+              ? workflowStepsFromSource(matchingVersion.artifact_source)
+              : [],
+            graphVersion: matchingVersion?.version ?? null,
+            steps: mappedSteps,
+          };
+        }),
+      });
+    } catch (err: any) {
+      return reply.code(500).send({
+        error: "artifacts_unavailable",
+        message: err?.message ?? String(err),
+      });
+    }
+  });
+
   app.get("/runtime/overview", async (_req: any, reply: any) => {
     try {
       const runsTotal = await pool.query(
