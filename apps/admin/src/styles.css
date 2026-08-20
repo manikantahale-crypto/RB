@@ -2861,3 +2861,64 @@ code {
     grid-template-columns: 1fr;
   }
 }
+
+/* Mermaid edge labels — defense against font-measure clipping + tone colors */
+.workflow-mermaid .edgeLabel foreignObject {
+  overflow: visible;
+}
+
+.workflow-mermaid .edgeLabel,
+.workflow-mermaid .edgeLabel span,
+.workflow-mermaid .edgeLabel p,
+.workflow-mermaid .edgeLabel div {
+  white-space: nowrap;
+  overflow: visible;
+}
+
+.workflow-mermaid .edgeLabel[data-edge-tone="positive"] span,
+.workflow-mermaid .edgeLabel[data-edge-tone="positive"] div,
+.workflow-mermaid .edgeLabel[data-edge-tone="positive"] p {
+  background: #f6f7f9 !important;
+  color: #027a48 !important;
+  border: none !important;
+  border-radius: 0 !important;
+  padding: 0 2px;
+  font-weight: 700;
+}
+
+.workflow-mermaid .edgeLabel[data-edge-tone="negative"] span,
+.workflow-mermaid .edgeLabel[data-edge-tone="negative"] div,
+.workflow-mermaid .edgeLabel[data-edge-tone="negative"] p {
+  background: #f6f7f9 !important;
+  color: #b42318 !important;
+  border: none !important;
+  border-radius: 0 !important;
+  padding: 0 2px;
+  font-weight: 700;
+}
+
+/* Selected node while the detail side panel is open */
+.workflow-mermaid g.node[data-selected="true"] rect,
+.workflow-mermaid g.node[data-selected="true"] circle,
+.workflow-mermaid g.node[data-selected="true"] polygon,
+.workflow-mermaid g.node[data-selected="true"] path {
+  stroke: #3b82f6 !important;
+  stroke-width: 2.5px !important;
+  filter: drop-shadow(0 0 6px rgba(59, 130, 246, 0.45));
+}
+
+@keyframes workflow-detail-panel-in {
+  from {
+    transform: translateX(100%);
+    opacity: 0.65;
+  }
+  to {
+    transform: translateX(0);
+    opacity: 1;
+  }
+}
+
+.workflow-detail-panel {
+  animation: workflow-detail-panel-in 180ms ease-out;
+}
+
