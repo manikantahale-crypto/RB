@@ -18,12 +18,22 @@ export type WorkflowStepSummary = {
   detail?: string;
 };
 
+export type ConditionalBranchSummary = {
+  /** Node id this router is attached to */
+  fromId: string;
+  router: string;
+  /** label → target node id (or __end__) */
+  branches: Array<{ label: string; target: string }>;
+};
+
 export type WorkflowSummary = {
   /** e.g. "1. Process a job description → 2. Score a job × resume match" */
   line: string;
   steps: WorkflowStepSummary[];
   graphKey: string;
   empty: boolean;
+  /** Present when the graph has conditionalEdges. */
+  conditionalBranches?: ConditionalBranchSummary[];
 };
 
 function configDetail(config: Record<string, unknown> | undefined): string | undefined {
@@ -99,13 +109,37 @@ export function summarizeGraphWorkflow(
     };
   });
 
-  const line = steps.map((s) => `${s.order}. ${s.label}`).join(" → ");
+  const conditionalBranches: ConditionalBranchSummary[] | undefined =
+    def.conditionalEdges?.map((ce) => ({
+      fromId: ce.from,
+      router: ce.router,
+      branches: Object.entries(ce.map).map(([label, target]) => ({
+        label,
+        target,
+      })),
+    }));
+
+  // Annotate step labels that have a branch attached.
+  const branchByFrom = new Map(
+    (conditionalBranches ?? []).map((b) => [b.fromId, b]),
+  );
+  const annotatedSteps = steps.map((s) => {
+    const branch = branchByFrom.get(s.id);
+    if (!branch) return s;
+    const branchHint = branch.branches
+      .map((b) => `if ${b.label} → ${b.target === "__end__" ? "end" : b.target}`)
+      .join(", ");
+    return { ...s, label: `${s.label} [${branchHint}]` };
+  });
+
+  const line = annotatedSteps.map((s) => `${s.order}. ${s.label}`).join(" → ");
 
   return {
     line: line || "Empty workflow.",
     steps,
     graphKey: def.graphKey,
     empty: steps.length === 0,
+    conditionalBranches: conditionalBranches?.length ? conditionalBranches : undefined,
   };
 }
 

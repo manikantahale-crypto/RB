@@ -2,6 +2,7 @@ import { BrowserRouter, Link, Navigate, Route, Routes, useLocation } from "react
 import { BuilderPage } from "./pages/BuilderPage";
 import { GoLiveRequestsPage } from "./pages/GoLiveRequests";
 import { PolicyEditorPage } from "./pages/PolicyEditor";
+import { WorkflowTestPage } from "./pages/WorkflowTestPage";
 
 function AppShell() {
   const location = useLocation();
@@ -24,6 +25,8 @@ function AppShell() {
         <Route path="/agents/:id" element={<PolicyEditorPage />} />
         <Route path="/" element={<Navigate to="/builder" replace />} />
         <Route path="/go-live-requests" element={<GoLiveRequestsPage />} />
+        <Route path="/dev/workflow/:fixtureId" element={<WorkflowTestPage />} />
+        <Route path="/dev/workflow" element={<WorkflowTestPage />} />
         <Route path="*" element={<Navigate to="/builder" replace />} />
       </Routes>
     </div>

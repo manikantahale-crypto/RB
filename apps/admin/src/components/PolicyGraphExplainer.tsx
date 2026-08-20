@@ -77,7 +77,7 @@ export function PolicyGraphExplainer({
       )}
 
       {mode !== "planned" && definition ? (
-        <WorkflowCanvas definition={definition} version={graphVersion} />
+        <WorkflowCanvas definition={definition} version={graphVersion} title={title} />
       ) : null}
     </div>
   );

@@ -1352,6 +1352,7 @@ export function PolicyEditorPage({
                   steps={editingWorkflow ? workflowSteps : undefined}
                   onStepsChange={editingWorkflow ? setWorkflowSteps : undefined}
                   emptyHint="Edit steps with ✎, or use Generate workflow below to build from policy."
+                  title={name || undefined}
                 />
               </div>
               {!pendingPreview ? renderWorkflowGenerateActions("workflow") : null}

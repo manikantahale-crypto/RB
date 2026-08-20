@@ -12,6 +12,7 @@ import {
   checksumOf,
   defineGraph,
 } from './recipe.js';
+import { ROUTER_REGISTRY } from './routers.js';
 import { graphSeedCatalog } from './catalog.js';
 import { enrichError, type ErrorClass } from '../workflow/errors.js';
 import {
@@ -425,6 +426,16 @@ export class GraphCompiler {
 
     for (const [from, to] of def.edges) {
       builder = builder.addEdge(from, to);
+    }
+
+    for (const ce of def.conditionalEdges ?? []) {
+      const routerFn = ROUTER_REGISTRY[ce.router];
+      if (!routerFn) {
+        throw new Error(
+          `DEFINITION_INVALID: unknown conditional router "${ce.router}"`,
+        );
+      }
+      builder = builder.addConditionalEdges(ce.from, routerFn, ce.map);
     }
 
     return this.checkpointer

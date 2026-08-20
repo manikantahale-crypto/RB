@@ -1818,6 +1818,133 @@ code {
   font-size: 0.72rem;
 }
 
+/* ── Tree / branching flowchart ────────────────────────────────────────── */
+
+/* Outer wrapper for the whole tree diagram */
+.wf-tree {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  padding: 1.5rem 1rem 2rem;
+  overflow-x: auto;
+  max-width: 1100px;
+}
+
+/* A vertical column inside the tree — used for start pill + each chain segment */
+.wf-col {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+}
+
+/* Thin vertical connector line between nodes */
+.wf-connector {
+  width: 2px;
+  min-height: 1rem;
+  background: var(--line-strong, #c8c8c8);
+  flex-shrink: 0;
+  margin: 0.15rem 0;
+  display: none;
+}
+
+/* Start / End pill capsules */
+.wf-pill {
+  border-radius: 999px;
+  padding: 0.25rem 1.05rem;
+  font-size: 0.8rem;
+  font-weight: 700;
+  letter-spacing: 0.03em;
+}
+.wf-pill--start {
+  background: #1a1a1a;
+  color: #fff;
+}
+.wf-pill--end {
+  background: #1a1a1a;
+  color: #fff;
+}
+
+/* A single node card */
+.wf-node-card {
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
+  background: var(--surface, #fff);
+  border: 1px solid var(--line-soft, #ddd);
+  border-radius: 8px;
+  padding: 0.55rem 0.85rem;
+  min-width: 160px;
+  max-width: 220px;
+  text-align: left;
+}
+
+.wf-node-label {
+  font-size: 0.82rem;
+  font-weight: 600;
+  color: var(--ink, #111);
+  line-height: 1.3;
+}
+
+.wf-node-detail {
+  font-size: 0.72rem;
+  color: var(--ink-muted, #555);
+}
+
+.wf-node-impl {
+  font-size: 0.66rem;
+  color: var(--ink-muted, #999);
+  font-family: monospace;
+}
+
+/* Fork container — horizontal row of branches */
+.wf-fork-wrap {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  width: 100%;
+}
+
+/* Horizontal bar that spans all branches — the "split" line */
+.wf-fork-bar {
+  width: 100%;
+  max-width: 760px;
+  height: 2px;
+  background: var(--line-strong, #c8c8c8);
+  position: relative;
+  display: none;
+}
+
+/* Row of individual branch columns */
+.wf-fork-branches {
+  display: flex;
+  flex-direction: row;
+  align-items: flex-start;
+  gap: 1.05rem;
+  position: relative;
+}
+
+/* One branch column inside the fork */
+.wf-branch {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  min-width: 160px;
+}
+
+/* Label pill sitting above the connector inside each branch */
+.wf-branch-label {
+  background: var(--accent-soft, #ede9ff);
+  color: var(--accent, #6b48ff);
+  border: 1px solid var(--accent-border, #c5b8ff);
+  border-radius: 999px;
+  font-size: 0.7rem;
+  font-weight: 700;
+  padding: 0.15rem 0.65rem;
+  letter-spacing: 0.02em;
+  text-transform: lowercase;
+  margin-bottom: 0.1rem;
+}
+
 .workflow-node-edit-head {
   display: flex;
   align-items: center;
