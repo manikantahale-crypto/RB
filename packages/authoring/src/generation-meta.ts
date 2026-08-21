@@ -1,6 +1,7 @@
 import type { EventCatalogEntry } from "./event-catalog.js";
 import type { GraphDefinition } from "./graph-definition.js";
 import { buildGraphSystemPrompt } from "./build-graph-prompt.js";
+import { isMatchConfigImpl } from "./match-config-tools.js";
 import { getToolCatalog } from "./tool-registry.js";
 
 export type GenerationMeta = {
@@ -54,7 +55,7 @@ export type GenerationTrace = {
 export function extractConfigProof(
   definition: GraphDefinition,
 ): GenerationTrace["extracted"] {
-  const match = definition.nodes.find((n) => n.impl === "syntra.match.process");
+  const match = definition.nodes.find((n) => isMatchConfigImpl(n.impl));
   const cfg = match?.config;
   if (!cfg || typeof cfg !== "object") return undefined;
   const out: GenerationTrace["extracted"] = {};

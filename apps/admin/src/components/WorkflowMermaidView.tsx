@@ -12,8 +12,12 @@ import type { GraphDefinition } from "@tekisho/authoring/src/graph-definition.js
 import {
   resolveNodeCopy,
   resolveNodeType,
+  resolveToolFamily,
+  toolFamilyBlurb,
+  toolFamilyLabel,
   type NodeCopy,
   type NodeRunStatus,
+  type ToolFamily,
   type VisualNodeType,
 } from "@tekisho/authoring/src/graph-visual-registry.js";
 import { graphToMermaid, type GraphToMermaidOptions } from "../lib/graph-to-mermaid.js";
@@ -202,9 +206,10 @@ type WorkflowMermaidViewProps = {
 /** View-model for a clickable node — copy is static; toolKey is internal only. */
 type NodeViewModel = {
   graphNodeId: string;
-  /** Internal — used for mapping / tests; never shown in the popover. */
+  /** Internal — used for mapping / tests; never shown as the main title. */
   toolKey: string;
   visualType: VisualNodeType;
+  family: ToolFamily;
   copy: NodeCopy;
   /** Reserved for future live-run wiring — omit when absent. */
   status?: NodeRunStatus;
@@ -290,6 +295,16 @@ function NodeDetailPanel({
   const isStart = details.visualType === "start";
   const isEnd = details.visualType === "end";
   const copy = details.copy;
+  const familyLabel = toolFamilyLabel(details.family);
+  const familyBlurb = toolFamilyBlurb(details.family);
+  const familyColor =
+    details.family === "astra"
+      ? { bg: "#eff6ff", text: "#1d4ed8", border: "#bfdbfe" }
+      : details.family === "syntra"
+        ? { bg: "#ecfdf5", text: "#0d7a68", border: "#a7f3d0" }
+        : details.family === "platform"
+          ? { bg: "#f5f3ff", text: "#6d28d9", border: "#ddd6fe" }
+          : null;
   const headerBg = isGate ? "#fff8ec" : "#fff";
   const whyHeading = isStart
     ? "When this workflow starts"
@@ -355,12 +370,31 @@ function NodeDetailPanel({
           >
             {copy.title}
           </div>
+          {familyLabel && familyColor ? (
+            <span
+              data-testid="workflow-node-family"
+              style={{
+                display: "inline-block",
+                marginTop: 8,
+                fontSize: 11,
+                fontWeight: 700,
+                padding: "3px 9px",
+                borderRadius: 999,
+                background: familyColor.bg,
+                color: familyColor.text,
+                border: `1px solid ${familyColor.border}`,
+              }}
+            >
+              {familyLabel}
+            </span>
+          ) : null}
           {statusChip ? (
             <span
               data-testid="workflow-node-status"
               style={{
                 display: "inline-block",
                 marginTop: 8,
+                marginLeft: familyLabel ? 6 : 0,
                 fontSize: 11,
                 fontWeight: 700,
                 padding: "3px 9px",
@@ -407,6 +441,22 @@ function NodeDetailPanel({
           minHeight: 0,
         }}
       >
+        {familyBlurb ? (
+          <section style={{ marginBottom: 16 }} data-testid="workflow-node-family-blurb">
+            {sectionHeading("Which tools this uses")}
+            <p
+              style={{
+                margin: 0,
+                fontSize: 15,
+                lineHeight: 1.6,
+                color: "#334155",
+              }}
+            >
+              {familyBlurb}
+            </p>
+          </section>
+        ) : null}
+
         <section style={{ marginBottom: 16 }} data-testid="workflow-node-why">
           {sectionHeading(whyHeading)}
           <p
@@ -506,6 +556,7 @@ export function WorkflowMermaidView({
         graphNodeId: n.id,
         toolKey,
         visualType: resolveNodeType(toolKey),
+        family: resolveToolFamily(toolKey),
         copy: resolveNodeCopy(toolKey),
         // status intentionally omitted until run-data wiring lands
       });
@@ -515,12 +566,14 @@ export function WorkflowMermaidView({
       graphNodeId: "__start__",
       toolKey: "__start__",
       visualType: "start",
+      family: "none",
       copy: startNodeCopy(triggerEventType),
     });
     m.set("__end__", {
       graphNodeId: "__end__",
       toolKey: "__end__",
       visualType: "end",
+      family: "none",
       copy: resolveNodeCopy("__end__"),
     });
 
@@ -956,7 +1009,8 @@ function MermaidLegend() {
       }}
     >
       <LegendChip shape="circle" bg="#14161c" border="transparent" label="Start / End" />
-      <LegendChip shape="square" bg="#fff" border="#e4e6eb" label="Automatic" />
+      <LegendChip shape="square" bg="#fff" border="#0d7a68" label="SYNTRA" />
+      <LegendChip shape="square" bg="#fff" border="#2563eb" label="ASTRA" />
       <LegendChip shape="square" bg="#fff8ec" border="#e2a53a" label="Needs a person" />
     </div>
   );

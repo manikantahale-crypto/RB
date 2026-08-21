@@ -55,9 +55,12 @@ export const TOOL_CATALOG: readonly ToolCatalogEntry[] = [
   {
     key: "syntra.continuous.match",
     description:
-      "After a JD is parsed, match that requirement against the bench via Syntra.",
+      "After a JD is parsed, match that requirement against the bench via Syntra. " +
+      "Config: matchThreshold, hardFilters, rerank (same as syntra.match.process).",
     input: {
       jobId: "string (required) — the parsed job / requirement",
+      matchThreshold: "number (config, optional) — minimum score 0–100",
+      hardFilters: "string[] (config, optional)",
     },
     output: {
       event: "syntra.match.completed",

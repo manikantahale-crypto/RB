@@ -3383,6 +3383,125 @@ code {
   font-size: 0.9rem;
 }
 
+.artifacts-panel-toggle {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  width: 100%;
+  padding: 0.65rem 0.85rem;
+  margin: 0;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--surface);
+  cursor: pointer;
+  text-align: left;
+}
+
+.artifacts-panel-toggle:hover {
+  background: var(--surface-soft);
+}
+
+.artifacts-panel-toggle-main {
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+  min-width: 0;
+}
+
+.artifacts-panel-toggle h3 {
+  margin: 0;
+  font-size: 0.95rem;
+}
+
+.artifacts-panel-summary {
+  font-size: 0.78rem;
+}
+
+.artifacts-panel-chevron {
+  flex-shrink: 0;
+  font-size: 0.85rem;
+  color: var(--ink-soft);
+}
+
+.artifacts-panel-actions {
+  display: flex;
+  justify-content: flex-end;
+  margin: 0.65rem 0 0.25rem;
+}
+
+.artifact-tool-family {
+  display: inline-block;
+  font-size: 0.62rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  padding: 0.1rem 0.35rem;
+  border-radius: 4px;
+  margin-right: 0.35rem;
+  vertical-align: middle;
+}
+
+.artifact-tool-family--astra {
+  background: #e8f0ff;
+  color: #1e40af;
+}
+
+.artifact-tool-family--syntra {
+  background: #e6f6ec;
+  color: #0d5c2e;
+}
+
+.artifact-tool-family--person {
+  background: #fff4e6;
+  color: #9a3412;
+}
+
+.artifact-tool-family--routing {
+  background: #f3e8ff;
+  color: #6b21a8;
+}
+
+.artifact-tool-family--other {
+  background: var(--surface-soft);
+  color: var(--ink-soft);
+}
+
+.artifacts-workflow-list--detailed li {
+  margin-bottom: 0.45rem;
+  line-height: 1.45;
+}
+
+.artifacts-gap-box {
+  background: #fffbf2;
+  border-color: #f0d9a8;
+}
+
+.artifacts-gap-list {
+  margin: 0.35rem 0 0;
+  padding-left: 1.1rem;
+}
+
+.gap-report-gap-list {
+  margin: 0.35rem 0 0;
+  padding-left: 1.1rem;
+  font-size: 0.88rem;
+}
+
+.workflow-canvas--edit-unified .workflow-canvas-flow--unified {
+  margin-top: 0;
+  padding: 1rem;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  background: #f8fafc;
+}
+
+.workflow-edit-head {
+  margin-bottom: 0.75rem;
+  padding-bottom: 0.5rem;
+  border-bottom: 1px solid var(--line);
+}
+
 .artifacts-live-line {
   margin: 0 0 0.5rem;
   font-size: 0.9rem;

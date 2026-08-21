@@ -146,6 +146,66 @@ const NODE_COPY_BY_TOOL: Record<ToolKey, NodeCopy> = {
     produces: "A replay of the failed run so processing can continue from where it stalled.",
     outcomes: [],
   },
+  "astra.requirement.intake": {
+    title: "Read job from email",
+    kicker: "Automatic step",
+    why: "A job description arrived by email. This pulls it into intake so later steps can clean it up and decide if matching should run.",
+    produces: "The email job text stored and ready for quality checks.",
+    outcomes: [],
+  },
+  "astra.requirement.ingest": {
+    title: "Save job description",
+    kicker: "Automatic step",
+    why: "A job was shared outside email (paste, upload, or API). Saving it keeps every JD in one place before enrichment.",
+    produces: "A stored job record ready for the next intake steps.",
+    outcomes: [],
+  },
+  "astra.jobboard.fetch": {
+    title: "Fetch jobs from job boards",
+    kicker: "Automatic step",
+    why: "You asked to pull open roles from job boards instead of pasting them by hand. This brings those listings into intake.",
+    produces: "One or more job listings ready to clean up and route to matching.",
+    outcomes: [],
+  },
+  "astra.requirement.quality": {
+    title: "Check JD quality",
+    kicker: "Automatic step",
+    why: "Incomplete job descriptions waste recruiter time. This scores how complete the JD is before deeper enrichment or matching.",
+    produces: "A quality score and notes about what is missing or unclear.",
+    outcomes: [],
+  },
+  "astra.requirement.normalize": {
+    title: "Clean up & structure JD",
+    kicker: "Automatic step",
+    why: "Raw job text is messy. This extracts skills, role, and other must-haves into a clear structure recruiters and matching can use.",
+    produces: "A cleaned, structured job ready for the route / matching hand-off.",
+    outcomes: [],
+  },
+  "astra.route.decision": {
+    title: "Send to matching or stop",
+    kicker: "Automatic step",
+    why: "Only good-enough jobs should go to candidate matching. Weak ones should stop so someone can fix them later.",
+    produces: "A decision: continue into SYNTRA matching, or stop this job for now.",
+    outcomes: [],
+  },
+  "orch.branch.decision": {
+    title: "Choose the next path",
+    kicker: "Automatic step",
+    why: "Based on an earlier score, the workflow picks what to do next — continue automatically, ask a person, or stop.",
+    produces: "A clear path for the next step so the run does not guess.",
+    outcomes: [
+      {
+        tone: "positive",
+        label: "Continue",
+        text: "Quality looks good enough — the workflow keeps going automatically.",
+      },
+      {
+        tone: "negative",
+        label: "Needs a person / stop",
+        text: "Something needs a human look, or the run should stop.",
+      },
+    ],
+  },
   "human.gate": {
     title: "Human review",
     kicker: "Needs a person",
@@ -224,13 +284,56 @@ export function isEndVisualTool(toolKey: string): boolean {
   return END_VISUAL_TOOLS.has(toolKey);
 }
 
+export type ToolFamily = "syntra" | "astra" | "platform" | "none";
+
+/**
+ * Which product family a tool belongs to — for naive-admin labeling on the canvas.
+ * - syntra: matching / profile / shortlist tools
+ * - astra: intake / JD quality / route tools
+ * - platform: orch.branch / human.gate (shared orchestration)
+ */
+export function resolveToolFamily(toolKey: string): ToolFamily {
+  if (toolKey === "__start__" || toolKey === "__end__") return "none";
+  if (toolKey.startsWith("syntra.")) return "syntra";
+  if (toolKey.startsWith("astra.")) return "astra";
+  if (toolKey === "human.gate" || toolKey.startsWith("orch.")) return "platform";
+  return "none";
+}
+
+export function toolFamilyLabel(family: ToolFamily): string {
+  switch (family) {
+    case "syntra":
+      return "SYNTRA tool";
+    case "astra":
+      return "ASTRA tool";
+    case "platform":
+      return "Platform step";
+    default:
+      return "";
+  }
+}
+
+export function toolFamilyBlurb(family: ToolFamily): string {
+  switch (family) {
+    case "syntra":
+      return "This step calls a SYNTRA tool (matching, profiles, shortlist, duplicates).";
+    case "astra":
+      return "This step calls an ASTRA tool (intake, job boards, JD quality / structuring / routing).";
+    case "platform":
+      return "This step is shared orchestration (branching or human review) — not Syntra or ASTRA product APIs.";
+    default:
+      return "";
+  }
+}
+
 /** Static recruiter-facing copy for a tool key or start/end sentinel. */
 export function resolveNodeCopy(toolKey: string): NodeCopy {
   if (toolKey === "__start__" || toolKey === "__end__") {
     return SENTINEL_COPY[toolKey];
   }
   if (isRegisteredTool(toolKey)) {
-    return NODE_COPY_BY_TOOL[toolKey] ?? FALLBACK_COPY;
+    const copy = NODE_COPY_BY_TOOL[toolKey];
+    if (copy) return copy;
   }
   return FALLBACK_COPY;
 }

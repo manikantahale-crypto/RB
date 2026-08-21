@@ -37,6 +37,10 @@ import {
 } from "../api";
 import type { GenerationTrace } from "@tekisho/authoring/src/generation-meta.js";
 import { outOfScopeLabels } from "@tekisho/authoring/src/request-scope.js";
+import {
+  friendlyUnsupportedGap,
+  friendlyUnsupportedSummary,
+} from "../lib/friendly-labels";
 import { WorkflowPreviewSummary } from "../components/WorkflowPreviewSummary";
 import { GraphArtifactsPanel } from "../components/GraphArtifactsPanel";
 import {
@@ -1385,10 +1389,15 @@ export function PolicyEditorPage({
               {simpleLayout &&
               !pendingPreview &&
               lastUnsupported.length > 0 ? (
-                <p className="gap-report-unsupported" role="alert">
-                  <strong>Could NOT add:</strong> {lastUnsupported.join(", ")}{" "}
-                  (no Syntra tool available yet).
-                </p>
+                <div className="gap-report-unsupported" role="alert">
+                  <strong>Could not add:</strong>{" "}
+                  {friendlyUnsupportedSummary(lastUnsupported)}
+                  <ul className="gap-report-gap-list">
+                    {lastUnsupported.map((gap) => (
+                      <li key={gap}>{friendlyUnsupportedGap(gap)}</li>
+                    ))}
+                  </ul>
+                </div>
               ) : null}
               </>
             ) : (
@@ -1428,11 +1437,18 @@ export function PolicyEditorPage({
                   <h3 className="form-block-title">Review before saving</h3>
                 ) : null}
                 {pendingPreview.unsupported.length > 0 ? (
-                  <p className="gap-report-unsupported" role="alert">
-                    <strong>Could NOT add:</strong>{" "}
-                    {pendingPreview.unsupported.join(", ")} (no Syntra tool
-                    available yet). The steps below were built without it.
-                  </p>
+                  <div className="gap-report-unsupported" role="alert">
+                    <strong>Could not add:</strong>{" "}
+                    {friendlyUnsupportedSummary(pendingPreview.unsupported)}
+                    <ul className="gap-report-gap-list">
+                      {pendingPreview.unsupported.map((gap) => (
+                        <li key={gap}>{friendlyUnsupportedGap(gap)}</li>
+                      ))}
+                    </ul>
+                    <p className="muted" style={{ margin: "0.35rem 0 0" }}>
+                      The steps below were built without these parts.
+                    </p>
+                  </div>
                 ) : !simpleLayout ? (
                   <p className="muted">
                     Everything in your request maps to available steps.
@@ -1541,10 +1557,10 @@ export function PolicyEditorPage({
                   <button
                     type="button"
                     className="btn secondary btn--compact"
-                    disabled={locked || ui === "going_live"}
+                    disabled={locked}
                     onClick={() => void onTakeOffline()}
                   >
-                    {ui === "going_live" ? "Working…" : "Take offline"}
+                    {busy ? "Working…" : "Take offline"}
                   </button>
                 </>
               ) : (

@@ -4,6 +4,8 @@ import {
   resolveEdgeTone,
   resolveNodeCopy,
   resolveNodeType,
+  resolveToolFamily,
+  toolFamilyLabel,
 } from "@tekisho/authoring/src/graph-visual-registry.js";
 
 type GraphNode = GraphDefinition["nodes"][number] & {
@@ -38,16 +40,23 @@ function nodeTitle(node: GraphNode): string {
   return resolveNodeCopy(node.impl).title;
 }
 
-function mermaidClass(node: GraphNode): "action" | "gate" {
-  if (node.visualType === "human_gate") return "gate";
-  if (node.visualType === "ai_action") return "action";
-  return resolveNodeType(node.impl) === "human_gate" ? "gate" : "action";
+function mermaidClass(
+  node: GraphNode,
+): "action" | "gate" | "astra" | "syntra" | "platform" {
+  if (node.visualType === "human_gate" || resolveNodeType(node.impl) === "human_gate") {
+    return "gate";
+  }
+  const family = resolveToolFamily(node.impl);
+  if (family === "astra") return "astra";
+  if (family === "syntra") return "syntra";
+  if (family === "platform") return "platform";
+  return "action";
 }
 
 /**
  * Convert normalized GraphDefinition JSON to Mermaid flowchart TD syntax.
  * Node visual type comes from server visualType or resolveNodeType — never edge count.
- * Tool keys are not shown on the canvas; only plain-language titles.
+ * Titles are plain language; a small family line shows SYNTRA vs ASTRA vs platform.
  */
 export function graphToMermaid(
   def: GraphDefinition,
@@ -57,6 +66,9 @@ export function graphToMermaid(
   const classLines: string[] = [];
   const actionIds: string[] = [];
   const gateIds: string[] = [];
+  const astraIds: string[] = [];
+  const syntraIds: string[] = [];
+  const platformIds: string[] = [];
   let edgeIndex = 0;
   const positiveEdgeIndexes: number[] = [];
   const negativeEdgeIndexes: number[] = [];
@@ -67,14 +79,22 @@ export function graphToMermaid(
   for (const node of def.nodes) {
     const id = mermaidId(node.id);
     const title = nodeTitle(node) + (opts.labelSuffix ?? "");
+    const family = resolveToolFamily(node.impl);
+    const familyText = toolFamilyLabel(family);
+    const familyHtml = familyText
+      ? `<br/><span style='font-size:11px;font-weight:600;color:#64748b'>${escapeHtml(familyText)}</span>`
+      : "";
     // Hidden data attribute for click mapping — no tool key visible to recruiters.
     lines.push(
-      `  ${id}["<b>${escapeHtml(title)}</b><span data-graph-node-id="${escapeHtml(
+      `  ${id}["<b>${escapeHtml(title)}</b>${familyHtml}<span data-graph-node-id="${escapeHtml(
         node.id,
       )}" style='display:none'> </span>"]`,
     );
     const cls = mermaidClass(node);
     if (cls === "gate") gateIds.push(id);
+    else if (cls === "astra") astraIds.push(id);
+    else if (cls === "syntra") syntraIds.push(id);
+    else if (cls === "platform") platformIds.push(id);
     else actionIds.push(id);
   }
 
@@ -104,16 +124,29 @@ export function graphToMermaid(
   }
 
   lines.push(
-    "  classDef startend fill:#14161c,color:#fff,stroke:#14161c,font-weight:bold",
+    "  classDef startend fill:#14161c,color:#fff,stroke:#14161c,stroke-width:2px,font-weight:bold",
   );
   lines.push(
-    "  classDef action fill:#fff,stroke:#e4e6eb,stroke-width:1.5px",
+    "  classDef action fill:#ffffff,stroke:#e4e6eb,stroke-width:1.5px,color:#0f172a",
   );
   lines.push(
-    "  classDef gate fill:#fff8ec,stroke:#e2a53a,stroke-width:1.5px",
+    "  classDef syntra fill:#ffffff,stroke:#0d7a68,stroke-width:2px,color:#0f172a",
+  );
+  lines.push(
+    "  classDef astra fill:#ffffff,stroke:#2563eb,stroke-width:2px,color:#0f172a",
+  );
+  lines.push(
+    "  classDef platform fill:#ffffff,stroke:#7c3aed,stroke-width:2px,color:#0f172a",
+  );
+  lines.push(
+    "  classDef gate fill:#fff8ec,stroke:#e2a53a,stroke-width:2px,color:#0f172a",
   );
   lines.push("  class flowStart,flowEnd startend");
   if (actionIds.length) classLines.push(`  class ${actionIds.join(",")} action`);
+  if (syntraIds.length) classLines.push(`  class ${syntraIds.join(",")} syntra`);
+  if (astraIds.length) classLines.push(`  class ${astraIds.join(",")} astra`);
+  if (platformIds.length)
+    classLines.push(`  class ${platformIds.join(",")} platform`);
   if (gateIds.length) classLines.push(`  class ${gateIds.join(",")} gate`);
   lines.push(...classLines);
 

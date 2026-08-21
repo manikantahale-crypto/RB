@@ -2,7 +2,6 @@ import { useMemo } from "react";
 import type { GraphDefinition } from "@tekisho/authoring/src/graph-definition.js";
 import { getToolCatalog } from "@tekisho/authoring/src/tool-registry.js";
 import { WorkflowMermaidView } from "./WorkflowMermaidView.js";
-import { WorkflowEditFlow } from "./WorkflowEditFlow.js";
 import {
   nextStepId,
   stepsToLinearGraph,
@@ -106,21 +105,14 @@ export function WorkflowCanvas({
 
   if (editable) {
     return (
-      <div className="workflow-canvas workflow-canvas--edit">
+      <div className="workflow-canvas workflow-canvas--edit workflow-canvas--edit-unified">
         {flowHints}
-        <div className="workflow-node workflow-node--pill workflow-node--start workflow-start-inline">
-          <span className="workflow-start-kicker">Starts when</span>
-          <span className="workflow-start-title">
-            {triggerEventType
-              ? friendlyEventLabel(triggerEventType)
-              : "Choose a trigger in Policy"}
-          </span>
-        </div>
-        <WorkflowEditFlow steps={steps} version={version} />
         <LinearStepEditor
           steps={steps}
           onStepsChange={onStepsChange}
           tools={tools}
+          version={version}
+          triggerEventType={triggerEventType}
         />
       </div>
     );
@@ -181,10 +173,14 @@ function LinearStepEditor({
   steps,
   onStepsChange,
   tools,
+  version,
+  triggerEventType,
 }: {
   steps: WorkflowStep[];
   onStepsChange?: (steps: WorkflowStep[]) => void;
   tools: ReturnType<typeof getToolCatalog>;
+  version?: number | null;
+  triggerEventType?: string | null;
 }) {
   if (!onStepsChange) return null;
   const applySteps = onStepsChange;
@@ -222,8 +218,22 @@ function LinearStepEditor({
   }
 
   return (
-    <div className="workflow-canvas-flow" style={{ marginTop: "1rem" }}>
-      <div className="workflow-node workflow-node--pill">Start</div>
+    <div className="workflow-canvas-flow workflow-canvas-flow--unified">
+      <div className="workflow-canvas-head workflow-edit-head">
+        <span className="workflow-canvas-title">Edit workflow steps</span>
+        {version != null ? (
+          <span className="muted workflow-canvas-version">v{version}</span>
+        ) : null}
+      </div>
+
+      <div className="workflow-node workflow-node--pill workflow-node--start workflow-start-inline">
+        <span className="workflow-start-kicker">Starts when</span>
+        <span className="workflow-start-title">
+          {triggerEventType
+            ? friendlyEventLabel(triggerEventType)
+            : "Choose a trigger in Policy"}
+        </span>
+      </div>
       <div className="workflow-connector" aria-hidden="true" />
 
       {steps.map((step, index) => {
@@ -300,7 +310,8 @@ function LinearStepEditor({
                   Chooses path
                 </span>
               ) : null}
-              {step.impl === "syntra.match.process" ? (
+              {step.impl === "syntra.match.process" ||
+              step.impl === "syntra.continuous.match" ? (
                 <label className="workflow-node-field workflow-node-field--inline">
                   <span className="workflow-node-field-label">Min score</span>
                   <input

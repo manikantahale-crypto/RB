@@ -48,8 +48,8 @@ const DEFAULT_RULES = [
   "Workflow design (tools, order, filters, thresholds) comes from the admin's English — encode it in the graph.",
   "Put admin intent in node.description (human-readable); matching rules/thresholds may also live in node.config.",
   "When the admin asks to filter matches (location, visa, availability, experience), set node.config.hardFilters on syntra.match.process to a JSON array of those names only — e.g. \"skip people who need a visa\" → \"hardFilters\": [\"visa\"]. Never invent objects like {\"visaRequired\": false}.",
-  "When the admin asks for a match score cutoff, set node.config.matchThreshold (0–100) on syntra.match.process.",
-  "When the admin asks to rerank (or not), set node.config.rerank true/false on syntra.match.process.",
+  "When the admin asks for a match score cutoff, set node.config.matchThreshold (0–100) on syntra.match.process or syntra.continuous.match (bench-wide matching).",
+  "When the admin asks to rerank (or not), set node.config.rerank true/false on syntra.match.process or syntra.continuous.match.",
   "Example match config: { \"hardFilters\": [\"visa\"], \"matchThreshold\": 80 }",
   "For ASTRA intake quality gates: use astra.requirement.quality then orch.branch.decision " +
     "(config.passMin / humanMin) with conditionalEdges map pass|human_review|reject, then " +

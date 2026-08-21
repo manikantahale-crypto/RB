@@ -15,7 +15,10 @@ export function defaultDraftPolicyForTemplate(args: {
       "syntra.jd.process",
       "syntra.resume.process",
       "syntra.match.process",
-      // Shared platform tools — selectable by every agent (ASTRA + branch + human).
+      "syntra.continuous.match",
+      "syntra.shortlist.notify",
+      "astra.jobboard.fetch",
+      // Shared platform tools — any agent may compose these into a workflow.
       "astra.requirement.quality",
       "astra.requirement.normalize",
       "astra.route.decision",

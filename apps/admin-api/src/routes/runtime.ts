@@ -303,11 +303,18 @@ export function registerRuntimeRoutes(app: FastifyLike, pool: Pool): void {
         order: number;
         title: string;
         impl: string;
+        description?: string | null;
+        config?: Record<string, unknown>;
       }> {
         if (!source || typeof source !== "string") return [];
         try {
           const parsed = JSON.parse(source) as {
-            nodes?: Array<{ id?: string; impl?: string }>;
+            nodes?: Array<{
+              id?: string;
+              impl?: string;
+              description?: string;
+              config?: Record<string, unknown>;
+            }>;
           };
           if (!Array.isArray(parsed.nodes)) return [];
           return parsed.nodes
@@ -323,6 +330,14 @@ export function registerRuntimeRoutes(app: FastifyLike, pool: Pool): void {
               order: i + 1,
               title: String(n.impl),
               impl: String(n.impl),
+              description:
+                typeof n.description === "string" && n.description.trim()
+                  ? n.description.trim()
+                  : null,
+              config:
+                n.config && typeof n.config === "object"
+                  ? (n.config as Record<string, unknown>)
+                  : undefined,
             }));
         } catch {
           return [];
@@ -378,6 +393,12 @@ export function registerRuntimeRoutes(app: FastifyLike, pool: Pool): void {
           : null,
         versions: versions.rows.map((v) => {
           const meta = v.meta && typeof v.meta === "object" ? v.meta : {};
+          const metaRec = meta as {
+            graphKey?: string;
+            unsupported?: string[];
+            toolsUsed?: string[];
+            builtSummary?: string;
+          };
           const isLive =
             liveVersion &&
             Number(liveVersion.version) === Number(v.version) &&
@@ -391,7 +412,7 @@ export function registerRuntimeRoutes(app: FastifyLike, pool: Pool): void {
             generatedBy: v.generated_by,
             checksum: v.checksum,
             graphKey:
-              (meta as { graphKey?: string }).graphKey ??
+              metaRec.graphKey ??
               authoredKey ??
               null,
             isLive: Boolean(isLive),
@@ -408,6 +429,16 @@ export function registerRuntimeRoutes(app: FastifyLike, pool: Pool): void {
             policyText: policyTextFromJson(v.policy_json),
             triggerEventType: triggerFromPolicy(v.policy_json),
             workflowSteps: steps,
+            unsupported: Array.isArray(metaRec.unsupported)
+              ? metaRec.unsupported.filter((u): u is string => typeof u === "string")
+              : [],
+            toolsUsed: Array.isArray(metaRec.toolsUsed)
+              ? metaRec.toolsUsed.filter((u): u is string => typeof u === "string")
+              : steps.map((s) => s.impl),
+            builtSummary:
+              typeof metaRec.builtSummary === "string"
+                ? metaRec.builtSummary
+                : null,
           };
         }),
         runs: runs.map((r) => {

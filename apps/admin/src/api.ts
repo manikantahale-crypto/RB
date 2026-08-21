@@ -662,7 +662,16 @@ export type AgentArtifacts = {
     label: string;
     policyText?: string | null;
     triggerEventType?: string | null;
-    workflowSteps?: Array<{ order: number; title: string; impl: string }>;
+    workflowSteps?: Array<{
+      order: number;
+      title: string;
+      impl: string;
+      description?: string | null;
+      config?: Record<string, unknown>;
+    }>;
+    unsupported?: string[];
+    toolsUsed?: string[];
+    builtSummary?: string | null;
   }>;
   runs: Array<{
     id: string;

@@ -34,6 +34,7 @@ export function buildAdminPlatformNarrative(
 
   for (let i = 0; i < ordered.length; i++) {
     const a = ordered[i];
+    if (!a) continue;
     const ingress = a.binding
       ? `Live — handles ${friendlyTriggerLabel(a.triggerEventType ?? a.binding.eventType)}`
       : a.policyStatus === "active"
@@ -122,6 +123,7 @@ export function buildPlatformNarrative(
 
   for (let i = 0; i < ordered.length; i++) {
     const a = ordered[i];
+    if (!a) continue;
     const next = ordered[i + 1];
     lines.push(`[${i + 1}] ${a.name}`);
     lines.push(`    Agent key: ${a.agentKey}`);

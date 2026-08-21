@@ -10,6 +10,7 @@ import { v4 as uuidv4 } from 'uuid';
 import { EVENT_TYPES } from '@tekisho/domain';
 import type { EventInput } from '../types.js';
 import type { NodeImpl } from './types.js';
+import { optionsFromNodeConfig } from './syntra-config.js';
 
 const SYNTRA_BASE = process.env.SYNTRA_API_URL || 'http://localhost:4000';
 
@@ -86,10 +87,15 @@ export const syntraContinuousMatch: NodeImpl = async (state, ctx) => {
     throw new Error('syntra.continuous.match: no jobId/requirement_id in payload');
   }
 
-  ctx.logger.info('calling Syntra continuous match', { jobId, orgId: ctx.orgId });
+  ctx.logger.info('calling Syntra continuous match', {
+    jobId,
+    orgId: ctx.orgId,
+    matchThreshold: ctx.config.matchThreshold,
+  });
   const r = await postSyntra(`/internal/jobs/${jobId}/continuous-match`, {
     jobId,
     requirement_id: jobId,
+    ...optionsFromNodeConfig(ctx.config),
   });
   ctx.events.emit(
     completionEvent(trigger, EVENT_TYPES.MATCH_COMPLETED, {

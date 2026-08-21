@@ -126,6 +126,98 @@ export function isSyntraTool(impl: string): boolean {
   return impl.startsWith("syntra.");
 }
 
+export function isHumanTool(impl: string): boolean {
+  return impl === "human.gate";
+}
+
+export function isOrchTool(impl: string): boolean {
+  return impl.startsWith("orch.");
+}
+
+/** Platform family badge for workflow step lists. */
+export function friendlyToolFamily(impl: string): "ASTRA" | "SYNTRA" | "Person" | "Routing" | "Other" {
+  if (isAstraTool(impl)) return "ASTRA";
+  if (isSyntraTool(impl)) return "SYNTRA";
+  if (isHumanTool(impl)) return "Person";
+  if (isOrchTool(impl)) return "Routing";
+  return "Other";
+}
+
+/** Turn raw run errors into plain English for admins. */
+export function friendlyFailureMessage(error: unknown): string | null {
+  if (error == null) return null;
+  let raw = "";
+  if (typeof error === "string") {
+    raw = error.trim();
+  } else if (typeof error === "object") {
+    const e = error as Record<string, unknown>;
+    const msg = e.message ?? e.error ?? e.detail ?? e.reason ?? e.code ?? null;
+    if (typeof msg === "string" && msg.trim()) raw = msg.trim();
+    else {
+      try {
+        raw = JSON.stringify(error);
+      } catch {
+        return "The run failed for an unknown reason.";
+      }
+    }
+  } else {
+    raw = String(error);
+  }
+  if (!raw) return null;
+
+  const lower = raw.toLowerCase();
+
+  if (lower.includes("401") && lower.includes("user not found")) {
+    return "SYNTRA could not verify the service account — check that SYNTRA is running and the orchestrator credentials in .env are correct.";
+  }
+  if (lower.includes("timeout") && lower.includes("connect")) {
+    return "Could not reach SYNTRA in time — the matching service may be down or unreachable on the network.";
+  }
+  if (lower.includes("500") && lower.includes("syntra")) {
+    return "SYNTRA returned an internal error while processing the job. Check SYNTRA logs for details.";
+  }
+  if (lower.includes("syntra") && lower.includes("not connected")) {
+    return "SYNTRA is not connected — connect the Trail-syntra integration before running matching steps.";
+  }
+  if (lower.includes("[transient]") && lower.includes("syntra")) {
+    return "A temporary SYNTRA error occurred while processing the job. You can retry the run once SYNTRA is healthy.";
+  }
+  if (lower.includes("matchthreshold") || lower.includes("continuous.match")) {
+    return "The match score cutoff could not be applied — check that the matching step has Min score set in the workflow editor.";
+  }
+
+  // Strip technical prefixes like [transient] tool.key:
+  const cleaned = raw
+    .replace(/^\[transient\]\s*/i, "")
+    .replace(/^[^:]+:\s*/, "")
+    .replace(/\s*\{.*"error"\s*:\s*"([^"]+)".*\}\s*$/, " — $1")
+    .trim();
+
+  if (cleaned.length > 220) return `${cleaned.slice(0, 217)}…`;
+  return cleaned || "The run failed for an unknown reason.";
+}
+
+/** Plain-English explanation for LLM “unsupported” gaps (not “tool missing”). */
+export function friendlyUnsupportedGap(gap: string): string {
+  const g = gap.toLowerCase();
+  if (g.includes("matchthreshold") && g.includes("continuous.match")) {
+    return "Match score cutoff — set Min score on the “Match JD against bench” or “Score job × resume match” step when editing the workflow.";
+  }
+  if (g.includes("matchthreshold") || g.includes("match score")) {
+    return "Match score cutoff — set this on the “Score job × resume match” step (Min score field when editing), not on bench-wide matching.";
+  }
+  if (g.includes("visa") || g.includes("location") || g.includes("filter")) {
+    return `${gap} — some filters only apply to the “Score job × resume match” step.`;
+  }
+  return `${gap} — this part of your request could not be added automatically to the generated workflow.`;
+}
+
+export function friendlyUnsupportedSummary(gaps: string[]): string {
+  if (gaps.length === 0) return "";
+  if (gaps.length === 1) return friendlyUnsupportedGap(gaps[0]!);
+  return `${gaps.length} parts of your request could not be added automatically. See details below.`;
+}
+
 /** Detect ASTRA → SYNTRA handoff in outbox event types. */
 export function detectHandoff(eventTypes: string[]): {
   astraWorked: boolean;

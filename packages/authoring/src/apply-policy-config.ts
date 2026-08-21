@@ -1,5 +1,6 @@
 import type { GraphDefinition } from "./graph-definition.js";
 import { parseMatchConfigFromRequest } from "./llm/fixture-llm.js";
+import { isMatchConfigImpl } from "./match-config-tools.js";
 import { HARD_FILTER_KEYS, type HardFilterKey } from "./validate-llm-graph.js";
 
 /** Deterministic policy-text → node.config stamping (not LLM-driven). */
@@ -14,7 +15,7 @@ export function applyDeterministicPolicyConfig(
   if (!hasMatchConfig) return def;
 
   const nodes = def.nodes.map((node) => {
-    if (node.impl !== "syntra.match.process") return node;
+    if (!isMatchConfigImpl(node.impl)) return node;
     const config = { ...(node.config ?? {}) };
     if (matchConfig.matchThreshold !== undefined) {
       config.matchThreshold = matchConfig.matchThreshold;

@@ -9,6 +9,7 @@ import { v4 as uuidv4 } from 'uuid';
 import { EVENT_TYPES } from '@tekisho/domain';
 import type { EventInput } from '../types.js';
 import type { NodeCtx, NodeImpl, SyntraGraphState } from './types.js';
+import { optionsFromNodeConfig } from './syntra-config.js';
 
 const SYNTRA_BASE = process.env.SYNTRA_API_URL || 'http://localhost:4000';
 
@@ -61,29 +62,6 @@ async function postSyntra(
       error: err instanceof Error ? err.message : String(err),
     };
   }
-}
-
-/** Pass authored node.config into Syntra HTTP bodies. */
-function optionsFromNodeConfig(
-  config: Record<string, unknown>,
-): Record<string, unknown> {
-  const out: Record<string, unknown> = {};
-  if (typeof config.matchThreshold === 'number') {
-    out.matchThreshold = config.matchThreshold;
-  }
-  if (typeof config.rerank === 'boolean') {
-    out.rerank = config.rerank;
-  }
-  if (
-    Array.isArray(config.hardFilters) &&
-    config.hardFilters.length > 0
-  ) {
-    out.hardFilters = config.hardFilters;
-  }
-  if (typeof config.prompt === 'string' && config.prompt.trim()) {
-    out.prompt = config.prompt.trim();
-  }
-  return out;
 }
 
 function completionEvent(
