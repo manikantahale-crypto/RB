@@ -22,6 +22,11 @@ export function defaultDraftPolicyForTemplate(args: {
       "astra.requirement.quality",
       "astra.requirement.normalize",
       "astra.route.decision",
+      "orbit.lifecycle.transition",
+      "orbit.placement.confirm",
+      "orbit.revenue.arrange",
+      "orbit.activity.note",
+      "orbit.route.decision",
       "orch.branch.decision",
       "human.gate",
     ],
@@ -53,6 +58,9 @@ export function defaultDraftPolicyForTemplate(args: {
       "orch.branch.decision",
       "human.gate",
       "astra.route.decision",
+      // Optional: ASTRA graphs may also call Orbit bench tools by name.
+      "orbit.lifecycle.transition",
+      "orbit.activity.note",
     ];
     base.triggerEventType = "syntra.jd.received";
     base.minConfidence = 0;
@@ -61,6 +69,26 @@ export function defaultDraftPolicyForTemplate(args: {
     base.prompt =
       "When a job description arrives (upload, email, or job board), score quality, " +
       "branch to normalize or human review, then route actionable work to SYNTRA via syntra.jd.normalized.";
+    delete base.matchThreshold;
+    delete base.hardFilters;
+    delete base.rerank;
+  }
+
+  if (args.policyExt === "OrbitPolicyExt") {
+    base.allowedTools = [
+      "orbit.lifecycle.transition",
+      "orbit.placement.confirm",
+      "orbit.revenue.arrange",
+      "orbit.activity.note",
+      "orbit.route.decision",
+      "orch.branch.decision",
+      "human.gate",
+    ];
+    base.triggerEventType = "orbit.lifecycle.transition_requested";
+    base.prompt =
+      "ORBIT owns bench/workforce: transition candidate lifecycle, confirm placements, " +
+      "arrange revenue, and write timeline notes. Independent of ASTRA JD intake and Syntra matching. " +
+      "Other agents may reuse these orbit.* tools when entitled.";
     delete base.matchThreshold;
     delete base.hardFilters;
     delete base.rerank;

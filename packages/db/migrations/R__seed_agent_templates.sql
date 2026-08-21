@@ -101,25 +101,26 @@ INSERT INTO agent_templates (
   '01900000-0000-7000-8000-000000000605',
   'orbit',
   '01900000-0000-7000-8000-000000000505',
-  'ORBIT — Pipeline Orchestration',
+  'ORBIT — Bench & Workforce',
   1,
   '{
     "agentKey": "orbit",
-    "displayName": "ORBIT — Pipeline Orchestration",
-    "policyExt": "SyntraPolicyExt",
+    "displayName": "ORBIT — Bench & Workforce",
+    "policyExt": "OrbitPolicyExt",
     "nodes": [
-      { "id": "jd",     "impl": "syntra.jd.process" },
-      { "id": "resume", "impl": "syntra.resume.process" },
-      { "id": "match",  "impl": "syntra.match.process", "configFrom": ["matchThreshold", "rerank"] }
+      { "id": "transition", "impl": "orbit.lifecycle.transition" },
+      { "id": "route", "impl": "orbit.route.decision" },
+      { "id": "confirm", "impl": "orbit.placement.confirm" },
+      { "id": "note", "impl": "orbit.activity.note" },
+      { "id": "arrange", "impl": "orbit.revenue.arrange" }
     ],
     "wiring": [
-      ["__start__", "jd"],
-      ["jd", "resume"],
-      ["resume", "match"],
-      ["match", "__end__"]
+      ["__start__", "transition"],
+      ["transition", "route"],
+      ["route", "__end__"]
     ],
     "conditionalOn": {
-      "hardFilters": "stamp hardFilters onto match node config when non-empty"
+      "placedPath": "route branch placed → use placement/revenue tools in authored graphs"
     }
   }'::jsonb,
   true

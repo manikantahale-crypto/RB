@@ -1,8 +1,10 @@
 /**
  * Lightweight structured metrics for orchestration hot path.
- * Emits JSON lines to stdout (scrapable by CloudWatch / Datadog / etc.).
+ * Default sink prints human [Orch] story lines for `npm start` worker logs.
  * Design §12 — "node duration / class metrics".
  */
+
+import { orchStory } from './story-log.js';
 
 export type MetricStatus = 'ok' | 'error' | 'soft_error' | 'interrupted' | 'policy_denied';
 
@@ -38,13 +40,32 @@ export type TerminalEventMetric = {
 
 export type OrchMetric = NodeMetric | WorkflowMetric | TerminalEventMetric;
 
+function defaultStorySink(m: OrchMetric): void {
+  if (m.type === 'orch.node') {
+    // Node detail (out / next) is logged from the graph compiler; keep metric brief.
+    orchStory(
+      'NODE',
+      `${m.nodeId}${m.impl ? ` (${m.impl})` : ''}  ${m.status.toUpperCase()}  ${m.durationMs}ms` +
+        (m.errorClass ? `  class=${m.errorClass}` : '') +
+        `  graph=${m.graphKey}`,
+    );
+    return;
+  }
+  // Workflow DONE is logged by WorkflowRunner / Module with emitted next-events.
+  if (m.type === 'orch.workflow') return;
+  orchStory(
+    'TERM',
+    `${m.eventType}` +
+      (m.organizationId ? `  org=${m.organizationId}` : '') +
+      (m.correlationId ? `  corr=${m.correlationId}` : ''),
+  );
+}
+
 /** Override in tests to capture metrics without console noise. */
-let sink: (m: OrchMetric) => void = (m) => {
-  console.log(JSON.stringify(m));
-};
+let sink: (m: OrchMetric) => void = defaultStorySink;
 
 export function setMetricsSink(fn: ((m: OrchMetric) => void) | null): void {
-  sink = fn ?? ((m) => console.log(JSON.stringify(m)));
+  sink = fn ?? defaultStorySink;
 }
 
 export function recordMetric(m: OrchMetric): void {

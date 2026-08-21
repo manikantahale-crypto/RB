@@ -93,13 +93,6 @@ const MOCK_PRODUCT_AGENTS: Array<{
   purpose: string;
 }> = [
   {
-    id: "01900000-0000-7000-8000-000000000605",
-    agentKey: "orbit",
-    agentId: "01900000-0000-7000-8000-000000000505",
-    displayName: "ORBIT — Pipeline Orchestration",
-    purpose: "Coordinate handoffs across intake, matching, and recruiter workflows.",
-  },
-  {
     id: "01900000-0000-7000-8000-000000000606",
     agentKey: "helix",
     agentId: "01900000-0000-7000-8000-000000000506",
@@ -185,6 +178,52 @@ TEMPLATE_SEED_CATALOG.push({
     conditionalOn: {
       humanLoop:
         "orch.branch.decision → human.gate when confidence in [humanMin, passMin)",
+    },
+  }),
+});
+
+/** ORBIT — bench / workforce (independent; tools reusable by other agents). */
+TEMPLATE_SEED_CATALOG.push({
+  id: "01900000-0000-7000-8000-000000000605",
+  agentKey: "orbit",
+  agentId: "01900000-0000-7000-8000-000000000505",
+  displayName: "ORBIT — Bench & Workforce",
+  purpose:
+    "Candidate lifecycle, placements, revenue arrangements, and timeline notes on the bench.",
+  version: 1,
+  template: AgentTemplateSchema.parse({
+    agentKey: "orbit",
+    displayName: "ORBIT — Bench & Workforce",
+    policyExt: "OrbitPolicyExt",
+    nodes: [
+      {
+        id: "transition",
+        impl: "orbit.lifecycle.transition",
+      },
+      {
+        id: "route",
+        impl: "orbit.route.decision",
+      },
+      {
+        id: "confirm",
+        impl: "orbit.placement.confirm",
+      },
+      {
+        id: "note",
+        impl: "orbit.activity.note",
+      },
+      {
+        id: "arrange",
+        impl: "orbit.revenue.arrange",
+      },
+    ],
+    wiring: [
+      ["__start__", "transition"],
+      ["transition", "route"],
+      ["route", "__end__"],
+    ],
+    conditionalOn: {
+      placedPath: "route branch placed → use placement/revenue tools in authored graphs",
     },
   }),
 });

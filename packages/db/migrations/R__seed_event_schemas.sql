@@ -491,6 +491,149 @@ INSERT INTO _seed_event_schemas VALUES
       "location": { "type": "string" },
       "raw_text": { "type": "string" }
     }
+  }'),
+
+-- ---------------------------------------------------------------------------
+-- 17–24. ORBIT workforce / bench (independent of ASTRA / Syntra matching)
+-- ---------------------------------------------------------------------------
+('orbit.lifecycle.transition_requested',
+ 'Request ORBIT lifecycle transition for a candidate.',
+ 'ORBIT UI / recruiter action / API',
+ 'orbit.lifecycle.workflow',
+ '{
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "title": "orbit.lifecycle.transition_requested payload",
+    "type": "object",
+    "required": ["candidate_id", "to_state"],
+    "additionalProperties": true,
+    "properties": {
+      "candidate_id": { "type": "string", "format": "uuid" },
+      "to_state":     { "type": "string" },
+      "from_state":   { "type": "string" },
+      "note":         { "type": ["string", "null"] }
+    }
+  }'),
+
+('orbit.lifecycle.transitioned',
+ 'Candidate lifecycle state changed in ORBIT.',
+ 'orbit.lifecycle.transition completed',
+ 'Audit / orbit.route.decision',
+ '{
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "title": "orbit.lifecycle.transitioned payload",
+    "type": "object",
+    "required": ["candidate_id", "to_state"],
+    "additionalProperties": true,
+    "properties": {
+      "candidate_id": { "type": "string", "format": "uuid" },
+      "from_state":   { "type": ["string", "null"] },
+      "to_state":     { "type": "string" },
+      "note":         { "type": ["string", "null"] }
+    }
+  }'),
+
+('orbit.placement.confirm_requested',
+ 'Request confirmation of a client placement.',
+ 'ORBIT UI / placement API',
+ 'orbit.placement.workflow',
+ '{
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "title": "orbit.placement.confirm_requested payload",
+    "type": "object",
+    "required": ["candidate_id", "client_name", "start_date", "confirmed_bill_rate", "confirmed_pay_rate"],
+    "additionalProperties": true,
+    "properties": {
+      "candidate_id":         { "type": "string", "format": "uuid" },
+      "client_name":          { "type": "string" },
+      "start_date":           { "type": "string" },
+      "confirmed_bill_rate":  { "type": "number" },
+      "confirmed_pay_rate":   { "type": "number" },
+      "employment_model":     { "type": "string" },
+      "work_mode":            { "type": "string" }
+    }
+  }'),
+
+('orbit.placement.confirmed',
+ 'Client placement confirmed; candidate marked PLACED.',
+ 'orbit.placement.confirm completed',
+ 'Audit / revenue follow-up',
+ '{
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "title": "orbit.placement.confirmed payload",
+    "type": "object",
+    "required": ["candidate_id", "placement_id"],
+    "additionalProperties": true,
+    "properties": {
+      "candidate_id":  { "type": "string", "format": "uuid" },
+      "placement_id":  { "type": "string", "format": "uuid" },
+      "client_name":   { "type": "string" }
+    }
+  }'),
+
+('orbit.revenue.arrange_requested',
+ 'Request revenue arrangement on a placement.',
+ 'ORBIT UI / finance',
+ 'orbit.revenue.workflow',
+ '{
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "title": "orbit.revenue.arrange_requested payload",
+    "type": "object",
+    "required": ["placement_id", "arrangement_type", "value"],
+    "additionalProperties": true,
+    "properties": {
+      "placement_id":       { "type": "string", "format": "uuid" },
+      "arrangement_type":   { "type": "string" },
+      "value":              { "type": "number" }
+    }
+  }'),
+
+('orbit.revenue.arranged',
+ 'Revenue arrangement attached to placement.',
+ 'orbit.revenue.arrange completed',
+ 'Audit',
+ '{
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "title": "orbit.revenue.arranged payload",
+    "type": "object",
+    "required": ["placement_id"],
+    "additionalProperties": true,
+    "properties": {
+      "placement_id":       { "type": "string", "format": "uuid" },
+      "arrangement_type":   { "type": "string" },
+      "value":              { "type": "number" }
+    }
+  }'),
+
+('orbit.activity.noted',
+ 'Recruiter note written on candidate timeline.',
+ 'orbit.activity.note completed',
+ 'Audit',
+ '{
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "title": "orbit.activity.noted payload",
+    "type": "object",
+    "required": ["candidate_id", "summary"],
+    "additionalProperties": true,
+    "properties": {
+      "candidate_id": { "type": "string", "format": "uuid" },
+      "summary":      { "type": "string" }
+    }
+  }'),
+
+('orbit.bench.hold',
+ 'Candidate moved to HOLD/IGNORE — needs attention.',
+ 'orbit.route.decision hold branch',
+ 'UI / ops',
+ '{
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "title": "orbit.bench.hold payload",
+    "type": "object",
+    "additionalProperties": true,
+    "properties": {
+      "candidate_id": { "type": "string", "format": "uuid" },
+      "to_state":     { "type": "string" },
+      "reason":       { "type": "string" }
+    }
   }');
 
 

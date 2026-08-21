@@ -22,6 +22,11 @@ import {
   type ActionClass,
 } from '../policy/engine.js';
 import { recordNodeMetric } from '../observability/metrics.js';
+import {
+  formatNextPaths,
+  formatNodeOut,
+  orchStoryDetail,
+} from '../observability/story-log.js';
 import { recordAgentStep } from '../workflow/agent-runs.js';
 
 export { validateDefinition, checksumOf, defineGraph } from './recipe.js';
@@ -348,6 +353,26 @@ export class GraphCompiler {
           const patch = await impl(state, ctx);
           const viaCtx = drainEvents();
           const durationMs = Date.now() - started;
+          const payload = patch.trigger_event?.payload as
+            | Record<string, unknown>
+            | undefined;
+          const branchKey =
+            typeof patch.branch_key === 'string' ? patch.branch_key : undefined;
+          const outLine = formatNodeOut({
+            result: patch.result,
+            branchKey,
+            confidence: payload?.confidence_score ?? payload?.branch_score,
+            isActionable: payload?.is_actionable,
+            emitted: viaCtx.map((e) => e.event_type),
+          });
+          const nextLine = formatNextPaths({
+            nodeId: node.id,
+            edges: def.edges as Array<[string, string]>,
+            conditionalEdges: def.conditionalEdges as
+              | Array<{ from: string; map: Record<string, string> }>
+              | undefined,
+            branchKey,
+          });
           recordNodeMetric({
             graphKey: def.graphKey,
             nodeId: node.id,
@@ -356,19 +381,15 @@ export class GraphCompiler {
             durationMs,
             threadId,
           });
+          if (outLine) orchStoryDetail(`out: ${outLine}`);
+          if (nextLine) orchStoryDetail(`next: ${nextLine}`);
           await writeStep(state, node.id, node.impl, 'OK', durationMs, {
             emitted: viaCtx.map((e) => e.event_type),
             result: typeof patch.result === 'string' ? patch.result : undefined,
-            branch_key:
-              typeof patch.branch_key === 'string' ? patch.branch_key : undefined,
+            branch_key: branchKey,
             confidence_score:
-              (patch.trigger_event?.payload as Record<string, unknown> | undefined)
-                ?.confidence_score ??
-              (patch.trigger_event?.payload as Record<string, unknown> | undefined)
-                ?.branch_score,
-            is_actionable: (
-              patch.trigger_event?.payload as Record<string, unknown> | undefined
-            )?.is_actionable,
+              payload?.confidence_score ?? payload?.branch_score,
+            is_actionable: payload?.is_actionable,
           });
           if (viaCtx.length === 0) return patch;
           return {
@@ -411,6 +432,7 @@ export class GraphCompiler {
             await writeStep(state, node.id, node.impl, 'FAILED', durationMs, {
               errorClass: enriched.errorClass,
             });
+            orchStoryDetail(`out: error=${enriched.message}`);
             return {
               errorsSoft: [
                 {

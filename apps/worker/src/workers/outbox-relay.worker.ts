@@ -120,7 +120,7 @@ export async function relayOnce(
 
       if (plan.kind === "graph") {
         console.log(
-          `[Relay] plan=${plan.kind} ${row.event_type} → ${INGRESS_QUEUE}`,
+          `[Orch] ── RELAY  ${row.event_type}  id=${row.event_id}  producer=${row.producer}  corr=${row.correlation_id}  → ${INGRESS_QUEUE}  next=router`,
         );
         try {
           await boss.send(INGRESS_QUEUE, envelope, sendOpts);
@@ -132,10 +132,6 @@ export async function relayOnce(
             singletonKey: row.event_id,
           });
         }
-        console.log(
-          `[Relay] PUBLISH ${row.event_type} producer=${row.producer} ` +
-            `→ ${INGRESS_QUEUE} event=${row.event_id} correlation=${row.correlation_id}`,
-        );
       } else {
         const stamped = envelope as EventEnvelope & {
           __graphKey?: string;
@@ -171,7 +167,7 @@ export async function relayOnce(
           });
         }
         console.log(
-          `[Relay] ${row.event_type} → ${DISPATCH_QUEUE} (terminal/control) (${row.event_id})`,
+          `[Orch] ── RELAY  ${row.event_type}  id=${row.event_id}  → ${DISPATCH_QUEUE}  (terminal/control)`,
         );
       }
       publishedIds.push(row.id);

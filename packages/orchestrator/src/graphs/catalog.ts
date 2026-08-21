@@ -117,4 +117,71 @@ export const graphSeedCatalog: GraphSeed[] = [
     },
     { id: 'graph_syntra_duplicate_detect_v1', version: 1, status: 'active' },
   ),
+  // ORBIT — workforce/bench (independent of ASTRA JD intake)
+  defineGraph(
+    {
+      graphKey: 'orbit.lifecycle.workflow',
+      agentName: 'orbit',
+      nodes: [
+        {
+          id: 'transition',
+          impl: 'orbit.lifecycle.transition',
+          config: { actionClass: 'INTERNAL_WRITE' },
+        },
+        {
+          id: 'route',
+          impl: 'orbit.route.decision',
+          config: { actionClass: 'CONTROL' },
+        },
+      ],
+      edges: [
+        ['__start__', 'transition'],
+        ['transition', 'route'],
+        ['route', '__end__'],
+      ],
+    },
+    { id: 'graph_orbit_lifecycle_v1', version: 1, status: 'active' },
+  ),
+  defineGraph(
+    {
+      graphKey: 'orbit.placement.workflow',
+      agentName: 'orbit',
+      nodes: [
+        {
+          id: 'confirm',
+          impl: 'orbit.placement.confirm',
+          config: { actionClass: 'INTERNAL_WRITE' },
+        },
+        {
+          id: 'note',
+          impl: 'orbit.activity.note',
+          config: { actionClass: 'INTERNAL_WRITE' },
+        },
+      ],
+      edges: [
+        ['__start__', 'confirm'],
+        ['confirm', 'note'],
+        ['note', '__end__'],
+      ],
+    },
+    { id: 'graph_orbit_placement_v1', version: 1, status: 'active' },
+  ),
+  defineGraph(
+    {
+      graphKey: 'orbit.revenue.workflow',
+      agentName: 'orbit',
+      nodes: [
+        {
+          id: 'arrange',
+          impl: 'orbit.revenue.arrange',
+          config: { actionClass: 'INTERNAL_WRITE' },
+        },
+      ],
+      edges: [
+        ['__start__', 'arrange'],
+        ['arrange', '__end__'],
+      ],
+    },
+    { id: 'graph_orbit_revenue_v1', version: 1, status: 'active' },
+  ),
 ];

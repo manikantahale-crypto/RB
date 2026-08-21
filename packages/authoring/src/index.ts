@@ -32,6 +32,7 @@ export {
   SyntraPolicyExt,
   IntakePolicyExt,
   AstraPolicyExt,
+  OrbitPolicyExt,
   POLICY_EXT_REGISTRY,
   type PolicyExtKey,
   getPolicyExtSchema,

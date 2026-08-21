@@ -7,6 +7,69 @@ import { EVENT_TYPES } from "@tekisho/domain";
  * R__seed_event_schemas / R__orch_runtime_grants.
  */
 export async function ensureIngressEventSchemas(pool: Pool): Promise<void> {
+  const orbitEvents: Array<{ type: string; description: string }> = [
+    {
+      type: EVENT_TYPES.ORBIT_LIFECYCLE_TRANSITION_REQUESTED,
+      description: "Request ORBIT lifecycle transition for a candidate.",
+    },
+    {
+      type: EVENT_TYPES.ORBIT_LIFECYCLE_TRANSITIONED,
+      description: "Candidate lifecycle state changed in ORBIT.",
+    },
+    {
+      type: EVENT_TYPES.ORBIT_PLACEMENT_CONFIRM_REQUESTED,
+      description: "Request confirmation of a client placement.",
+    },
+    {
+      type: EVENT_TYPES.ORBIT_PLACEMENT_CONFIRMED,
+      description: "Client placement confirmed.",
+    },
+    {
+      type: EVENT_TYPES.ORBIT_REVENUE_ARRANGE_REQUESTED,
+      description: "Request revenue arrangement on a placement.",
+    },
+    {
+      type: EVENT_TYPES.ORBIT_REVENUE_ARRANGED,
+      description: "Revenue arrangement attached to placement.",
+    },
+    {
+      type: EVENT_TYPES.ORBIT_ACTIVITY_NOTED,
+      description: "Recruiter note on candidate timeline.",
+    },
+    {
+      type: EVENT_TYPES.ORBIT_BENCH_HOLD,
+      description: "ORBIT hold/ignore branch signal.",
+    },
+  ];
+
+  for (const ev of orbitEvents) {
+    try {
+      await pool.query(
+        `INSERT INTO event_schemas (
+           event_type, schema_version, description, payload_schema,
+           envelope_fields, produced_when, primary_consumer, status
+         )
+         SELECT
+           $1, '1.0', $2,
+           '{"type":"object","additionalProperties":true}'::jsonb,
+           e.envelope_fields,
+           'ORBIT',
+           'orbit workflows',
+           'ACTIVE'
+         FROM event_schemas e
+         WHERE e.schema_version = '1.0'
+         LIMIT 1
+         ON CONFLICT (event_type, schema_version) DO NOTHING`,
+        [ev.type, ev.description],
+      );
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : String(err);
+      if (!/duplicate key|unique constraint|already exists/i.test(message)) {
+        console.warn(`[Bootstrap] orbit event_schema ${ev.type}:`, message);
+      }
+    }
+  }
+
   try {
     const existing = await pool.query(
       `SELECT 1 FROM event_schemas
@@ -51,8 +114,6 @@ export async function ensureIngressEventSchemas(pool: Pool): Promise<void> {
     );
   } catch (err: unknown) {
     const message = err instanceof Error ? err.message : String(err);
-    // Row may already exist via Flyway; SELECT/INSERT denied under RLS is OK
-    // when R__seed_event_schemas already applied as postgres.
     if (/duplicate key|unique constraint|already exists/i.test(message)) {
       return;
     }

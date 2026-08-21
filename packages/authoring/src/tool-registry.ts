@@ -241,6 +241,91 @@ export const TOOL_CATALOG: readonly ToolCatalogEntry[] = [
     triggeredBy: "astra.requirement.scored",
   },
   {
+    key: "orbit.lifecycle.transition",
+    description:
+      "ORBIT: move a candidate across bench lifecycle states " +
+      "(AVAILABLE|BENCH|NOTICE|PLACED|HOLD|PRIORITIZE|OLD|IGNORE). " +
+      "Owned by ORBIT; reusable by other agents (e.g. ASTRA). Emits orbit.lifecycle.transitioned.",
+    input: {
+      candidate_id: "uuid",
+      to_state: "string — canonical Orbit status",
+      note: "string (optional)",
+      context: "object (optional)",
+    },
+    output: {
+      event: "orbit.lifecycle.transitioned",
+      shape: "{ candidate_id, from_state, to_state, note }",
+    },
+    triggeredBy: "orbit.lifecycle.transition_requested",
+  },
+  {
+    key: "orbit.placement.confirm",
+    description:
+      "ORBIT: confirm a client placement (bill/pay rates, employment model). " +
+      "SAO also forces lifecycle PLACED. Emits orbit.placement.confirmed.",
+    input: {
+      candidate_id: "uuid",
+      client_name: "string",
+      start_date: "date",
+      confirmed_bill_rate: "number",
+      confirmed_pay_rate: "number",
+      employment_model: "W2|C2C|1099|FTE",
+      work_mode: "ONSITE|HYBRID|REMOTE (optional)",
+    },
+    output: {
+      event: "orbit.placement.confirmed",
+      shape: "{ candidate_id, placement_id, client_name }",
+    },
+    triggeredBy: "orbit.placement.confirm_requested",
+  },
+  {
+    key: "orbit.revenue.arrange",
+    description:
+      "ORBIT: attach a revenue arrangement to a placement " +
+      "(MARKUP|MARGIN|FLAT_FEE|SPREAD|CUSTOM). Emits orbit.revenue.arranged.",
+    input: {
+      placement_id: "uuid",
+      arrangement_type: "string",
+      value: "number",
+    },
+    output: {
+      event: "orbit.revenue.arranged",
+      shape: "{ placement_id, arrangement_type, value }",
+    },
+    triggeredBy: "orbit.revenue.arrange_requested",
+  },
+  {
+    key: "orbit.activity.note",
+    description:
+      "ORBIT: write a recruiter note/activity on a candidate timeline. " +
+      "Emits orbit.activity.noted.",
+    input: {
+      candidate_id: "uuid",
+      summary: "string",
+      activity_type: "string (default NOTE)",
+    },
+    output: {
+      event: "orbit.activity.noted",
+      shape: "{ candidate_id, summary }",
+    },
+    triggeredBy: "orbit.lifecycle.transitioned",
+  },
+  {
+    key: "orbit.route.decision",
+    description:
+      "ORBIT orch-only branch: placed → placement path; hold → orbit.bench.hold; else active. " +
+      "Does not call ASTRA or Syntra matching.",
+    input: {
+      to_state: "string (optional)",
+      branch_key: "string (optional)",
+    },
+    output: {
+      event: "orbit.bench.hold",
+      shape: "state.branch_key = placed|hold|active; optional hold event",
+    },
+    triggeredBy: "orbit.lifecycle.transitioned",
+  },
+  {
     key: "human.gate",
     description:
       "Pause for human review (approval). Resume via orchestration.resume-thread. " +

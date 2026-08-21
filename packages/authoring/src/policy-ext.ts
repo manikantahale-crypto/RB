@@ -43,10 +43,21 @@ export const AstraPolicyExt = z.object({
   humanMin: z.number().min(0).max(1).default(0.35),
 });
 
+/**
+ * ORBIT bench / workforce — lifecycle, placement, revenue, activity.
+ * Tools stay named `orbit.*`; other agents may also select them from the shared catalog.
+ */
+export const OrbitPolicyExt = z.object({
+  prompt: z.string().min(1),
+  allowedTools: z.array(z.string().min(1)).min(1),
+  triggerEventType: z.string().min(1),
+});
+
 export const POLICY_EXT_REGISTRY = {
   SyntraPolicyExt,
   IntakePolicyExt,
   AstraPolicyExt,
+  OrbitPolicyExt,
 } as const;
 
 export type PolicyExtKey = keyof typeof POLICY_EXT_REGISTRY;

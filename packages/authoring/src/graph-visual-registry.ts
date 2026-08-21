@@ -188,6 +188,41 @@ const NODE_COPY_BY_TOOL: Record<ToolKey, NodeCopy> = {
     produces: "A decision: continue into SYNTRA matching, or stop this job for now.",
     outcomes: [],
   },
+  "orbit.lifecycle.transition": {
+    title: "Update bench status",
+    kicker: "ORBIT step",
+    why: "Recruiters move consultants across Available, Bench, Notice, Placed, Hold, and related statuses so the bench view stays accurate.",
+    produces: "A new lifecycle state on the candidate with optional note.",
+    outcomes: [],
+  },
+  "orbit.placement.confirm": {
+    title: "Confirm client placement",
+    kicker: "ORBIT step",
+    why: "When a consultant is placed at a client, bill/pay rates and employment model need to be locked in.",
+    produces: "An active placement record and a Placed lifecycle state.",
+    outcomes: [],
+  },
+  "orbit.revenue.arrange": {
+    title: "Set revenue arrangement",
+    kicker: "ORBIT step",
+    why: "Placement economics (markup, margin, flat fee, etc.) drive profitability tracking.",
+    produces: "A current revenue arrangement on the placement.",
+    outcomes: [],
+  },
+  "orbit.activity.note": {
+    title: "Add recruiter note",
+    kicker: "ORBIT step",
+    why: "Timeline notes keep the team aligned on outreach, holds, and placement context.",
+    produces: "An activity entry on the candidate timeline.",
+    outcomes: [],
+  },
+  "orbit.route.decision": {
+    title: "Route after status change",
+    kicker: "ORBIT step",
+    why: "After a lifecycle change, the flow branches: placed continues placement work; hold stops for attention; otherwise stays on active bench.",
+    produces: "A branch key (placed / hold / active) and optional hold signal.",
+    outcomes: [],
+  },
   "orch.branch.decision": {
     title: "Pick what happens next",
     kicker: "Automatic step",
@@ -284,18 +319,20 @@ export function isEndVisualTool(toolKey: string): boolean {
   return END_VISUAL_TOOLS.has(toolKey);
 }
 
-export type ToolFamily = "syntra" | "astra" | "platform" | "none";
+export type ToolFamily = "syntra" | "astra" | "orbit" | "platform" | "none";
 
 /**
  * Which product family a tool belongs to — for naive-admin labeling on the canvas.
  * - syntra: matching / profile / shortlist tools
  * - astra: intake / JD quality / route tools
+ * - orbit: bench / lifecycle / placement / revenue tools
  * - platform: orch.branch / human.gate (shared orchestration)
  */
 export function resolveToolFamily(toolKey: string): ToolFamily {
   if (toolKey === "__start__" || toolKey === "__end__") return "none";
   if (toolKey.startsWith("syntra.")) return "syntra";
   if (toolKey.startsWith("astra.")) return "astra";
+  if (toolKey.startsWith("orbit.")) return "orbit";
   if (toolKey === "human.gate" || toolKey.startsWith("orch.")) return "platform";
   return "none";
 }
@@ -306,6 +343,8 @@ export function toolFamilyLabel(family: ToolFamily): string {
       return "SYNTRA tool";
     case "astra":
       return "ASTRA tool";
+    case "orbit":
+      return "ORBIT tool";
     case "platform":
       return "Platform step";
     default:
@@ -319,8 +358,10 @@ export function toolFamilyBlurb(family: ToolFamily): string {
       return "This step calls a SYNTRA tool (matching, profiles, shortlist, duplicates).";
     case "astra":
       return "This step calls an ASTRA tool (intake, job boards, JD quality / structuring / routing).";
+    case "orbit":
+      return "This step calls an ORBIT tool (bench lifecycle, placement, revenue, notes).";
     case "platform":
-      return "This step is shared orchestration (branching or human review) — not Syntra or ASTRA product APIs.";
+      return "This step is shared orchestration (branching or human review) — not product APIs.";
     default:
       return "";
   }
