@@ -3,6 +3,11 @@ const lifecycleRepo = require("../repositories/lifecycle.repository");
 const activityRepo = require("../repositories/activity.repository");
 const { calculateTotalProfitTillToday } = require("../utils/profitability");
 const { withTransaction } = require("../config/db");
+const env = require("../config/env");
+const {
+  emitAndMaybePublish,
+  publishToOrchFailOpen,
+} = require("../services/orbit/orbitOutbox");
 
 async function createPlacement(req, res, next) {
   try {
@@ -37,9 +42,15 @@ async function createPlacement(req, res, next) {
       throw err;
     }
 
-    const orgId = req.body?.organization_id || req.user?.organizationId || req.headers["x-organization-id"] || req.userId || undefined;
+    const orgId =
+      env.ORCH_ORGANIZATION_ID ||
+      req.body?.organization_id ||
+      req.user?.organizationId ||
+      req.headers["x-organization-id"] ||
+      req.userId ||
+      undefined;
 
-    const placement = await withTransaction(async (client) => {
+    const { placement, outboxEvent } = await withTransaction(async (client) => {
       const created = await placementRepo.createPlacement(
         {
           candidateId: candidate_id,
@@ -91,8 +102,23 @@ async function createPlacement(req, res, next) {
         client
       );
 
-      return created;
+      const outboxEvent = await emitAndMaybePublish(client, {
+        eventType: "orbit.placement.confirmed",
+        aggregateType: "placement",
+        aggregateId: created.id,
+        producer: "sao.orbit.placement",
+        organizationId: orgId,
+        payload: {
+          candidate_id,
+          placement_id: created.id,
+          client_name,
+        },
+      });
+
+      return { placement: created, outboxEvent };
     });
+
+    publishToOrchFailOpen(outboxEvent);
 
     res.status(201).json({ placement });
   } catch (err) {
@@ -209,9 +235,16 @@ async function createRevenueArrangement(req, res, next) {
       ? calculatedAmount * 160
       : calculatedAmount;
 
-    const orgId = req.body?.organization_id || placement.organization_id || req.user?.organizationId || req.headers["x-organization-id"] || req.userId || undefined;
+    const orgId =
+      env.ORCH_ORGANIZATION_ID ||
+      req.body?.organization_id ||
+      placement.organization_id ||
+      req.user?.organizationId ||
+      req.headers["x-organization-id"] ||
+      req.userId ||
+      undefined;
 
-    const result = await withTransaction(async (client) => {
+    const { result, outboxEvent } = await withTransaction(async (client) => {
       const arrangement = await placementRepo.createRevenueArrangement(
         {
           placementId,
@@ -245,8 +278,23 @@ async function createRevenueArrangement(req, res, next) {
         client
       );
 
-      return arrangement;
+      const outboxEvent = await emitAndMaybePublish(client, {
+        eventType: "orbit.revenue.arranged",
+        aggregateType: "placement",
+        aggregateId: placementId,
+        producer: "sao.orbit.revenue",
+        organizationId: orgId,
+        payload: {
+          placement_id: placementId,
+          arrangement_type,
+          value: numericValue,
+        },
+      });
+
+      return { result: arrangement, outboxEvent };
     });
+
+    publishToOrchFailOpen(outboxEvent);
 
     res.status(201).json({
       arrangement: result,

@@ -1,4 +1,10 @@
 const activityRepo = require("../repositories/activity.repository");
+const { withTransaction } = require("../config/db");
+const env = require("../config/env");
+const {
+  emitAndMaybePublish,
+  publishToOrchFailOpen,
+} = require("../services/orbit/orbitOutbox");
 
 async function getActivities(req, res, next) {
   try {
@@ -27,14 +33,43 @@ async function createNote(req, res, next) {
       throw err;
     }
 
-    const activity = await activityRepo.createActivity({
-      candidateId,
-      activityType: "NOTE",
-      actorType: "USER",
-      actorId: req.userId || null,
-      summary,
-      payload: payload || {},
+    const orgId =
+      env.ORCH_ORGANIZATION_ID ||
+      req.body?.organization_id ||
+      req.user?.organizationId ||
+      req.headers["x-organization-id"] ||
+      req.userId ||
+      undefined;
+
+    const { activity, outboxEvent } = await withTransaction(async (client) => {
+      const created = await activityRepo.createActivity(
+        {
+          candidateId,
+          activityType: "NOTE",
+          actorType: "USER",
+          actorId: req.userId || null,
+          summary,
+          payload: payload || {},
+        },
+        client,
+      );
+
+      const outboxEvent = await emitAndMaybePublish(client, {
+        eventType: "orbit.activity.noted",
+        aggregateType: "candidate",
+        aggregateId: candidateId,
+        producer: "sao.orbit.activity",
+        organizationId: orgId,
+        payload: {
+          candidate_id: candidateId,
+          summary,
+        },
+      });
+
+      return { activity: created, outboxEvent };
     });
+
+    publishToOrchFailOpen(outboxEvent);
 
     res.status(201).json(activity);
   } catch (err) {

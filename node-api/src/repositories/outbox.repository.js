@@ -15,6 +15,15 @@ const PLATFORM_EVENT_TYPES = [
   "astra.requirement.received",
   "astra.requirement.normalized",
   "syntra.jd.normalized",
+  // ORBIT — UI lifecycle / placement / activity (orbit_events_SAO)
+  "orbit.lifecycle.transition_requested",
+  "orbit.lifecycle.transitioned",
+  "orbit.placement.confirm_requested",
+  "orbit.placement.confirmed",
+  "orbit.revenue.arrange_requested",
+  "orbit.revenue.arranged",
+  "orbit.activity.noted",
+  "orbit.bench.hold",
 ];
 
 /**
