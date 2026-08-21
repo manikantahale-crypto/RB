@@ -2,6 +2,8 @@ import { useState, useEffect } from 'react';
 import { Loader2, AlertCircle } from 'lucide-react';
 import { Sidebar } from './components/Sidebar';
 import { Header } from './components/Header';
+import { RecruiterReviewBanner } from './components/RecruiterReviewBanner';
+import { OrchestrationActivityPanel } from './components/OrchestrationActivityPanel';
 import { Dashboard } from './components/Dashboard';
 import { UploadAnalyze } from './components/UploadAnalyze';
 import { DataStore } from './components/DataStore';
@@ -302,6 +304,9 @@ export default function App() {
       <div className="flex-1 flex flex-col min-w-0 h-full overflow-hidden">
         <Header activeScreen={activeScreen} />
 
+        <RecruiterReviewBanner />
+        <OrchestrationActivityPanel />
+
         <main className="flex-1 flex flex-col min-w-0 overflow-y-auto">
           {showLoader && (
             <div className="flex flex-col items-center justify-center py-32 space-y-4">
@@ -323,7 +328,8 @@ export default function App() {
           {!showLoader && activeScreen === 'upload' && (
             <UploadAnalyze
               initialInputType={uploadType}
-              onSaveToLibrary={(tab) => {
+              onSaveToLibrary={async (tab) => {
+                await fetchBackendData();
                 setActiveScreen(tab === 'jobs' ? 'jobs' : 'resumes');
               }}
               onGoToMatch={(mode, id) => {

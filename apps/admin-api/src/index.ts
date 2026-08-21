@@ -44,7 +44,7 @@ function poolOpts(connectionString: string) {
   return {
     connectionString,
     ssl: { rejectUnauthorized: false },
-    max: 4,
+    max: 2,
   };
 }
 
@@ -62,11 +62,12 @@ function tryCreateLlm(): LLMClient | undefined {
 
 async function main(): Promise<void> {
   const schemaUrl = migratorUrl as string;
+  const sharePool = schemaUrl === dataUrl;
   const migratorPool = new pg.Pool(poolOpts(schemaUrl));
   await ensureAuthoringSchema(migratorPool);
   await ensureEventBindingsSchema(migratorPool);
 
-  const pool = new pg.Pool(poolOpts(dataUrl));
+  const pool = sharePool ? migratorPool : new pg.Pool(poolOpts(dataUrl));
   const llm = tryCreateLlm();
   if (llm) {
     console.log(
@@ -94,8 +95,8 @@ async function main(): Promise<void> {
 
   const shutdown = async () => {
     await app.close();
-    await pool.end();
     await migratorPool.end();
+    if (!sharePool) await pool.end();
     process.exit(0);
   };
   process.on("SIGINT", shutdown);

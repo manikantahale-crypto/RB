@@ -38,7 +38,7 @@ PYTHON_SERVICE_URL=http://localhost:8000
 
 SYNTRA_API_URL=http://localhost:4000
 ORCH_API_URL=http://localhost:4100
-ORCH_ORGANIZATION_ID=00000000-0000-0000-0000-000000000000
+ORCH_ORGANIZATION_ID=00000000-0000-0000-0000-000000000001
 
 # Platform events (unified defaults)
 PLATFORM_EVENTS_ENABLED=1
@@ -112,20 +112,72 @@ WHERE status = 'active' AND event_type = 'syntra.match.requested';
 
 ## Verify end-to-end
 
-1. Upload JD + resume in Syntra Front — Analyze succeeds.
-2. Worker log shows:
+```cmd
+node scripts/verify-workflow.mjs
+node scripts/db-diagnose.mjs
+```
+
+1. Upload JD + **valid resume** in Syntra Front — Analyze succeeds, **Save to Library**.
+2. **Restart** `npm run dev:syntra-api` after any code/env change (stale process = no outbox writes).
+3. Worker log shows:
 
 ```text
-[platformEvents] syntra.match.requested ...
-[Router] syntra.match.requested → module.syntra.match your-agent.authored@1
+[platformEvents] EMIT syntra.jd.parsed ...
+[Relay] PUBLISH syntra.jd.parsed → orchestration.ingress
+[Router] ROUTE syntra.jd.parsed → graph=syntra.continuous.match@1 ...
+[Module] DONE ... emitted=[syntra.match.completed]
+[platformEvents] EMIT syntra.match.requested ...
+[Router] ROUTE syntra.match.requested → graph=syntra.match.workflow@1 ...
 ```
 
-3. SQL:
+4. SQL:
 
 ```sql
-SELECT event_type, producer, occurred_at FROM event_outbox ORDER BY occurred_at DESC LIMIT 5;
-SELECT graph_key, status FROM orch.runs ORDER BY created_at DESC LIMIT 5;
+SELECT event_type, producer, occurred_at, published_at IS NOT NULL AS published
+FROM event_outbox ORDER BY occurred_at DESC LIMIT 10;
 ```
+
+## Backfill JD parsed events (pre-platform-events jobs)
+
+```cmd
+node scripts/backfill-jd-parsed.mjs --dry-run
+node scripts/backfill-jd-parsed.mjs --limit=20
+```
+
+## Recruiter human-review inbox (Syntra Front)
+
+API (authenticated):
+- `GET /recruiter/reviews/pending` — syncs from `event_outbox` + `orch.runs` (PARKED)
+- `POST /recruiter/reviews/:id/decide` — `{ "approved": true|false, "note": "..." }`
+
+UI: amber banner + bell dropdown when orchestration emits `syntra.approval.requested`, `syntra.duplicate.review_required`, or a run is PARKED.
+
+
+| Cause | Fix |
+|-------|-----|
+| **node-api not restarted** after unified merge | Stop and `npm run dev:syntra-api`; confirm startup log shows `platformEvents: true` |
+| **Worker not running** | `npm run dev:worker` — relay publishes outbox → ingress |
+| **`[platformEvents] failed`** in node-api logs | Run with `PLATFORM_EVENTS_STRICT=1`; fix FK (wrong `ORCH_ORGANIZATION_ID`) |
+| **JD never reaches worker** | Empty file, wrong doc type, or AI key missing |
+| **`syntra.jd.received` disabled** | Normal — `ORCH_EMIT_JD_RECEIVED=0`; **parsed** comes from worker after AI, not upload |
+| **Test script only event** | `scripts/emit-test-jd-parsed.mjs` wrote the 09:54 row; real uploads need restarted API |
+
+## Correct workflow (ORCH_DELEGATE_MATCH=1)
+
+```text
+Upload JD → jd.uploaded worker → AI + embedding
+  → EMIT syntra.jd.parsed (event_outbox)
+  → [orch] syntra.continuous.match → POST /internal/jobs/:id/continuous-match
+  → funnel tier1/2 → EMIT syntra.match.requested (per pair)
+  → [orch] syntra.match.workflow (or your Syntra4 agent) → POST /internal/matches/process
+  → LLM score saved → Match Hub shows candidates
+
+Upload resume → resume.uploaded → AI + embedding
+  → EMIT syntra.profile.prepared → duplicate.detect graph
+  → local funnel runForResume (pairs resume ↔ jobs)
+```
+
+**Data requirements:** resumes must be real CVs (not JDs on wrong tab), `processed` with embedding, same recruiter `created_by` as job, job **Active** in library for Match Hub list.
 
 ## Smoke test (without Syntra UI)
 

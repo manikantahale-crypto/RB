@@ -31,7 +31,9 @@ export async function startModuleWorkers(args: {
       for (const job of jobs) {
         const envelope = job.data as RoutedEnvelope;
         console.log(
-          `[Module] ${queue} ${envelope.event_type} (${envelope.event_id})`,
+          `[Module] START queue=${queue} event=${envelope.event_type} ` +
+            `graph=${envelope.__graphKey}@${envelope.__graphVersion ?? "?"} ` +
+            `event_id=${envelope.event_id}`,
         );
 
         const workflowName = envelope.__graphKey;
@@ -70,7 +72,8 @@ export async function startModuleWorkers(args: {
               ? result.events.map((e) => e.event_type).join(', ')
               : '';
             console.log(
-              `[Module] ${queue} → ${result.graphKey}@${result.graphVersion} ${result.status}` +
+              `[Module] DONE queue=${queue} graph=${result.graphKey}@${result.graphVersion} ` +
+                `status=${result.status} event=${envelope.event_type}` +
                 (result.threadId ? ` thread=${result.threadId}` : '') +
                 (emitted ? ` emitted=[${emitted}]` : ''),
             );

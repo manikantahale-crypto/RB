@@ -133,7 +133,8 @@ export async function relayOnce(
           });
         }
         console.log(
-          `[Relay] ${row.event_type} → ${INGRESS_QUEUE} (${row.event_id})`,
+          `[Relay] PUBLISH ${row.event_type} producer=${row.producer} ` +
+            `→ ${INGRESS_QUEUE} event=${row.event_id} correlation=${row.correlation_id}`,
         );
       } else {
         const stamped = envelope as EventEnvelope & {

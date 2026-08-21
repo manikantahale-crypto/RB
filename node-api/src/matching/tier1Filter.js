@@ -17,6 +17,16 @@ async function filterCandidatesForJob(jobId) {
   }
 
   const pool = await matchRepo.findTopCandidatesByVector(jobId);
+  if (pool.length === 0) {
+    const diag = await matchRepo.countMatchPoolDiagnostics(jobId);
+    if (diag) {
+      log.info(
+        `[tier1] job ${jobId}: pool empty — ` +
+          `resumes_ready=${diag.resumes_ready} same_owner=${diag.resumes_same_owner} ` +
+          `job_owner=${diag.job_owner || "null"}`
+      );
+    }
+  }
   return { job, pool, survivors: pool };
 }
 

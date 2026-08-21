@@ -92,9 +92,25 @@ async function createResume({ fullName, email, phone, file, userId }) {
 }
 
 async function bulkSaveCandidates(candidateIds, userId) {
-  const resumeRepo = require("../repositories/resume.repository");
   const candidateRepo = require("../repositories/candidate.repository");
+  const { runForResume } = require("../matching/funnel");
   const count = await candidateRepo.saveCandidatesBulk(candidateIds, userId);
+  if (count > 0) {
+    log.info(`[resume.save] ${count} candidate(s) activated — re-running match funnel`);
+    for (const candidateId of candidateIds) {
+      candidateRepo
+        .getCurrentResumeId(candidateId, userId)
+        .then((resumeId) => {
+          if (!resumeId) return null;
+          return runForResume(resumeId);
+        })
+        .catch((err) => {
+          log.error(
+            `[resume.save] funnel failed candidate=${candidateId}: ${err.message}`
+          );
+        });
+    }
+  }
   return count;
 }
 

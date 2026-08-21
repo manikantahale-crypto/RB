@@ -41,6 +41,13 @@ async function bulkSaveResumes(req, res, next) {
       return res.status(400).json({ message: "candidateIds array is required" });
     }
     const count = await resumeService.bulkSaveCandidates(candidateIds, req.userId);
+    if (count === 0) {
+      return res.status(409).json({
+        message:
+          "No resumes were saved. The resume may still be processing, failed parsing, or belong to another user.",
+        count: 0,
+      });
+    }
     res.json({ message: "Resumes saved successfully", count });
   } catch (err) {
     next(err);

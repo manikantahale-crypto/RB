@@ -4,6 +4,7 @@ const { pool } = require("./config/db");
 const log = require("./utils/logger");
 const { startBoss, stopBoss } = require("./config/queue");
 const { seedEventSchemas } = require("./repositories/outbox.repository");
+const { ensureSchema: ensureRecruiterReviewSchema } = require("./repositories/recruiterReview.repository");
 const { registerJdUploadedWorker } = require("./workers/jdUploaded.worker");
 const {
   registerResumeUploadedWorker,
@@ -35,6 +36,7 @@ async function start() {
 
     // Seed ASTRA event schemas in public.event_schemas dynamically
     await seedEventSchemas();
+    await ensureRecruiterReviewSchema();
     log.info("Platform event schemas verified/seeded.", {
       platformEvents: env.PLATFORM_EVENTS_ENABLED,
       delegateMatch: env.ORCH_DELEGATE_MATCH,

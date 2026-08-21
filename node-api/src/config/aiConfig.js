@@ -46,7 +46,7 @@ function getAiConfig() {
   } else if (provider === "openai") {
     apiKey = process.env.OPENAI_API_KEY || process.env.AI_API_KEY || "";
   } else if (provider === "gemini") {
-    apiKey = process.env.GEMINI_API_KEY || process.env.AI_API_KEY || "";
+    apiKey = process.env.GEMINI_API_KEY || process.env.LLM_API_KEY || process.env.AI_API_KEY || "";
   } else if (provider === "groq") {
     apiKey = process.env.GROQ_API_KEY || process.env.AI_API_KEY || "";
   }
@@ -54,6 +54,7 @@ function getAiConfig() {
   if (!apiKey) {
     apiKey = (
       process.env.AI_API_KEY ||
+      process.env.LLM_API_KEY ||
       process.env.OPENROUTER_API_KEY ||
       process.env.OPENAI_API_KEY ||
       process.env.GROQ_API_KEY ||

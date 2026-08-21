@@ -5,6 +5,7 @@ const { parseJD } = require("../ai/jdParsing");
 const { generateEmbedding } = require("../ai/embedding");
 const log = require("../utils/logger");
 const platformEvents = require("../services/platformEvents.service");
+const env = require("../config/env");
 
 function summaryHash(summary) {
   return crypto.createHash("sha256").update(summary || "", "utf8").digest("hex");
@@ -119,11 +120,26 @@ async function handleJdUploaded(job) {
       embeddingVersion,
     });
 
-    log.info(`[jd.uploaded] job ${jobId} successfully parsed and embedded; running matching funnel`);
+    log.info(`[jd.uploaded] job ${jobId} successfully parsed and embedded`);
 
-    await platformEvents.publishJdParsed({ jobId });
+    const parsedEvent = await platformEvents.publishJdParsed({ jobId });
+    if (!parsedEvent) {
+      log.warn(
+        `[jd.uploaded] syntra.jd.parsed was not written to event_outbox — ` +
+          `check PLATFORM_EVENTS_ENABLED and node-api logs for [platformEvents] failed`,
+      );
+    }
 
-    // 4. Run matching funnel ONLY after both parsed fields and embedding are saved
+    // When orchestrator owns matching, jd.parsed → syntra.continuous.match runs funnel via HTTP.
+    // Skip local funnel here to avoid duplicate shortlists / match.requested rows.
+    if (env.ORCH_DELEGATE_MATCH && env.PLATFORM_EVENTS_ENABLED) {
+      log.info(
+        `[jd.uploaded] ORCH_DELEGATE_MATCH=1 — funnel deferred to orchestrator (syntra.jd.parsed → continuous-match)`,
+      );
+      return;
+    }
+
+    log.info(`[jd.uploaded] running local matching funnel for job ${jobId}`);
     await runForJob(jobId);
   } catch (err) {
     const errMsg = err.message || "AI analysis failed to process this Job Description.";

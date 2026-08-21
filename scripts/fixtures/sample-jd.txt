@@ -1,0 +1,17 @@
+Job Description — Software Engineer (Demo)
+
+About the role
+We are seeking a Software Engineer to build scalable backend services and APIs.
+
+Key responsibilities
+- Design and implement REST APIs in Node.js or Java
+- Work with PostgreSQL and cloud infrastructure
+- Collaborate with product and QA teams
+
+Required qualifications
+- 3+ years professional software development
+- Strong skills in Java, Go, or TypeScript
+- Experience with distributed systems and relational databases
+
+Location: Bengaluru, India (Remote-friendly)
+Employment type: Full-time

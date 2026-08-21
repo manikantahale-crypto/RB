@@ -170,7 +170,21 @@ export const AIWorkspace: React.FC<AIWorkspaceProps> = ({
       try {
         const res = await apiFetch(`/jobs/${selectedJob.id}/matches`);
         if (!res.ok) {
-          throw new Error("Failed to fetch matching candidates for this job description.");
+          let detail = `HTTP ${res.status}`;
+          try {
+            const body = await res.json();
+            detail = body?.error || body?.message || detail;
+          } catch {
+            /* ignore */
+          }
+          if (res.status === 404) {
+            throw new Error(
+              "This job is not in your library yet. Save it from Upload & Analyze, then open Match Hub again."
+            );
+          }
+          throw new Error(
+            detail || "Failed to fetch matching candidates for this job description."
+          );
         }
         const data = await res.json();
         if (isMounted) {

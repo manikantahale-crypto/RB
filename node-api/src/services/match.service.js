@@ -47,6 +47,7 @@ async function createDirectMatch({ jobId, resumeId, userId }) {
       candidateId: resume.candidate_id,
       resumeId,
       skillMatchScore: score,
+      matchId: created.id,
     });
     return { matchId: created.id, created: true };
   }

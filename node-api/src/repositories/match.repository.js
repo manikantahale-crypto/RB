@@ -541,3 +541,29 @@ async function findTopCandidatesByVector(jobId, limit = 50) {
 }
 
 module.exports.findTopCandidatesByVector = findTopCandidatesByVector;
+
+/** Why tier-1 vector pool may be empty for a job (diagnostics only). */
+async function countMatchPoolDiagnostics(jobId) {
+  const { rows } = await pool.query(
+    `SELECT j.created_by::text AS job_owner,
+            (SELECT COUNT(*)::int
+               FROM syntra.resumes r
+              WHERE r.is_current = true
+                AND r.processed_at IS NOT NULL
+                AND r.embedding IS NOT NULL) AS resumes_ready,
+            (SELECT COUNT(*)::int
+               FROM syntra.resumes r
+               JOIN syntra.candidates c ON r.candidate_id = c.id
+              WHERE c.created_by = j.created_by
+                AND c.created_by IS NOT NULL
+                AND r.is_current = true
+                AND r.processed_at IS NOT NULL
+                AND r.embedding IS NOT NULL) AS resumes_same_owner
+       FROM syntra.jobs j
+      WHERE j.id = $1`,
+    [jobId]
+  );
+  return rows[0] || null;
+}
+
+module.exports.countMatchPoolDiagnostics = countMatchPoolDiagnostics;

@@ -348,9 +348,30 @@ async function saveCandidatesBulk(candidateIds, userId) {
   return rowCount;
 }
 
+async function getCurrentResumeId(candidateId, userId = null) {
+  const params = [candidateId];
+  let extra = "";
+  if (userId) {
+    params.push(userId);
+    extra = " AND c.created_by = $2";
+  }
+  const { rows } = await pool.query(
+    `SELECT r.id
+       FROM syntra.resumes r
+       JOIN syntra.candidates c ON c.id = r.candidate_id
+      WHERE r.candidate_id = $1
+        AND r.is_current = true
+        AND r.processed_at IS NOT NULL${extra}
+      LIMIT 1`,
+    params
+  );
+  return rows[0]?.id || null;
+}
+
 module.exports = {
   insertCandidate,
   getCandidateWithCurrentResume,
+  getCurrentResumeId,
   listCandidates,
   deleteCandidate,
   deleteCandidates,

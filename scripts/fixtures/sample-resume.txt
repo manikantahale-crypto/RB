@@ -1,0 +1,20 @@
+Shreya Demo Candidate
+Email: shreya.demo@example.com
+Phone: (555) 123-4567
+Location: Bengaluru, India
+
+Professional Summary
+Software engineer with 4 years building backend APIs, microservices, and data pipelines using Java, Go, and PostgreSQL.
+
+Technical Skills
+Java, Go, TypeScript, Node.js, PostgreSQL, Redis, Kubernetes, distributed systems, REST APIs
+
+Professional Experience
+Software Engineer — TechCorp (2021–Present)
+- Built hiring platform APIs serving 50k daily requests
+- Optimized SQL queries and introduced caching layer
+
+Education
+B.Tech Computer Science
+
+Work authorization: Authorized to work in India

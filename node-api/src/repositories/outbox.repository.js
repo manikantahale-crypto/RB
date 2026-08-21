@@ -10,6 +10,8 @@ const PLATFORM_EVENT_TYPES = [
   PLATFORM.RESUME_RECEIVED,
   PLATFORM.PROFILE_PREPARED,
   PLATFORM.MATCH_REQUESTED,
+  "syntra.duplicate.review_required",
+  "syntra.approval.requested",
   "astra.requirement.received",
   "astra.requirement.normalized",
   "syntra.jd.normalized",
@@ -36,7 +38,7 @@ async function seedEventSchemas() {
  */
 async function insertEvent(client, {
   eventType,
-  organizationId = env.ORCH_ORGANIZATION_ID || "00000000-0000-0000-0000-000000000000",
+  organizationId = env.ORCH_ORGANIZATION_ID || "00000000-0000-0000-0000-000000000001",
   aggregateType = "requirement",
   aggregateId,
   correlationId,

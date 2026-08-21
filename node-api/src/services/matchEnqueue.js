@@ -6,6 +6,7 @@ async function enqueueMatchRequest({
   candidateId,
   resumeId,
   skillMatchScore,
+  matchId,
   correlationId,
   causationId,
 }) {
@@ -14,6 +15,7 @@ async function enqueueMatchRequest({
     candidateId,
     resumeId,
     skillMatchScore,
+    matchId,
     correlationId,
     causationId,
   });

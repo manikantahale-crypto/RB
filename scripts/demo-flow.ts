@@ -107,7 +107,27 @@ async function main() {
 
   const corr = randomUUID();
   console.log(`demo-flow API=${API} org=${ORG} corr=${corr}`);
-  console.log('Watch the WORKER terminal for [Ingress]/[Relay]/[Router]/[Module]');
+  console.log('Watch the WORKER terminal for [Relay]/[Router]/[Module]/[WorkflowRunner]');
+
+  {
+    const reqId = randomUUID();
+    const astra = envelope(
+      'astra.requirement.received',
+      'requirement',
+      reqId,
+      {
+        requirement_id: reqId,
+        title: 'Demo ASTRA — Java Developer',
+        channel_type: 'EMAIL',
+        raw_text: 'Senior Java developer, 5 years, Bengaluru, microservices.',
+      },
+      corr,
+    );
+    console.log(`\n>> POST astra.requirement.received reqId=${reqId}`);
+    console.log('   Watch worker: [Router] ROUTE → astra.requirement.workflow agent=504');
+    const ar = await post(astra);
+    print('ASTRA', ar.event_id, await waitTrace(ar.event_id));
+  }
 
   if (!resumeOnly) {
     const jobId = randomUUID();

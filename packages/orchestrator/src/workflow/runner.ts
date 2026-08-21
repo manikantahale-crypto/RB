@@ -263,8 +263,19 @@ export class WorkflowRunner {
       }
     });
     console.log(
-      `[WorkflowRunner] wrote ${events.length} follow-on event(s) to event_outbox` +
-        ` (types: ${events.map((e) => e.event_type).join(', ')})`,
+      `[WorkflowRunner] EMIT graph=${workflow_name} trigger=${event.event_type}` +
+        ` correlation=${event.correlation_id} causation_chain=${event.event_id}`,
+    );
+    for (const generatedEvent of events) {
+      console.log(
+        `[WorkflowRunner]   → outbox ${generatedEvent.event_type}` +
+          ` aggregate=${generatedEvent.aggregate_type}:${generatedEvent.aggregate_id}` +
+          ` event_id=${generatedEvent.event_id}` +
+          ` (relay will route via graph_event_bindings)`,
+      );
+    }
+    console.log(
+      `[WorkflowRunner] wrote ${events.length} follow-on event(s) to event_outbox`,
     );
   }
 

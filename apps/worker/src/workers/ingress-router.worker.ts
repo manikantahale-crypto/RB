@@ -31,7 +31,9 @@ export async function startIngressRouter(args: {
     for (const job of jobs) {
       const envelope = job.data as EventEnvelope;
       console.log(
-        `[Router] ingress ${envelope.event_type} (${envelope.event_id})`,
+        `[Router] INGRESS ${envelope.event_type} event=${envelope.event_id} ` +
+          `producer=${envelope.producer} aggregate=${envelope.aggregate.type}:${envelope.aggregate.id} ` +
+          `correlation=${envelope.correlation_id}`,
       );
 
       const plan = planForEvent(envelope.event_type);
@@ -77,10 +79,9 @@ export async function startIngressRouter(args: {
           singletonKey: envelope.event_id,
         });
         console.log(
-          `[Router] ${envelope.event_type} → ${moduleQueue} ${graphKey}@${graphVersion} ` +
-            `via binding source=${binding.source}` +
-            (binding.agent_id ? ` agent=${binding.agent_id}` : '') +
-            ` (${envelope.event_id})`,
+          `[Router] ROUTE ${envelope.event_type} → queue=${moduleQueue} ` +
+            `graph=${graphKey}@${graphVersion} agent=${binding.agent_id ?? "n/a"} ` +
+            `binding=${binding.source} event=${envelope.event_id}`,
         );
       } catch (err) {
         console.error(

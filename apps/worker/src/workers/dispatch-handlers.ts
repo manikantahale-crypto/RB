@@ -32,7 +32,9 @@ export async function handlePlatformDispatchEvent(args: {
       correlationId: envelope.correlation_id,
     });
     console.log(
-      `[Dispatcher] terminal ${envelope.event_type} — ${plan.note} (ack; already in event_outbox)`,
+      `[Dispatcher] ${plan.kind} ${envelope.event_type}` +
+        ` correlation=${envelope.correlation_id} event=${envelope.event_id}` +
+        ` — ${plan.note}`,
     );
     return 'acked';
   }

@@ -16,7 +16,12 @@
     "dev:syntra-ui": "npm run dev --prefix Front",
     "smoke:e2e": "tsx scripts/smoke-e2e.ts",
     "smoke:generate-threshold": "tsx scripts/smoke-generate-threshold.ts",
-    "demo:flow": "tsx scripts/demo-flow.ts"
+    "demo:flow": "tsx scripts/demo-flow.ts",
+    "demo:syntra-astra": "node scripts/demo-syntra-astra.mjs",
+    "demo:verify": "node scripts/verify-workflow.mjs",
+    "backfill:jd-parsed": "node scripts/backfill-jd-parsed.mjs",
+    "orch:proof": "node scripts/orch-proof.mjs",
+    "check:embeddings": "node scripts/check-embeddings.mjs"
   },
   "dependencies": {
     "@langchain/langgraph": "^1.4.9",

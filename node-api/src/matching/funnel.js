@@ -27,6 +27,7 @@ async function shortlistFinalists(finalists) {
       candidateId: f.candidateId,
       resumeId: f.resumeId,
       skillMatchScore: f.skillMatchScore,
+      matchId: row.id,
     });
 
     created.push({ ...f, matchId: row.id });
@@ -48,7 +49,10 @@ async function runForJob(jobId) {
 
   log.info(
     `[funnel] job ${jobId}: pool=${pool.length} tier1=${survivors.length} ` +
-      `tier2_finalists=${finalists.length} (gate cut ${gateCut})`
+      `tier2_finalists=${finalists.length} (gate cut ${gateCut})` +
+      (pool.length === 0
+        ? " — no embedded resumes for this recruiter yet; matching runs again after resume analyze or Save to Library"
+        : "")
   );
 
   const created = await shortlistFinalists(
@@ -59,6 +63,13 @@ async function runForJob(jobId) {
       skillMatchScore: f.skillMatchScore,
     }))
   );
+
+  if (created.length > 0) {
+    log.info(
+      `[funnel] job ${jobId}: enqueued ${created.length} match pair(s) ` +
+        `(orchDelegate=${env.ORCH_DELEGATE_MATCH ? "yes" : "internal worker"})`
+    );
+  }
 
   return {
     created,
@@ -93,6 +104,16 @@ async function runForResume(resumeId) {
       skillMatchScore: f.skillMatchScore,
     }))
   );
+
+  // Jobs that finished AI after this resume started may have missed pairing — re-run job funnel.
+  const jobIds = [...new Set(survivors.map((s) => s.job_id).filter(Boolean))];
+  for (const jid of jobIds) {
+    try {
+      await runForJob(jid);
+    } catch (err) {
+      log.warn(`[funnel] resume ${resumeId}: reconcile job ${jid} failed: ${err.message}`);
+    }
+  }
 
   return {
     created,

@@ -189,6 +189,13 @@ async function bulkSaveJobs(req, res, next) {
       return res.status(400).json({ message: "jobIds array is required" });
     }
     const count = await jobService.bulkSaveJobs(jobIds, req.userId);
+    if (count === 0) {
+      return res.status(409).json({
+        message:
+          "No jobs were saved. The job may still be processing, failed parsing, or belong to another user.",
+        count: 0,
+      });
+    }
     res.json({ message: "Jobs saved successfully", count });
   } catch (err) {
     next(err);

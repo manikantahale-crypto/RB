@@ -37,7 +37,7 @@ module.exports = {
   IMAP_POLL_INTERVAL_SECONDS: parseInt(process.env.IMAP_POLL_INTERVAL_SECONDS || "120", 10),
   IMAP_POLL_ENABLED: (process.env.IMAP_POLL_ENABLED || "false").toLowerCase() === "true",
   IMAP_TLS_REJECT_UNAUTHORIZED: process.env.IMAP_TLS_REJECT_UNAUTHORIZED !== "false",
-  ORCH_ORGANIZATION_ID: process.env.ORCH_ORGANIZATION_ID || "00000000-0000-0000-0000-000000000000",
+  ORCH_ORGANIZATION_ID: process.env.ORCH_ORGANIZATION_ID || "00000000-0000-0000-0000-000000000001",
   /** Write platform events to shared event_outbox (orch worker picks up via relay). */
   PLATFORM_EVENTS_ENABLED: flag("PLATFORM_EVENTS_ENABLED", true),
   /** Throw if event_outbox insert fails (default: log and continue). */

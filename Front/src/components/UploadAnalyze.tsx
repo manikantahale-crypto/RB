@@ -5,7 +5,7 @@ import { cleanJobTitle } from '../utils';
 import { apiFetch } from '../services/api';
 
 interface UploadAnalyzeProps {
-  onSaveToLibrary?: (tab: 'jobs' | 'resumes') => void;
+  onSaveToLibrary?: (tab: 'jobs' | 'resumes') => void | Promise<void>;
   onGoToMatch?: (mode: 'job' | 'resume', id: string) => void;
   initialInputType?: 'jd' | 'resume';
 }
@@ -866,16 +866,33 @@ function formatUserFriendlyError(rawError: string | null | undefined, fallback: 
   };
 
   const saveSingleFile = async () => {
-    if (!analyzedId) return;
+    if (!analyzedId) {
+      alert("Nothing to save yet — wait for analysis to finish.");
+      throw new Error("missing analyzedId");
+    }
     try {
       if (inputType === 'jd') {
-        await apiFetch('/jobs/bulk-save', { method: 'POST', body: JSON.stringify({ jobIds: [analyzedId] }) });
+        const res = await apiFetch('/jobs/bulk-save', { method: 'POST', body: JSON.stringify({ jobIds: [analyzedId] }) });
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok) {
+          throw new Error(data.message || `Save failed (${res.status})`);
+        }
+        if (data.count === 0) {
+          throw new Error("Job was not saved to the library. It may still be processing.");
+        }
       } else {
-        await apiFetch('/resumes/bulk-save', { method: 'POST', body: JSON.stringify({ candidateIds: [analyzedId] }) });
+        const res = await apiFetch('/resumes/bulk-save', { method: 'POST', body: JSON.stringify({ candidateIds: [analyzedId] }) });
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok) {
+          throw new Error(data.message || `Save failed (${res.status})`);
+        }
+        if (data.count === 0) {
+          throw new Error("Resume was not saved to the library.");
+        }
       }
-    } catch (err) {
+    } catch (err: any) {
       console.error("Save error", err);
-      alert("Failed to save.");
+      alert(err?.message || "Failed to save.");
       throw err;
     }
   };
@@ -884,7 +901,7 @@ function formatUserFriendlyError(rawError: string | null | undefined, fallback: 
     if (actionName === 'Save to Library') {
       try {
         await saveSingleFile();
-        if (onSaveToLibrary) onSaveToLibrary(inputType === 'jd' ? 'jobs' : 'resumes');
+        if (onSaveToLibrary) await onSaveToLibrary(inputType === 'jd' ? 'jobs' : 'resumes');
       } catch (e) {}
     } else if (actionName === 'Match + Save') {
       try {
@@ -1551,7 +1568,7 @@ function formatUserFriendlyError(rawError: string | null | undefined, fallback: 
 
               {/* Option 2: Save to Library */}
               <div
-                onClick={() => onSaveToLibrary ? onSaveToLibrary(inputType === 'jd' ? 'jobs' : 'resumes') : handleActionClick('Save to Library')}
+                onClick={() => handleActionClick('Save to Library')}
                 className="glass-card p-6 rounded-2xl flex flex-col justify-between border border-emerald-500/30 cursor-pointer hover:border-emerald-500 hover:bg-emerald-950/30 transition-all duration-300 group space-y-4"
               >
                 <div className="flex items-start gap-4">
