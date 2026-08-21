@@ -11,6 +11,11 @@ import { classifyError } from '@tekisho/orchestrator/src/workflow/errors.js';
 import { recordFailedWorkflow } from '@tekisho/orchestrator/src/workflow/failed-workflows.js';
 import { runWorkflowWithOrgContext } from '../run-with-org.js';
 import type { RoutedEnvelope } from './ingress-router.worker.js';
+import {
+  formatEventLine,
+  orchStory,
+  orchStoryDetail,
+} from '@tekisho/orchestrator/src/observability/story-log.js';
 
 /**
  * Module workers — consume module.* queues stamped by the ingress router.
@@ -30,8 +35,15 @@ export async function startModuleWorkers(args: {
     await boss.work(queue, async (jobs: any[]) => {
       for (const job of jobs) {
         const envelope = job.data as RoutedEnvelope;
-        console.log(
-          `[Module] ${queue} ${envelope.event_type} (${envelope.event_id})`,
+        orchStory(
+          'RUN',
+          `queue=${queue}  graph=${envelope.__graphKey}@${envelope.__graphVersion ?? '?'}` +
+            `  ${formatEventLine({
+              eventType: envelope.event_type,
+              eventId: envelope.event_id,
+              orgId: envelope.organization_id,
+              correlationId: envelope.correlation_id,
+            })}`,
         );
 
         const workflowName = envelope.__graphKey;
@@ -67,13 +79,16 @@ export async function startModuleWorkers(args: {
 
           if (result.status === 'COMPLETED' || result.status === 'PARKED') {
             const emitted = Array.isArray(result.events)
-              ? result.events.map((e) => e.event_type).join(', ')
-              : '';
-            console.log(
-              `[Module] ${queue} → ${result.graphKey}@${result.graphVersion} ${result.status}` +
-                (result.threadId ? ` thread=${result.threadId}` : '') +
-                (emitted ? ` emitted=[${emitted}]` : ''),
+              ? result.events.map((e) => e.event_type)
+              : [];
+            orchStory(
+              'DONE',
+              `${result.status}  graph=${result.graphKey}@${result.graphVersion}` +
+                (result.threadId ? `  thread=${result.threadId}` : ''),
             );
+            if (emitted.length) {
+              orchStoryDetail(`next events: [${emitted.join(', ')}]`);
+            }
             continue;
           }
 

@@ -44,6 +44,11 @@ export const DEFAULT_IMPL_ACTION_CLASS: Record<string, ActionClass> = {
   'astra.requirement.quality': 'DATA_SHAPING',
   'astra.requirement.normalize': 'INTERNAL_WRITE',
   'astra.route.decision': 'CONTROL',
+  'orbit.lifecycle.transition': 'INTERNAL_WRITE',
+  'orbit.placement.confirm': 'INTERNAL_WRITE',
+  'orbit.revenue.arrange': 'INTERNAL_WRITE',
+  'orbit.activity.note': 'INTERNAL_WRITE',
+  'orbit.route.decision': 'CONTROL',
   'orch.branch.decision': 'CONTROL',
   'human.gate': 'CONTROL',
 };

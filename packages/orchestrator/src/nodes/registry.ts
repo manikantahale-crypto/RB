@@ -17,11 +17,18 @@ import {
   astraJobboardFetch,
   astraRequirementQuality,
 } from './astra.js';
+import {
+  orbitLifecycleTransition,
+  orbitPlacementConfirm,
+  orbitRevenueArrange,
+  orbitActivityNote,
+  orbitRouteDecision,
+} from './orbit.js';
 import { orchBranchDecision } from './branch.js';
 
 /**
  * Production graph node registry — keys must match authoring TOOL_CATALOG.
- * Includes ASTRA Option-B tools + Syntra follow-ups from syntra_orch_tools.
+ * ASTRA (JD intake), ORBIT (bench/workforce), and Syntra tools are independent.
  */
 export const nodeRegistry = {
   'syntra.jd.process': (() => syntraJdProcess) as NodeFactory,
@@ -39,6 +46,11 @@ export const nodeRegistry = {
   'astra.requirement.quality': (() => astraRequirementQuality) as NodeFactory,
   'astra.requirement.normalize': (() => astraRequirementNormalize) as NodeFactory,
   'astra.route.decision': (() => astraRouteDecision) as NodeFactory,
+  'orbit.lifecycle.transition': (() => orbitLifecycleTransition) as NodeFactory,
+  'orbit.placement.confirm': (() => orbitPlacementConfirm) as NodeFactory,
+  'orbit.revenue.arrange': (() => orbitRevenueArrange) as NodeFactory,
+  'orbit.activity.note': (() => orbitActivityNote) as NodeFactory,
+  'orbit.route.decision': (() => orbitRouteDecision) as NodeFactory,
   'orch.branch.decision': (() => orchBranchDecision) as NodeFactory,
   'human.gate': (() => humanGate) as NodeFactory,
 } as const satisfies Record<string, NodeFactory>;

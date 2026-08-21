@@ -370,11 +370,23 @@ const ASTRA_RUNTIME_TOOLS = JSON.stringify([
   { name: "orch.branch.decision", min_version: "1.0.0" },
   { name: "human.gate", min_version: "1.0.0" },
   { name: "astra.route.decision", min_version: "1.0.0" },
+  { name: "orbit.lifecycle.transition", min_version: "1.0.0" },
+  { name: "orbit.activity.note", min_version: "1.0.0" },
+]);
+
+const ORBIT_RUNTIME_TOOLS = JSON.stringify([
+  { name: "orbit.lifecycle.transition", min_version: "1.0.0" },
+  { name: "orbit.placement.confirm", min_version: "1.0.0" },
+  { name: "orbit.revenue.arrange", min_version: "1.0.0" },
+  { name: "orbit.activity.note", min_version: "1.0.0" },
+  { name: "orbit.route.decision", min_version: "1.0.0" },
+  { name: "orch.branch.decision", min_version: "1.0.0" },
+  { name: "human.gate", min_version: "1.0.0" },
 ]);
 
 /**
  * Ensure agent_definitions + draft policies exist for catalog product agents
- * (mock agents ASTRA, ORBIT, etc. are not in runtime R__seed_agent_definitions).
+ * (mock agents HELIX/TEMPO/… are not in runtime R__seed_agent_definitions).
  */
 export async function seedProductAgentDefinitions(pool: Pool): Promise<void> {
   let defs = 0;
@@ -383,13 +395,18 @@ export async function seedProductAgentDefinitions(pool: Pool): Promise<void> {
   for (const s of TEMPLATE_SEED_CATALOG) {
     if (!s.purpose) continue;
 
+    const toolsJson =
+      s.agentKey === "astra"
+        ? ASTRA_RUNTIME_TOOLS
+        : s.agentKey === "orbit"
+          ? ORBIT_RUNTIME_TOOLS
+          : PRODUCT_AGENT_RUNTIME_TOOLS;
+
     const defRow = await pool.query(
       `SELECT 1 FROM agent_definitions WHERE id = $1`,
       [s.agentId],
     );
     if ((defRow.rowCount ?? 0) === 0) {
-      const toolsJson =
-        s.agentKey === "astra" ? ASTRA_RUNTIME_TOOLS : PRODUCT_AGENT_RUNTIME_TOOLS;
       await pool.query(
         `INSERT INTO agent_definitions (
            id, name, version, purpose, system_prompt_ref,
@@ -406,15 +423,15 @@ export async function seedProductAgentDefinitions(pool: Pool): Promise<void> {
         ],
       );
       defs++;
-    } else if (s.agentKey === "astra") {
-      // Align existing ASTRA definition with real runtime tools (was Syntra placeholder).
+    } else if (s.agentKey === "astra" || s.agentKey === "orbit") {
+      // Align existing definition with real runtime tools (was Syntra placeholder).
       await pool.query(
         `UPDATE agent_definitions
             SET allowed_tools = $2::jsonb,
                 purpose = $3,
                 updated_at = now()
           WHERE id = $1`,
-        [s.agentId, ASTRA_RUNTIME_TOOLS, s.purpose],
+        [s.agentId, toolsJson, s.purpose],
       );
     }
 
@@ -438,8 +455,8 @@ export async function seedProductAgentDefinitions(pool: Pool): Promise<void> {
         [s.agentId, JSON.stringify(policy)],
       );
       policies++;
-    } else if (s.agentKey === "astra") {
-      // Align draft/generated ASTRA policy tools with runtime (was Syntra placeholder).
+    } else if (s.agentKey === "astra" || s.agentKey === "orbit") {
+      // Align draft/generated policy tools with runtime (was Syntra placeholder).
       await pool.query(
         `UPDATE agent_policies
             SET policy = $2::jsonb,

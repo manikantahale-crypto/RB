@@ -98,8 +98,8 @@ export const POLICY_EXT_UI: Record<string, PolicyFieldDesc[]> = {
       label: "Steps this agent may use",
       kind: "tools",
       hint:
-        "Shared catalog for every agent — Syntra + ASTRA + branch + human.gate. " +
-        "Select any ASTRA tools to put intake gating in this agent's workflow.",
+        "Shared catalog for every agent — Syntra + ASTRA + ORBIT + branch + human.gate. " +
+        "Select any orbit.* tools to put bench actions in this agent's workflow.",
       defaultValue: ["syntra.jd.process"],
     },
     {
@@ -115,6 +115,9 @@ export const POLICY_EXT_UI: Record<string, PolicyFieldDesc[]> = {
         "astra.requirement.received",
         "astra.email.received",
         "astra.jobboard.fetch_requested",
+        "orbit.lifecycle.transition_requested",
+        "orbit.placement.confirm_requested",
+        "orbit.revenue.arrange_requested",
       ],
       optionLabels: {
         "syntra.jd.received": "Job description received",
@@ -125,6 +128,9 @@ export const POLICY_EXT_UI: Record<string, PolicyFieldDesc[]> = {
         "astra.requirement.received": "ASTRA requirement received",
         "astra.email.received": "Email JD received",
         "astra.jobboard.fetch_requested": "Job-board fetch requested",
+        "orbit.lifecycle.transition_requested": "ORBIT lifecycle transition requested",
+        "orbit.placement.confirm_requested": "ORBIT placement confirm requested",
+        "orbit.revenue.arrange_requested": "ORBIT revenue arrange requested",
       },
       hint: "Which real event starts this graph (one per agent in v1).",
       defaultValue: "syntra.jd.received",
@@ -222,7 +228,7 @@ export const POLICY_EXT_UI: Record<string, PolicyFieldDesc[]> = {
       key: "allowedTools",
       label: "Steps this agent may use",
       kind: "tools",
-      hint: "Shared catalog — ASTRA + branch + human.gate (also selectable by other agents).",
+      hint: "Shared catalog — ASTRA + branch + human.gate + optional ORBIT bench tools.",
       defaultValue: [
         "astra.requirement.intake",
         "astra.requirement.ingest",
@@ -232,6 +238,8 @@ export const POLICY_EXT_UI: Record<string, PolicyFieldDesc[]> = {
         "orch.branch.decision",
         "human.gate",
         "astra.route.decision",
+        "orbit.lifecycle.transition",
+        "orbit.activity.note",
       ],
     },
     {
@@ -280,6 +288,49 @@ export const POLICY_EXT_UI: Record<string, PolicyFieldDesc[]> = {
       max: 1,
       hint: "passMin > score >= humanMin → human.gate; below → reject.",
       defaultValue: 0.35,
+    },
+  ],
+  OrbitPolicyExt: [
+    {
+      key: "prompt",
+      label: "Policy statement (natural language)",
+      kind: "textarea",
+      hint: "ORBIT: lifecycle → route; placement → note; revenue. Independent of ASTRA/Syntra.",
+      defaultValue:
+        "ORBIT owns bench/workforce: transition candidate lifecycle, confirm placements, " +
+        "arrange revenue, and write timeline notes. Independent of ASTRA JD intake and Syntra matching.",
+    },
+    {
+      key: "allowedTools",
+      label: "Steps this agent may use",
+      kind: "tools",
+      hint:
+        "Orbit-owned tools (orbit.*). Other agents may also select these from the shared catalog.",
+      defaultValue: [
+        "orbit.lifecycle.transition",
+        "orbit.placement.confirm",
+        "orbit.revenue.arrange",
+        "orbit.activity.note",
+        "orbit.route.decision",
+        "orch.branch.decision",
+        "human.gate",
+      ],
+    },
+    {
+      key: "triggerEventType",
+      label: "When this runs (trigger)",
+      kind: "enum",
+      options: [
+        "orbit.lifecycle.transition_requested",
+        "orbit.placement.confirm_requested",
+        "orbit.revenue.arrange_requested",
+      ],
+      optionLabels: {
+        "orbit.lifecycle.transition_requested": "Lifecycle transition requested",
+        "orbit.placement.confirm_requested": "Placement confirm requested",
+        "orbit.revenue.arrange_requested": "Revenue arrange requested",
+      },
+      defaultValue: "orbit.lifecycle.transition_requested",
     },
   ],
 };

@@ -6,6 +6,7 @@ import { withOrgConnection } from '../db/with-org-connection.js';
 import { validateEntryInput } from '../contracts/payloads.js';
 import { classifyError, ClassifiedError } from './errors.js';
 import { recordWorkflowMetric } from '../observability/metrics.js';
+import { orchStory, orchStoryDetail } from '../observability/story-log.js';
 import { finishAgentRun, startAgentRun } from './agent-runs.js';
 
 /**
@@ -63,10 +64,11 @@ export class WorkflowRunner {
         durability: 'sync' as const,
       };
       const snapshot = await graph.getState(config);
-      console.log(
-        `[WorkflowRunner] invoke ${workflow_name} event=${event.event_id}` +
-          ` corr=${event.correlation_id} thread=${threadId}` +
-          (agentRunId ? ` agent_run=${agentRunId}` : ''),
+      orchStory(
+        'GRAPH',
+        `invoke ${workflow_name}  event=${event.event_id}  type=${event.event_type}` +
+          `  corr=${event.correlation_id}  thread=${threadId}` +
+          (agentRunId ? `  agent_run=${agentRunId}` : ''),
       );
       const finalState =
         snapshot.next && snapshot.next.length > 0
@@ -105,8 +107,9 @@ export class WorkflowRunner {
           durationMs: Date.now() - started,
           threadId,
         });
-        console.log(
-          `[WorkflowRunner] PARKED ${workflow_name} thread=${threadId} (human.gate)`,
+        orchStory(
+          'DONE',
+          `PARKED  graph=${workflow_name}  thread=${threadId}  next=human.gate resume`,
         );
         return {
           status: 'PARKED',
@@ -143,7 +146,7 @@ export class WorkflowRunner {
         errorClass: classified.errorClass,
       });
       console.error(
-        `[WorkflowRunner] FAILED ${workflow_name} event=${event.event_id}: ${classified.message}`,
+        `[Orch] ── DONE   FAILED  graph=${workflow_name}  event=${event.event_id}: ${classified.message}`,
       );
       return {
         status: 'FAILED',
@@ -262,9 +265,8 @@ export class WorkflowRunner {
         );
       }
     });
-    console.log(
-      `[WorkflowRunner] wrote ${events.length} follow-on event(s) to event_outbox` +
-        ` (types: ${events.map((e) => e.event_type).join(', ')})`,
+    orchStoryDetail(
+      `wrote ${events.length} follow-on event(s) → event_outbox: [${events.map((e) => e.event_type).join(', ')}]`,
     );
   }
 
@@ -328,11 +330,17 @@ export class WorkflowRunner {
       threadId,
     });
 
-    console.log(
-      `[WorkflowRunner] COMPLETED ${workflow_name} event=${event.event_id}` +
-        ` emitted=${events.length}` +
-        (runId ? ` agent_run=${runId}` : ''),
+    orchStory(
+      'DONE',
+      `COMPLETED  graph=${workflow_name}  event=${event.event_id}` +
+        `  emitted=${events.length}` +
+        (runId ? `  agent_run=${runId}` : ''),
     );
+    if (events.length) {
+      orchStoryDetail(
+        `next events: [${events.map((e) => e.event_type).join(', ')}]`,
+      );
+    }
 
     return {
       status: 'COMPLETED',

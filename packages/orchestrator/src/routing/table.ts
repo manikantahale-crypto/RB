@@ -91,6 +91,72 @@ export const PLATFORM_EVENT_PLAN: Record<string, PlatformEventPlan> = {
     kind: 'terminal',
     note: 'ASTRA gate rejected — UI / audit only',
   },
+  [EVENT_TYPES.ORBIT_LIFECYCLE_TRANSITION_REQUESTED]: {
+    kind: 'graph',
+    note: 'ORBIT lifecycle — routed via graph_event_bindings (DB)',
+  },
+  [EVENT_TYPES.ORBIT_PLACEMENT_CONFIRM_REQUESTED]: {
+    kind: 'graph',
+    note: 'ORBIT placement — routed via graph_event_bindings (DB)',
+  },
+  [EVENT_TYPES.ORBIT_REVENUE_ARRANGE_REQUESTED]: {
+    kind: 'graph',
+    note: 'ORBIT revenue — routed via graph_event_bindings (DB)',
+  },
+  [EVENT_TYPES.ORBIT_LIFECYCLE_TRANSITIONED]: {
+    kind: 'terminal',
+    note: 'ORBIT lifecycle outcome — audit / same-graph handoff',
+  },
+  [EVENT_TYPES.ORBIT_PLACEMENT_CONFIRMED]: {
+    kind: 'terminal',
+    note: 'ORBIT placement outcome — audit only',
+  },
+  [EVENT_TYPES.ORBIT_REVENUE_ARRANGED]: {
+    kind: 'terminal',
+    note: 'ORBIT revenue outcome — audit only',
+  },
+  [EVENT_TYPES.ORBIT_ACTIVITY_NOTED]: {
+    kind: 'terminal',
+    note: 'ORBIT activity outcome — audit only',
+  },
+  [EVENT_TYPES.ORBIT_BENCH_HOLD]: {
+    kind: 'terminal',
+    note: 'ORBIT hold/ignore — UI / audit only',
+  },
+  // Literals so a stale @tekisho/domain without ORBIT_* cannot collapse
+  // computed keys to "undefined" and fall through to Unknown event.
+  'orbit.lifecycle.transition_requested': {
+    kind: 'graph',
+    note: 'ORBIT lifecycle — routed via graph_event_bindings (DB)',
+  },
+  'orbit.placement.confirm_requested': {
+    kind: 'graph',
+    note: 'ORBIT placement — routed via graph_event_bindings (DB)',
+  },
+  'orbit.revenue.arrange_requested': {
+    kind: 'graph',
+    note: 'ORBIT revenue — routed via graph_event_bindings (DB)',
+  },
+  'orbit.lifecycle.transitioned': {
+    kind: 'terminal',
+    note: 'ORBIT lifecycle outcome — audit / same-graph handoff',
+  },
+  'orbit.placement.confirmed': {
+    kind: 'terminal',
+    note: 'ORBIT placement outcome — audit only',
+  },
+  'orbit.revenue.arranged': {
+    kind: 'terminal',
+    note: 'ORBIT revenue outcome — audit only',
+  },
+  'orbit.activity.noted': {
+    kind: 'terminal',
+    note: 'ORBIT activity outcome — audit only',
+  },
+  'orbit.bench.hold': {
+    kind: 'terminal',
+    note: 'ORBIT hold/ignore — UI / audit only',
+  },
 };
 
 export function planForEvent(eventType: string): PlatformEventPlan {
@@ -122,6 +188,7 @@ export const MODULE_QUEUES = [
   'module.design.resume',
   'module.design.duplicate',
   'module.syntra.match',
+  'module.orbit.bench',
 ] as const;
 
 /** @deprecated Prefer module_queue on graph_event_bindings */
@@ -135,6 +202,9 @@ export const GRAPH_TO_MODULE_QUEUE: Record<string, string> = {
   'astra.requirement.normalized.workflow': 'module.syntra.jd',
   'astra.email.intake.workflow': 'module.syntra.jd',
   'astra.jobboard.fetch.workflow': 'module.syntra.jd',
+  'orbit.lifecycle.workflow': 'module.orbit.bench',
+  'orbit.placement.workflow': 'module.orbit.bench',
+  'orbit.revenue.workflow': 'module.orbit.bench',
   'resume.intake': 'module.design.resume',
   'duplicate.review': 'module.design.duplicate',
   'syntra.match.workflow': 'module.syntra.match',

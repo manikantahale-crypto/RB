@@ -27,6 +27,15 @@ export const EVENT_TYPES = {
     ASTRA_REQUIREMENT_REJECTED: "astra.requirement.rejected",
     ASTRA_EMAIL_RECEIVED: "astra.email.received",
     ASTRA_JOBBOARD_FETCH_REQUESTED: "astra.jobboard.fetch_requested",
+    /** ORBIT — workforce / bench (independent of ASTRA). */
+    ORBIT_LIFECYCLE_TRANSITION_REQUESTED: "orbit.lifecycle.transition_requested",
+    ORBIT_LIFECYCLE_TRANSITIONED: "orbit.lifecycle.transitioned",
+    ORBIT_PLACEMENT_CONFIRM_REQUESTED: "orbit.placement.confirm_requested",
+    ORBIT_PLACEMENT_CONFIRMED: "orbit.placement.confirmed",
+    ORBIT_REVENUE_ARRANGE_REQUESTED: "orbit.revenue.arrange_requested",
+    ORBIT_REVENUE_ARRANGED: "orbit.revenue.arranged",
+    ORBIT_ACTIVITY_NOTED: "orbit.activity.noted",
+    ORBIT_BENCH_HOLD: "orbit.bench.hold",
   } as const;
   
   export type EventType = (typeof EVENT_TYPES)[keyof typeof EVENT_TYPES];

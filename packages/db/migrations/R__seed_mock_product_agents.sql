@@ -1,8 +1,8 @@
 -- R__seed_mock_product_agents — authoring placeholders (ASTRA, ORBIT, HELIX, TEMPO, PRISM, TAYLN)
 -- =============================================================================
--- Runtime spine rows for upcoming product agents. Same Syntra tool contract as
--- matching-agent until dedicated nodes ship. Authoring templates live in
--- R__seed_agent_templates.sql (agent_templates ids 604–609).
+-- Runtime spine rows for product agents. ASTRA/ORBIT use dedicated tools;
+-- HELIX/TEMPO/PRISM/TAYLN keep Syntra placeholders until dedicated nodes ship.
+-- Authoring templates live in R__seed_agent_templates.sql (agent_templates ids 604–609).
 -- =============================================================================
 
 INSERT INTO agent_definitions (
@@ -41,12 +41,16 @@ INSERT INTO agent_definitions (
 ('01900000-0000-7000-8000-000000000505',
  'orbit',
  '1.0.0',
- 'Coordinate handoffs across intake, matching, and recruiter workflows.',
+ 'Candidate lifecycle, placements, revenue arrangements, and timeline notes on the bench.',
  'prompts/orbit@1.0.0',
  '[
-    { "name": "syntra.jd.process",     "min_version": "1.0.0" },
-    { "name": "syntra.resume.process", "min_version": "1.0.0" },
-    { "name": "syntra.match.process",  "min_version": "1.0.0" }
+    { "name": "orbit.lifecycle.transition", "min_version": "1.0.0" },
+    { "name": "orbit.placement.confirm",    "min_version": "1.0.0" },
+    { "name": "orbit.revenue.arrange",      "min_version": "1.0.0" },
+    { "name": "orbit.activity.note",        "min_version": "1.0.0" },
+    { "name": "orbit.route.decision",       "min_version": "1.0.0" },
+    { "name": "orch.branch.decision",       "min_version": "1.0.0" },
+    { "name": "human.gate",                 "min_version": "1.0.0" }
   ]'::jsonb,
  '{
     "READ":           "AUTO",
@@ -180,6 +184,8 @@ INSERT INTO agent_definitions (
 
 ON CONFLICT (name, version) DO UPDATE
   SET purpose           = EXCLUDED.purpose,
-      system_prompt_ref = EXCLUDED.system_prompt_ref
+      system_prompt_ref = EXCLUDED.system_prompt_ref,
+      allowed_tools     = EXCLUDED.allowed_tools
   WHERE agent_definitions.purpose           IS DISTINCT FROM EXCLUDED.purpose
-     OR agent_definitions.system_prompt_ref IS DISTINCT FROM EXCLUDED.system_prompt_ref;
+     OR agent_definitions.system_prompt_ref IS DISTINCT FROM EXCLUDED.system_prompt_ref
+     OR agent_definitions.allowed_tools     IS DISTINCT FROM EXCLUDED.allowed_tools;

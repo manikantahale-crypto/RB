@@ -85,6 +85,27 @@ export const TRIGGER_EVENT_CATALOG: readonly TriggerEventCatalogEntry[] = [
     moduleQueue: "module.design.duplicate",
     defaultGraphKey: "syntra.duplicate.detect",
   },
+  {
+    eventType: "orbit.lifecycle.transition_requested",
+    label: "ORBIT lifecycle transition requested",
+    description: "Request a bench lifecycle state change for a candidate.",
+    moduleQueue: "module.orbit.bench",
+    defaultGraphKey: "orbit.lifecycle.workflow",
+  },
+  {
+    eventType: "orbit.placement.confirm_requested",
+    label: "ORBIT placement confirm requested",
+    description: "Request confirmation of a client placement.",
+    moduleQueue: "module.orbit.bench",
+    defaultGraphKey: "orbit.placement.workflow",
+  },
+  {
+    eventType: "orbit.revenue.arrange_requested",
+    label: "ORBIT revenue arrange requested",
+    description: "Request a revenue arrangement on a placement.",
+    moduleQueue: "module.orbit.bench",
+    defaultGraphKey: "orbit.revenue.workflow",
+  },
 ] as const;
 
 export function isTriggerEventType(eventType: string): boolean {

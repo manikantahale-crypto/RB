@@ -8,6 +8,10 @@ import {
   planForEvent,
 } from '@tekisho/orchestrator/src/routing/table.js';
 import { resolveActiveEventBinding } from '@tekisho/authoring/src/event-bindings.js';
+import {
+  formatEventLine,
+  orchStory,
+} from '@tekisho/orchestrator/src/observability/story-log.js';
 
 export type RoutedEnvelope = EventEnvelope & {
   __graphKey: string;
@@ -30,14 +34,22 @@ export async function startIngressRouter(args: {
   await boss.work(INGRESS_QUEUE, async (jobs: any[]) => {
     for (const job of jobs) {
       const envelope = job.data as EventEnvelope;
-      console.log(
-        `[Router] ingress ${envelope.event_type} (${envelope.event_id})`,
+      orchStory(
+        'EVENT',
+        formatEventLine({
+          eventType: envelope.event_type,
+          eventId: envelope.event_id,
+          orgId: envelope.organization_id,
+          correlationId: envelope.correlation_id,
+          aggregateId: envelope.aggregate?.id,
+        }),
       );
 
       const plan = planForEvent(envelope.event_type);
       if (plan.kind !== 'graph') {
-        console.log(
-          `[Router] ${plan.kind} ${envelope.event_type} — ${plan.note} (ack)`,
+        orchStory(
+          'ROUTE',
+          `${plan.kind.toUpperCase()}  ${envelope.event_type} — ${plan.note} (ack, no graph)`,
         );
         continue;
       }
@@ -50,10 +62,9 @@ export async function startIngressRouter(args: {
         );
 
         if (!binding) {
-          console.warn(
-            `[Router] no active DB binding for ${envelope.event_type} ` +
-              `(org=${envelope.organization_id ?? '~global~'}) — unroutable; ack. ` +
-              `Activate an agent for this event in Admin, or re-seed graph_event_bindings.`,
+          orchStory(
+            'ROUTE',
+            `UNROUTABLE  ${envelope.event_type}  org=${envelope.organization_id ?? '~global~'} — no active binding (ack)`,
           );
           continue;
         }
@@ -76,15 +87,16 @@ export async function startIngressRouter(args: {
           ...MODULE_SEND_OPTIONS,
           singletonKey: envelope.event_id,
         });
-        console.log(
-          `[Router] ${envelope.event_type} → ${moduleQueue} ${graphKey}@${graphVersion} ` +
-            `via binding source=${binding.source}` +
-            (binding.agent_id ? ` agent=${binding.agent_id}` : '') +
-            ` (${envelope.event_id})`,
+        orchStory(
+          'ROUTE',
+          `→ ${moduleQueue}  graph=${graphKey}@${graphVersion}` +
+            `  via=${binding.source}` +
+            (binding.agent_id ? `  agent=${binding.agent_id}` : '') +
+            `  next=run graph`,
         );
       } catch (err) {
         console.error(
-          `[Router] FAILED ${envelope.event_type} (${envelope.event_id}):`,
+          `[Orch] ── ROUTE  FAILED ${envelope.event_type} (${envelope.event_id}):`,
           err,
         );
         throw err;

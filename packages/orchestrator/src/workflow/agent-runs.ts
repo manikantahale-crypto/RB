@@ -318,10 +318,6 @@ export async function recordAgentStep(args: {
         args.status,
       ],
     );
-    console.log(
-      `[orch_steps] run=${args.runId} node=${args.node} status=${args.status}` +
-        (args.latencyMs != null ? ` ${args.latencyMs}ms` : ''),
-    );
   } catch (err) {
     console.warn(
       `[orch_steps] record failed (fail-open):`,
