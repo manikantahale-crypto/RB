@@ -1,6 +1,7 @@
 import { useMemo } from "react";
 import type { GraphDefinition } from "@tekisho/authoring/src/graph-definition.js";
 import { getToolCatalog } from "@tekisho/authoring/src/tool-registry.js";
+import { resolveNodeCopy } from "@tekisho/authoring/src/graph-visual-registry.js";
 import { WorkflowMermaidView } from "./WorkflowMermaidView.js";
 import {
   nextStepId,
@@ -12,6 +13,7 @@ import {
   friendlyEventLabel,
   friendlyToolBlurb,
   friendlyToolTitle,
+  friendlyTriggerBlurb,
 } from "../lib/friendly-labels";
 
 export type { WorkflowStep };
@@ -37,7 +39,13 @@ type WorkflowCanvasProps = {
 };
 
 function toolLabel(impl: string): string {
-  return friendlyToolTitle(impl);
+  const copy = resolveNodeCopy(impl);
+  return copy.title !== "Workflow step" ? copy.title : friendlyToolTitle(impl);
+}
+
+function stepDescription(impl: string): string {
+  const copy = resolveNodeCopy(impl);
+  return copy.why || friendlyToolBlurb(impl);
 }
 
 function isHumanStep(impl: string): boolean {
@@ -233,6 +241,9 @@ function LinearStepEditor({
             ? friendlyEventLabel(triggerEventType)
             : "Choose a trigger in Policy"}
         </span>
+        <p className="workflow-start-blurb muted">
+          {friendlyTriggerBlurb(triggerEventType)}
+        </p>
       </div>
       <div className="workflow-connector" aria-hidden="true" />
 
@@ -295,9 +306,9 @@ function LinearStepEditor({
                   ))}
                 </select>
               </label>
-              {friendlyToolBlurb(step.impl) ? (
+              {stepDescription(step.impl) ? (
                 <p className="workflow-node-blurb muted">
-                  {friendlyToolBlurb(step.impl)}
+                  {stepDescription(step.impl)}
                 </p>
               ) : null}
               {human ? (
@@ -307,7 +318,7 @@ function LinearStepEditor({
               ) : null}
               {branch ? (
                 <span className="workflow-tag workflow-tag--branch">
-                  Chooses path
+                  Picks the next path
                 </span>
               ) : null}
               {step.impl === "syntra.match.process" ||
@@ -359,6 +370,10 @@ function LinearStepEditor({
       ) : null}
 
       <div className="workflow-node workflow-node--pill">End</div>
+      <p className="muted workflow-end-blurb">
+        The run finishes here — either everything completed, or a decision stopped
+        the workflow.
+      </p>
       <p className="muted workflow-edit-hint">
         Save steps, then <strong>Make it live</strong> so this version runs when
         the start action happens.

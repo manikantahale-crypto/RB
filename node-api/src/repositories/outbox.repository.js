@@ -1,0 +1,85 @@
+const { pool } = require("../config/db");
+const crypto = require("crypto");
+const env = require("../config/env");
+const PLATFORM = require("../constants/platformEvents");
+
+/** Syntra + ASTRA platform events — FK-safe seed for event_outbox. */
+const PLATFORM_EVENT_TYPES = [
+  PLATFORM.JD_RECEIVED,
+  PLATFORM.JD_PARSED,
+  PLATFORM.RESUME_RECEIVED,
+  PLATFORM.PROFILE_PREPARED,
+  PLATFORM.MATCH_REQUESTED,
+  "astra.requirement.received",
+  "astra.requirement.normalized",
+  "syntra.jd.normalized",
+];
+
+/**
+ * Seed event_schemas so event_outbox FK inserts succeed (orch Flyway may already have these).
+ */
+async function seedEventSchemas() {
+  for (const eventType of PLATFORM_EVENT_TYPES) {
+    await pool.query(
+      `INSERT INTO public.event_schemas (
+         event_type, schema_version, description, payload_schema, envelope_fields, status
+       ) VALUES ($1, '1.0', $2, '{}'::jsonb, '{}'::jsonb, 'ACTIVE')
+       ON CONFLICT (event_type, schema_version) DO NOTHING`,
+      [eventType, `Syntra platform event: ${eventType}`],
+    );
+  }
+}
+
+/**
+ * Inserts a platform event into the public.event_outbox table.
+ * Uses the supplied transaction client if available to ensure atomic outbox writes.
+ */
+async function insertEvent(client, {
+  eventType,
+  organizationId = env.ORCH_ORGANIZATION_ID || "00000000-0000-0000-0000-000000000000",
+  aggregateType = "requirement",
+  aggregateId,
+  correlationId,
+  causationId = null,
+  producer,
+  payload
+}) {
+  const dbClient = client || pool;
+  const eventId = crypto.randomUUID();
+  const corrId = correlationId || crypto.randomUUID();
+
+  const sql = `
+    INSERT INTO public.event_outbox (
+      event_id,
+      event_type,
+      schema_version,
+      organization_id,
+      aggregate_type,
+      aggregate_id,
+      correlation_id,
+      causation_id,
+      producer,
+      payload_ref,
+      occurred_at
+    ) VALUES ($1, $2, '1.0', $3, $4, $5, $6, $7, $8, $9, now())
+    RETURNING event_id, correlation_id
+  `;
+
+  const { rows } = await dbClient.query(sql, [
+    eventId,
+    eventType,
+    organizationId,
+    aggregateType,
+    aggregateId,
+    corrId,
+    causationId,
+    producer,
+    JSON.stringify(payload)
+  ]);
+  return rows[0];
+}
+
+module.exports = {
+  seedEventSchemas,
+  insertEvent
+};

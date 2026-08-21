@@ -54,8 +54,8 @@ const TOOL_PLAIN: Record<string, { title: string; blurb: string }> = {
     blurb: "If good enough → SYNTRA matching; otherwise reject",
   },
   "orch.branch.decision": {
-    title: "Decide next path",
-    blurb: "Auto-process, ask a person, or reject based on score",
+    title: "Pick what happens next",
+    blurb: "Uses the quality score to continue automatically, ask a person, or stop",
   },
   "human.gate": {
     title: "Ask a person to review",
@@ -216,6 +216,36 @@ export function friendlyUnsupportedSummary(gaps: string[]): string {
   if (gaps.length === 0) return "";
   if (gaps.length === 1) return friendlyUnsupportedGap(gaps[0]!);
   return `${gaps.length} parts of your request could not be added automatically. See details below.`;
+}
+
+/** Plain-language “what this step needs” from the tool catalog. */
+export function friendlyToolNeeds(impl: string): string {
+  const tool = getToolCatalog().find((t) => t.key === impl);
+  if (!tool) return "Information from the previous step in the workflow.";
+  const parts = Object.entries(tool.input).map(([k, v]) => {
+    const plain = v.replace(/\s*\(.*?\)\s*/g, "").trim();
+    return plain || k;
+  });
+  return parts.length > 0
+    ? parts.join("; ")
+    : "Information from the previous step in the workflow.";
+}
+
+/** Plain-language “what this step produces” from the tool catalog. */
+export function friendlyToolProduces(impl: string): string {
+  const blurb = TOOL_PLAIN[impl]?.blurb;
+  if (blurb) return blurb;
+  const tool = getToolCatalog().find((t) => t.key === impl);
+  if (!tool) return "Moves the workflow forward to the next step.";
+  return friendlyEventLabel(tool.output.event);
+}
+
+export function friendlyTriggerBlurb(eventType: string | null | undefined): string {
+  if (!eventType?.trim()) {
+    return "Choose when this workflow should start in Policy — for example when a job or resume arrives.";
+  }
+  const label = friendlyEventLabel(eventType.trim());
+  return `When “${label}” happens, this workflow runs automatically from the first step below.`;
 }
 
 /** Detect ASTRA → SYNTRA handoff in outbox event types. */

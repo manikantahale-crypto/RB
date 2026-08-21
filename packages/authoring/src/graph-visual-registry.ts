@@ -189,7 +189,7 @@ const NODE_COPY_BY_TOOL: Record<ToolKey, NodeCopy> = {
     outcomes: [],
   },
   "orch.branch.decision": {
-    title: "Choose the next path",
+    title: "Pick what happens next",
     kicker: "Automatic step",
     why: "Based on an earlier score, the workflow picks what to do next — continue automatically, ask a person, or stop.",
     produces: "A clear path for the next step so the run does not guess.",

@@ -295,9 +295,43 @@ export function registerRuntimeRoutes(app: FastifyLike, pool: Pool): void {
         }
       }
 
-      const liveVersion = bindings.rows.find(
+      const activeBinding = bindings.rows.find(
         (b) => String(b.status) === "active",
       );
+      const activeVersionRow = versions.rows.find(
+        (v) => String(v.status) === "active",
+      );
+
+      /** Prefer graph_event_bindings; fall back to active agent_versions row. */
+      let liveVersion: {
+        event_type: string;
+        graph_key: string;
+        version: number;
+        status: string;
+      } | null = activeBinding
+        ? {
+            event_type: String(activeBinding.event_type),
+            graph_key: String(activeBinding.graph_key),
+            version: Number(activeBinding.version),
+            status: String(activeBinding.status),
+          }
+        : null;
+
+      if (!liveVersion && activeVersionRow) {
+        const meta =
+          activeVersionRow.meta && typeof activeVersionRow.meta === "object"
+            ? activeVersionRow.meta
+            : {};
+        const graphKeyFromMeta = (meta as { graphKey?: string }).graphKey;
+        liveVersion = {
+          event_type:
+            triggerFromPolicy(activeVersionRow.policy_json) ??
+            "syntra.jd.received",
+          graph_key: String(graphKeyFromMeta ?? authoredKey ?? ""),
+          version: Number(activeVersionRow.version),
+          status: "active",
+        };
+      }
 
       function workflowStepsFromSource(source: unknown): Array<{
         order: number;
@@ -400,9 +434,8 @@ export function registerRuntimeRoutes(app: FastifyLike, pool: Pool): void {
             builtSummary?: string;
           };
           const isLive =
-            liveVersion &&
-            Number(liveVersion.version) === Number(v.version) &&
-            String(liveVersion.status) === "active";
+            Boolean(liveVersion) &&
+            Number(liveVersion!.version) === Number(v.version);
           const steps = workflowStepsFromSource(v.artifact_source);
           return {
             id: v.id,

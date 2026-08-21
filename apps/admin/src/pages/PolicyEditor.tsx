@@ -946,6 +946,7 @@ export function PolicyEditorPage({
     if (simpleLayout && placement === "policy") return null;
     if (simpleLayout && placement === "workflow") {
       if (editingWorkflow || pendingPreview) return null;
+      if (hasWorkflow) return null;
       return (
         <div className="workflow-generate-bar workflow-generate-bar--workflow workflow-generate-bar--simple">
           <button
@@ -954,11 +955,7 @@ export function PolicyEditorPage({
             disabled={generateDisabled}
             onClick={() => void onGenerate()}
           >
-            {ui === "generating"
-              ? "Generating…"
-              : hasWorkflow
-                ? "Update workflow"
-                : "Generate workflow"}
+            {ui === "generating" ? "Generating…" : "Generate workflow"}
           </button>
           {generateDisabled && generateDisabledReason ? (
             <p className="hint generate-hint" role="status">
@@ -1318,7 +1315,7 @@ export function PolicyEditorPage({
                         disabled={busy}
                         onClick={() => void onSaveWorkflowManual()}
                       >
-                        {ui === "accepting" ? "Saving…" : "Save steps"}
+                        {ui === "accepting" ? "Saving…" : "Save workflow"}
                       </button>
                       <button
                         type="button"

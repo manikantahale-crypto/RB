@@ -3383,6 +3383,16 @@ code {
   font-size: 0.9rem;
 }
 
+.artifacts-panel-head-row {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.artifacts-panel-head-row .artifacts-panel-toggle {
+  flex: 1;
+}
+
 .artifacts-panel-toggle {
   display: flex;
   align-items: center;
@@ -3500,6 +3510,39 @@ code {
   margin-bottom: 0.75rem;
   padding-bottom: 0.5rem;
   border-bottom: 1px solid var(--line);
+}
+
+.workflow-start-blurb,
+.workflow-end-blurb {
+  margin: 0.35rem 0 0;
+  font-size: 0.82rem;
+  line-height: 1.4;
+  font-weight: 400;
+}
+
+.workflow-start-inline .workflow-start-blurb {
+  color: rgba(255, 255, 255, 0.85);
+}
+
+.artifacts-step-detail summary {
+  cursor: pointer;
+  list-style: none;
+}
+
+.artifacts-step-detail summary::-webkit-details-marker {
+  display: none;
+}
+
+.artifacts-step-detail-body {
+  margin-top: 0.45rem;
+  padding-left: 0.35rem;
+  font-size: 0.88rem;
+  line-height: 1.45;
+}
+
+.artifacts-step-io-label {
+  font-weight: 600;
+  color: var(--ink-soft);
 }
 
 .artifacts-live-line {

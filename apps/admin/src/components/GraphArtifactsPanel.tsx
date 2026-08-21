@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useMemo, useState, type MouseEvent, type ReactNode } from "react";
 import {
   getAgentArtifacts,
   resumeRuntimeThread,
@@ -8,12 +8,13 @@ import {
   friendlyEventLabel,
   friendlyFailureMessage,
   friendlyToolBlurb,
-  friendlyToolFamily,
+  friendlyToolNeeds,
+  friendlyToolProduces,
   friendlyToolTitle,
+  friendlyTriggerBlurb,
   friendlyUnsupportedGap,
-  isAstraTool,
-  isSyntraTool,
 } from "../lib/friendly-labels";
+import { resolveNodeCopy } from "@tekisho/authoring/src/graph-visual-registry.js";
 
 function branchPlain(key: unknown): string {
   const k = String(key ?? "");
@@ -116,11 +117,14 @@ export function GraphArtifactsPanel({ agentId, refreshKey }: Props) {
     null,
   );
   const [busy, setBusy] = useState(false);
+  const [refreshing, setRefreshing] = useState(false);
   const [note, setNote] = useState<string | null>(null);
 
   const load = useCallback(async () => {
     setError(null);
+    setRefreshing(true);
     const res = await getAgentArtifacts(agentId);
+    setRefreshing(false);
     if (!res.ok) {
       setError(res.body.message ?? "Could not load history");
       setData(null);
@@ -128,6 +132,14 @@ export function GraphArtifactsPanel({ agentId, refreshKey }: Props) {
     }
     setData(res.data);
   }, [agentId]);
+
+  async function onRefresh(e: MouseEvent<HTMLButtonElement>) {
+    e.stopPropagation();
+    setNote(null);
+    await load();
+    setNote("History refreshed.");
+    window.setTimeout(() => setNote(null), 2500);
+  }
 
   useEffect(() => {
     void load();
@@ -242,40 +254,42 @@ export function GraphArtifactsPanel({ agentId, refreshKey }: Props) {
 
   return (
     <div className="agent-panel artifacts-panel artifacts-panel--table">
-      <button
-        type="button"
-        className="artifacts-panel-toggle"
-        aria-expanded={expanded}
-        onClick={() => setExpanded((v) => !v)}
-      >
-        <span className="artifacts-panel-toggle-main">
-          <h3>History &amp; traceability</h3>
-          <span className="artifacts-panel-summary muted">
-            {versionCount} graph version{versionCount === 1 ? "" : "s"}
-            {runCount > 0
-              ? ` · ${runCount} run${runCount === 1 ? "" : "s"}`
-              : ""}
-            {failedRunCount > 0 ? ` · ${failedRunCount} failed` : ""}
-            {live ? " · Live" : ""}
+      <div className="artifacts-panel-head-row">
+        <button
+          type="button"
+          className="artifacts-panel-toggle"
+          aria-expanded={expanded}
+          onClick={() => setExpanded((v) => !v)}
+        >
+          <span className="artifacts-panel-toggle-main">
+            <h3>History &amp; traceability</h3>
+            <span className="artifacts-panel-summary muted">
+              {versionCount} graph version{versionCount === 1 ? "" : "s"}
+              {runCount > 0
+                ? ` · ${runCount} run${runCount === 1 ? "" : "s"}`
+                : ""}
+              {failedRunCount > 0 ? ` · ${failedRunCount} failed` : ""}
+              {live ? " · Live" : ""}
+            </span>
           </span>
-        </span>
-        <span className="artifacts-panel-chevron" aria-hidden="true">
-          {expanded ? "▾" : "▸"}
-        </span>
-      </button>
+          <span className="artifacts-panel-chevron" aria-hidden="true">
+            {expanded ? "▾" : "▸"}
+          </span>
+        </button>
+        {expanded ? (
+          <button
+            type="button"
+            className="btn secondary btn--compact"
+            disabled={refreshing}
+            onClick={(e) => void onRefresh(e)}
+          >
+            {refreshing ? "Refreshing…" : "Refresh"}
+          </button>
+        ) : null}
+      </div>
 
       {expanded ? (
         <>
-          <div className="artifacts-panel-actions">
-            <button
-              type="button"
-              className="btn secondary btn--compact"
-              onClick={() => void load()}
-            >
-              Refresh
-            </button>
-          </div>
-
       <div
         className={`artifacts-live-status${
           live ? " artifacts-live-status--on" : ""
@@ -519,45 +533,15 @@ function DetailModal({
 
 function VersionDetailBody({ version }: { version: VersionRow }) {
   const story = version.triggerEventType
-    ? `This version starts when “${friendlyEventLabel(
-        version.triggerEventType,
-      )}”. The workflow below is what the orchestrator will run after Make live.`
+    ? friendlyTriggerBlurb(version.triggerEventType)
     : "Set a trigger in Policy before going live so the orchestrator knows when to start.";
 
   const steps = version.workflowSteps ?? [];
-  const astraTools = steps.filter((s) => isAstraTool(s.impl));
-  const syntraTools = steps.filter((s) => isSyntraTool(s.impl));
   const unsupported = version.unsupported ?? [];
 
   return (
     <>
       <p className="artifacts-story">{story}</p>
-
-      {steps.length > 0 ? (
-        <section className="artifacts-detail-block">
-          <h5>Tools in this workflow</h5>
-          <div className="artifacts-tool-summary">
-            {astraTools.length > 0 ? (
-              <p>
-                <span className="artifact-tool-family artifact-tool-family--astra">
-                  ASTRA
-                </span>{" "}
-                {astraTools.length} step{astraTools.length === 1 ? "" : "s"} — job
-                intake, fetch, normalize
-              </p>
-            ) : null}
-            {syntraTools.length > 0 ? (
-              <p>
-                <span className="artifact-tool-family artifact-tool-family--syntra">
-                  SYNTRA
-                </span>{" "}
-                {syntraTools.length} step{syntraTools.length === 1 ? "" : "s"} — matching,
-                shortlist, profiles
-              </p>
-            ) : null}
-          </div>
-        </section>
-      ) : null}
 
       {unsupported.length > 0 ? (
         <section className="artifacts-fail-box artifacts-gap-box" role="status">
@@ -580,40 +564,62 @@ function VersionDetailBody({ version }: { version: VersionRow }) {
       </section>
 
       <section className="artifacts-detail-block">
-        <h5>Workflow steps created</h5>
+        <h5>Workflow steps</h5>
         {steps.length === 0 ? (
           <p className="muted">No steps stored.</p>
         ) : (
           <ol className="artifacts-workflow-list artifacts-workflow-list--detailed">
             {steps.map((s) => (
-              <li key={`${s.order}-${s.impl}`}>
-                <span
-                  className={`artifact-tool-family artifact-tool-family--${friendlyToolFamily(s.impl).toLowerCase()}`}
-                >
-                  {friendlyToolFamily(s.impl)}
-                </span>
-                <strong>{friendlyToolTitle(s.impl)}</strong>
-                {s.description ? (
-                  <span className="muted"> — {s.description}</span>
-                ) : friendlyToolBlurb(s.impl) ? (
-                  <span className="muted"> — {friendlyToolBlurb(s.impl)}</span>
-                ) : null}
-                {s.config && Object.keys(s.config).length > 0 ? (
-                  <span className="artifacts-step-config muted">
-                    {" "}
-                    (settings:{" "}
-                    {Object.entries(s.config)
-                      .map(([k, v]) => `${k}=${String(v)}`)
-                      .join(", ")}
-                    )
-                  </span>
-                ) : null}
-              </li>
+              <WorkflowStepDetail key={`${s.order}-${s.impl}`} step={s} />
             ))}
           </ol>
         )}
       </section>
     </>
+  );
+}
+
+function WorkflowStepDetail({
+  step,
+}: {
+  step: NonNullable<VersionRow["workflowSteps"]>[number];
+}) {
+  const copy = resolveNodeCopy(step.impl);
+  const title = copy.title !== "Workflow step" ? copy.title : friendlyToolTitle(step.impl);
+  return (
+    <li className="artifacts-step-detail">
+      <details>
+        <summary>
+          <strong>
+            {step.order}. {title}
+          </strong>
+        </summary>
+        <div className="artifacts-step-detail-body">
+          <p>{copy.why || friendlyToolBlurb(step.impl)}</p>
+          <p>
+            <span className="artifacts-step-io-label">Needs:</span>{" "}
+            {friendlyToolNeeds(step.impl)}
+          </p>
+          <p>
+            <span className="artifacts-step-io-label">Produces:</span>{" "}
+            {copy.produces || friendlyToolProduces(step.impl)}
+          </p>
+          {step.config && Object.keys(step.config).length > 0 ? (
+            <p className="muted">
+              Settings:{" "}
+              {Object.entries(step.config)
+                .map(([k, v]) => {
+                  if (k === "matchThreshold") return `minimum score ${v}`;
+                  if (k === "passMin") return `auto-continue from score ${v}`;
+                  if (k === "humanMin") return `ask a person from score ${v}`;
+                  return `${k}: ${String(v)}`;
+                })
+                .join("; ")}
+            </p>
+          ) : null}
+        </div>
+      </details>
+    </li>
   );
 }
 
@@ -713,17 +719,7 @@ function RunDetailBody({
         ) : (
           <ol className="artifacts-workflow-list artifacts-workflow-list--detailed">
             {(run.workflowSteps ?? []).map((s) => (
-              <li key={`${s.order}-${s.impl}`}>
-                <span
-                  className={`artifact-tool-family artifact-tool-family--${friendlyToolFamily(s.impl).toLowerCase()}`}
-                >
-                  {friendlyToolFamily(s.impl)}
-                </span>
-                <strong>{friendlyToolTitle(s.impl)}</strong>
-                {friendlyToolBlurb(s.impl) ? (
-                  <span className="muted"> — {friendlyToolBlurb(s.impl)}</span>
-                ) : null}
-              </li>
+              <WorkflowStepDetail key={`${s.order}-${s.impl}`} step={s} />
             ))}
           </ol>
         )}
