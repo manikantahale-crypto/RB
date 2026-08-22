@@ -42,10 +42,9 @@ export type OrchMetric = NodeMetric | WorkflowMetric | TerminalEventMetric;
 
 function defaultStorySink(m: OrchMetric): void {
   if (m.type === 'orch.node') {
-    // Node detail (out / next) is logged from the graph compiler; keep metric brief.
     orchStory(
       'NODE',
-      `${m.nodeId}${m.impl ? ` (${m.impl})` : ''}  ${m.status.toUpperCase()}  ${m.durationMs}ms` +
+      `agent run  ${m.nodeId}${m.impl ? ` → ${m.impl}` : ''}  ${m.status.toUpperCase()}  ${m.durationMs}ms` +
         (m.errorClass ? `  class=${m.errorClass}` : '') +
         `  graph=${m.graphKey}`,
     );

@@ -25,6 +25,7 @@ import { recordNodeMetric } from '../observability/metrics.js';
 import {
   formatNextPaths,
   formatNodeOut,
+  orchStory,
   orchStoryDetail,
 } from '../observability/story-log.js';
 import { recordAgentStep } from '../workflow/agent-runs.js';
@@ -346,9 +347,18 @@ export class GraphCompiler {
               durationMs,
               threadId,
             });
+            orchStory(
+              'SKIP',
+              `agent=${agentName}  node=${node.id}  tool=${node.impl}  policy denied`,
+            );
             await writeStep(state, node.id, node.impl, 'SKIPPED', durationMs);
             return gate.patch;
           }
+
+          orchStory(
+            'TOOL',
+            `agent=${agentName}  node=${node.id}  tool=${node.impl}  graph=${def.graphKey}`,
+          );
 
           const patch = await impl(state, ctx);
           const viaCtx = drainEvents();

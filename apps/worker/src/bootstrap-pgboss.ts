@@ -202,6 +202,13 @@ async function bootstrapPgBoss(): Promise<void> {
       "[Bootstrap] Front door only — Syntra must set ORCH_API_URL → POST /v1/events (no jd.uploaded bridge).",
     );
   }
+  console.log("");
+  console.log("══════════════════════════════════════════════════════════════");
+  console.log("  ORCHESTRATION LOGS — watch this terminal on UI actions");
+  console.log("  Flow: [Orch] RELAY → EVENT → ROUTE → RUN → TOOL → NODE → DONE");
+  console.log("  Upload JD/resume or Quick Match to trigger events.");
+  console.log("══════════════════════════════════════════════════════════════");
+  console.log("");
 
   const shutdown = async () => {
     console.log("\nShutting down dispatcher...");

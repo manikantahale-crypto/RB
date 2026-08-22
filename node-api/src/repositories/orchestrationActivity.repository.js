@@ -97,6 +97,33 @@ async function getWorkerHealth() {
   };
 }
 
+async function getRecentOrchSteps(limit = 40) {
+  try {
+    const { rows } = await pool.query(
+      `SELECT s.id::text,
+              s.run_id::text,
+              s.seq,
+              s.node,
+              s.tool_name,
+              s.status,
+              s.latency_ms,
+              s.created_at,
+              r.agent_name,
+              r.graph_key,
+              r.trigger_event_id::text
+         FROM orch.steps s
+         JOIN orch.runs r ON r.id = s.run_id
+        ORDER BY s.created_at DESC NULLS LAST
+        LIMIT $1`,
+      [limit],
+    );
+    return rows;
+  } catch (err) {
+    if (/does not exist|permission denied/i.test(err.message)) return [];
+    throw err;
+  }
+}
+
 async function getActiveBindings() {
   const { rows } = await pool.query(
     `SELECT event_type, graph_key, agent_id::text, source
@@ -112,6 +139,7 @@ async function getActiveBindings() {
 module.exports = {
   getRecentPlatformEvents,
   getRecentOrchRuns,
+  getRecentOrchSteps,
   getWorkerHealth,
   getActiveBindings,
   PLATFORM_EVENT_PREFIX,

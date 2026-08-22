@@ -74,7 +74,7 @@ app.use("/stats", requireAuth, require("./routes/stats.routes"));
 app.use(requireAuth, require("./routes/matches.routes"));
 app.use(requireAuth, require("./routes/ai.routes"));
 app.use(requireAuth, require("./routes/recruiterReview.routes"));
-app.use(requireAuth, require("./routes/orchestrationActivity.routes"));
+app.use("/orchestration", requireAuth, require("./routes/orchestrationActivity.routes"));
 
 app.use(errorHandler);
 

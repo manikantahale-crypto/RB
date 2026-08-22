@@ -46,7 +46,24 @@ function describeRun(row) {
   };
 }
 
-function buildTimeline(events, runs) {
+function describeStep(row) {
+  const tool = row.tool_name || row.node || "step";
+  return {
+    stepId: row.id,
+    runId: row.run_id,
+    seq: row.seq,
+    node: row.node,
+    toolName: row.tool_name,
+    status: row.status,
+    latencyMs: row.latency_ms,
+    agentName: row.agent_name,
+    graphKey: row.graph_key,
+    at: row.created_at,
+    summary: `${row.agent_name}: ${tool} → ${row.status}${row.latency_ms != null ? ` (${row.latency_ms}ms)` : ""}`,
+  };
+}
+
+function buildTimeline(events, runs, steps) {
   const items = [];
 
   for (const e of events) {
@@ -63,15 +80,23 @@ function buildTimeline(events, runs) {
       ...describeRun(r),
     });
   }
+  for (const s of steps) {
+    items.push({
+      kind: "tool",
+      at: s.created_at,
+      ...describeStep(s),
+    });
+  }
 
   items.sort((a, b) => new Date(b.at) - new Date(a.at));
-  return items.slice(0, 25);
+  return items.slice(0, 30);
 }
 
 async function getActivitySnapshot() {
-  const [events, runs, worker, bindings] = await Promise.all([
+  const [events, runs, steps, worker, bindings] = await Promise.all([
     repo.getRecentPlatformEvents(20),
     repo.getRecentOrchRuns(12),
+    repo.getRecentOrchSteps(25),
     repo.getWorkerHealth(),
     repo.getActiveBindings(),
   ]);
@@ -102,12 +127,13 @@ async function getActivitySnapshot() {
     })),
     recentEvents: events.map(describeEvent),
     recentRuns: runs.map(describeRun),
-    timeline: buildTimeline(events, runs),
+    recentSteps: steps.map(describeStep),
+    timeline: buildTimeline(events, runs, steps),
     proofHint:
       worker.status === "active"
-        ? "Orchestrator worker is consuming events — see timeline below."
+        ? "Orchestrator active — upload JD/resume or match; watch terminal 2 for [Orch] logs."
         : worker.status === "worker_offline"
-          ? "Events are queued but not relayed — start: npm run dev:worker"
+          ? "Events queued but worker offline — run: npm run dev:orch (terminal 2)"
           : "Upload a JD or resume to generate orchestration events.",
   };
 }

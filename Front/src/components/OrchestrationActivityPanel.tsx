@@ -10,11 +10,13 @@ import {
 import { apiFetch } from '../services/api';
 
 interface OrchTimelineItem {
-  kind: 'event' | 'run';
+  kind: 'event' | 'run' | 'tool';
   at: string;
   summary: string;
   eventType?: string;
   graphKey?: string;
+  agentName?: string;
+  toolName?: string;
   status?: string;
   relayStatus?: string;
   routedTo?: { graphKey: string; agentLabel?: string | null };
@@ -151,7 +153,13 @@ export const OrchestrationActivityPanel: React.FC = () => {
               {data.timeline.slice(0, 12).map((item, i) => (
                 <div
                   key={`${item.kind}-${item.at}-${i}`}
-                  className="flex items-start gap-2 text-[11px] font-mono text-slate-300 bg-slate-900/40 rounded px-2 py-1.5"
+                  className={`flex items-start gap-2 text-[11px] font-mono rounded px-2 py-1.5 ${
+                    item.kind === 'tool'
+                      ? 'text-amber-200/90 bg-amber-950/30 border border-amber-500/15'
+                      : item.kind === 'run'
+                        ? 'text-indigo-200 bg-indigo-950/40 border border-indigo-500/15'
+                        : 'text-slate-300 bg-slate-900/40'
+                  }`}
                 >
                   <Activity className="w-3 h-3 mt-0.5 shrink-0 text-indigo-400" />
                   <div className="min-w-0">
@@ -160,6 +168,12 @@ export const OrchestrationActivityPanel: React.FC = () => {
                       <div className="text-[10px] text-indigo-300/80 mt-0.5">
                         next: {item.routedTo.graphKey}
                         {item.routedTo.agentLabel ? ` · ${item.routedTo.agentLabel}` : ''}
+                      </div>
+                    )}
+                    {item.kind === 'tool' && item.graphKey && (
+                      <div className="text-[10px] text-amber-300/70 mt-0.5">
+                        {item.agentName} · {item.graphKey}
+                        {item.toolName ? ` · tool=${item.toolName}` : ''}
                       </div>
                     )}
                   </div>
@@ -173,7 +187,7 @@ export const OrchestrationActivityPanel: React.FC = () => {
           )}
 
           <p className="text-[10px] text-slate-600">
-            Worker terminal: look for [Relay] → [Router] ROUTE → [Module] → [WorkflowRunner] EMIT
+            Terminal 2 (orch): [Orch] RELAY → EVENT → ROUTE → RUN → TOOL → NODE → DONE
           </p>
         </div>
       )}
