@@ -11,6 +11,7 @@ export {
   ensureEventBindingsSchema,
   EventAlreadyBoundError,
   type EventBindingRow,
+  type DbQueryable,
 } from "./event-bindings.js";
 export {
   formatZodFieldErrors,
@@ -210,6 +211,11 @@ export {
 } from "./generate-graph.js";
 export { generateAgentTs, type GenerateResult } from "./generate-agent-ts.js";
 export { ensureAuthoringSchema, seedAgentTemplates, seedProductAgentDefinitions, seedDefaultEntitlements, applyAuthoringRls } from "./ensure-schema.js";
+export {
+  isPgPoolExhausted,
+  withPgRetry,
+  devPoolOpts,
+} from "./pg-retry.js";
 export {
   MOCK_PRODUCT_AGENT_IDS,
   PROTECTED_PRODUCT_AGENT_IDS,

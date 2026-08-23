@@ -13,8 +13,10 @@ import {
 import {
   ensureEventBindingsSchema,
   resolveActiveEventBinding,
+  withPgRetry,
+  devPoolOpts,
   type DbQueryable,
-} from "@tekisho/authoring/src/event-bindings.js";
+} from "@tekisho/authoring";
 import { startOutboxRelay } from "./workers/outbox-relay.worker.js";
 import { startIngressRouter } from "./workers/ingress-router.worker.js";
 import { startModuleWorkers } from "./workers/module-execute.worker.js";
@@ -49,32 +51,37 @@ async function bootstrapPgBoss(): Promise<void> {
     console.error("[Dispatcher] pg-boss error:", error);
   });
 
-  await boss.start();
+  await withPgRetry("worker pg-boss", () => boss.start());
   console.log("pg-boss started (schema ready)");
 
-  const pool = new pg.Pool({
-    connectionString: env.DATABASE_MIGRATOR_URL,
-    ssl: { rejectUnauthorized: false },
-    max: 1,
-    connectionTimeoutMillis: 15_000,
-    idleTimeoutMillis: 30_000,
-  });
+  const pool = new pg.Pool(devPoolOpts(env.DATABASE_MIGRATOR_URL, 1));
   // Idle/dropped clients emit 'error' on Client; without this Node exits.
   pool.on("error", (error: Error) => {
     console.error("[Dispatcher] pg pool error:", error.message);
+  });
+  pool.on("connect", (client) => {
+    client.on("error", (error: Error) => {
+      console.error("[Dispatcher] pg client error:", error.message);
+    });
   });
 
   const checkpointer = new PostgresSaver(pool, undefined, {
     schema: "langgraph",
   });
-  await checkpointer.setup();
+  await withPgRetry("worker checkpointer", () => checkpointer.setup());
 
   const compiler = new GraphCompiler(pool, checkpointer);
-  await compiler.ensureSchemaAndSeed();
-  await ensureFailedWorkflowsTable(pool);
-  await ensureJobPinTable(pool);
-  await ensureIngressEventSchemas(pool);
-  await ensureEventBindingsSchema(pool);
+  await withPgRetry("worker graph seed", () => compiler.ensureSchemaAndSeed());
+  await withPgRetry("worker failed_workflows", () =>
+    ensureFailedWorkflowsTable(pool),
+  );
+  await withPgRetry("worker job_pin", () => ensureJobPinTable(pool));
+  await withPgRetry("worker ingress schemas", () =>
+    ensureIngressEventSchemas(pool),
+  );
+  await withPgRetry("worker event bindings", () =>
+    ensureEventBindingsSchema(pool),
+  );
   const runner = new WorkflowRunner(compiler, pool);
 
   await startIngressRouter({ boss, compiler, pool });

@@ -4,7 +4,7 @@ import { cleanJobTitle } from '../utils';
 
 import { NavigationScreen } from '../types';
 import { useAuth } from '../context/AuthContext';
-import { apiFetch } from '../services/api';
+import { apiFetchWithRetry } from '../services/api';
 
 interface DashboardProps {
   onNavigate?: (screen: NavigationScreen) => void;
@@ -29,29 +29,30 @@ export const Dashboard: React.FC<DashboardProps> = ({ onNavigate }) => {
     setLoading(true);
     setError(null);
     try {
-      const [jobsRes, candRes, skillsRes, matchesRes, trendsRes] = await Promise.all([
-        apiFetch('/jobs'),
-        apiFetch('/candidates'),
-        apiFetch('/skills/top?limit=6'),
-        apiFetch('/matches/top?limit=50'),
-        apiFetch(`/stats/daily-activity?days=${timeRange}`)
-      ]);
+      const res = await apiFetchWithRetry(`/dashboard/summary?days=${timeRange}`);
 
-      if (!jobsRes.ok || !candRes.ok || !skillsRes.ok || !matchesRes.ok || !trendsRes.ok) {
-        throw new Error("Failed to fetch dashboard metrics from the Node API.");
+      if (!res.ok) {
+        let detail = `HTTP ${res.status}`;
+        try {
+          const body = await res.json();
+          detail = body.error || detail;
+        } catch {
+          /* ignore */
+        }
+        throw new Error(
+          detail.includes('EMAXCONN')
+            ? 'Database connection pool is full. Stop duplicate dev processes (dev:worker + dev) and refresh.'
+            : `Failed to load dashboard metrics: ${detail}`,
+        );
       }
 
-      const jobsData = await jobsRes.json();
-      const candData = await candRes.json();
-      const skillsData = await skillsRes.json();
-      const matchesData = await matchesRes.json();
-      const trendsData = await trendsRes.json();
+      const data = await res.json();
 
-      const rawJobs = jobsData.jobs || [];
-      const rawCandidates = candData.candidates || [];
-      const rawSkills = skillsData.skills || [];
-      const rawMatches = matchesData.matches || [];
-      const rawTrends = trendsData.days || [];
+      const rawJobs = data.jobs || [];
+      const rawCandidates = data.candidates || [];
+      const rawSkills = data.skills || [];
+      const rawMatches = data.matches || [];
+      const rawTrends = data.days || [];
 
       // KPI Counts
       setJobsCount(rawJobs.length);

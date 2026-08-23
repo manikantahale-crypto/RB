@@ -34,6 +34,7 @@ export const EVENT_TYPES = {
     ORBIT_PLACEMENT_CONFIRMED: "orbit.placement.confirmed",
     ORBIT_REVENUE_ARRANGE_REQUESTED: "orbit.revenue.arrange_requested",
     ORBIT_REVENUE_ARRANGED: "orbit.revenue.arranged",
+    ORBIT_ACTIVITY_NOTE_REQUESTED: "orbit.activity.note_requested",
     ORBIT_ACTIVITY_NOTED: "orbit.activity.noted",
     ORBIT_BENCH_HOLD: "orbit.bench.hold",
   } as const;

@@ -101,7 +101,7 @@ async function handleMatchRequested(job) {
 }
 
 function registerMatchRequestedWorker(boss) {
-  return boss.work("match.requested", { teamSize: 3, batchSize: 15 }, async (jobs) => {
+  return boss.work("match.requested", { teamSize: 1, batchSize: 15 }, async (jobs) => {
     try {
       await handleMatchRequested(jobs);
     } catch (err) {

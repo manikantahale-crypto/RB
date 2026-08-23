@@ -1,9 +1,16 @@
 const placementRepo = require("../repositories/placement.repository");
-const lifecycleRepo = require("../repositories/lifecycle.repository");
-const activityRepo = require("../repositories/activity.repository");
 const { calculateTotalProfitTillToday } = require("../utils/profitability");
 const { withTransaction } = require("../config/db");
-const env = require("../config/env");
+const {
+  shouldDelegateOrbit,
+  resolveOrgId,
+  queuePlacementConfirmRequested,
+  queueRevenueArrangeRequested,
+} = require("../services/orbit/orbitDelegate.service");
+const {
+  executeCreatePlacement,
+  executeRevenueArrangement,
+} = require("../services/orbit/orbitExecute.service");
 const {
   emitAndMaybePublish,
   publishToOrchFailOpen,
@@ -42,65 +49,35 @@ async function createPlacement(req, res, next) {
       throw err;
     }
 
-    const orgId =
-      env.ORCH_ORGANIZATION_ID ||
-      req.body?.organization_id ||
-      req.user?.organizationId ||
-      req.headers["x-organization-id"] ||
-      req.userId ||
-      undefined;
+    if (shouldDelegateOrbit()) {
+      const envelope = await queuePlacementConfirmRequested(req, req.body);
+      return res.status(202).json({
+        status: "orchestration_accepted",
+        event_id: envelope?.event_id ?? null,
+        correlation_id: envelope?.correlation_id ?? null,
+        message:
+          "Placement queued — ORBIT placement graph will run via module.orbit.bench",
+      });
+    }
+
+    const orgId = resolveOrgId(req, req.body);
 
     const { placement, outboxEvent } = await withTransaction(async (client) => {
-      const created = await placementRepo.createPlacement(
-        {
-          candidateId: candidate_id,
-          organizationId: orgId,
-          requirementId: requirement_id || null,
-          clientName: client_name,
-          startDate: start_date,
-          endDate: end_date || null,
-          confirmedBillRate: billRate,
-          confirmedPayRate: payRate,
-          employmentModel: employment_model,
-          workMode: work_mode,
-          location: location || null,
-          notes: notes || null,
-          createdBy: req.userId || null,
-        },
-        client
-      );
-
-      // Record lifecycle state transition to PLACED
-      await lifecycleRepo.recordTransition(
-        {
-          candidateId: candidate_id,
-          organizationId: orgId,
-          toState: "PLACED",
-          fromState: "BENCH",
-          note: `Placed at ${client_name}`,
-          context: { placement_id: created.id },
-          transitionedBy: req.userId || null,
-        },
-        client
-      );
-
-      // Log activity
-      await activityRepo.createActivity(
-        {
-          candidateId: candidate_id,
-          activityType: "PLACEMENT_CONFIRMED",
-          actorType: "USER",
-          actorId: req.userId || null,
-          summary: `Placed at ${client_name} — Bill: $${billRate}/hr, Pay: $${payRate}/hr`,
-          payload: {
-            placement_id: created.id,
-            client_name,
-            confirmed_bill_rate: billRate,
-            confirmed_pay_rate: payRate,
-          },
-        },
-        client
-      );
+      const created = await executeCreatePlacement(client, {
+        candidateId: candidate_id,
+        organizationId: orgId,
+        requirementId: requirement_id || null,
+        clientName: client_name,
+        startDate: start_date,
+        endDate: end_date || null,
+        confirmedBillRate: billRate,
+        confirmedPayRate: payRate,
+        employmentModel: employment_model,
+        workMode: work_mode,
+        location: location || null,
+        notes: notes || null,
+        createdBy: req.userId || null,
+      });
 
       const outboxEvent = await emitAndMaybePublish(client, {
         eventType: "orbit.placement.confirmed",
@@ -194,89 +171,29 @@ async function createRevenueArrangement(req, res, next) {
       throw err;
     }
 
-    const billRate = parseFloat(placement.confirmed_bill_rate);
-    const payRate = parseFloat(placement.confirmed_pay_rate);
-    const spread = billRate - payRate;
-    const numericValue = parseFloat(value);
-
-    let calculatedAmount = 0;
-    let calculationNote = "";
-
-    switch (arrangement_type) {
-      case "MARKUP":
-        calculatedAmount = payRate * (numericValue / 100);
-        calculationNote = `${numericValue}% markup on pay rate $${payRate}/hr = $${calculatedAmount.toFixed(2)}/hr`;
-        break;
-      case "MARGIN":
-        calculatedAmount = billRate * (numericValue / 100);
-        calculationNote = `${numericValue}% margin on bill rate $${billRate}/hr = $${calculatedAmount.toFixed(2)}/hr`;
-        break;
-      case "FLAT_FEE":
-        calculatedAmount = numericValue;
-        calculationNote = `Flat fee arrangement: $${numericValue}`;
-        break;
-      case "SPREAD":
-        calculatedAmount = spread;
-        calculationNote = `Full spread: $${billRate}/hr - $${payRate}/hr = $${spread.toFixed(2)}/hr`;
-        break;
-      case "CUSTOM":
-        calculatedAmount = numericValue;
-        calculationNote = custom_formula || `Custom arrangement: $${numericValue}`;
-        break;
-      default: {
-        const err = new Error(`Invalid arrangement_type: ${arrangement_type}`);
-        err.statusCode = 400;
-        throw err;
-      }
+    if (shouldDelegateOrbit()) {
+      const envelope = await queueRevenueArrangeRequested(req, placementId, req.body);
+      return res.status(202).json({
+        status: "orchestration_accepted",
+        event_id: envelope?.event_id ?? null,
+        correlation_id: envelope?.correlation_id ?? null,
+        message:
+          "Revenue arrangement queued — ORBIT revenue graph will run via module.orbit.bench",
+      });
     }
 
-    // Monthly estimate (160 hours/month standard for hourly)
-    const monthlyRevenue = arrangement_type !== "FLAT_FEE"
-      ? calculatedAmount * 160
-      : calculatedAmount;
-
-    const orgId =
-      env.ORCH_ORGANIZATION_ID ||
-      req.body?.organization_id ||
-      placement.organization_id ||
-      req.user?.organizationId ||
-      req.headers["x-organization-id"] ||
-      req.userId ||
-      undefined;
+    const orgId = resolveOrgId(req, req.body);
 
     const { result, outboxEvent } = await withTransaction(async (client) => {
-      const arrangement = await placementRepo.createRevenueArrangement(
-        {
-          placementId,
-          organizationId: orgId,
-          arrangementType: arrangement_type,
-          value: numericValue,
-          calculatedHourlyAmount: arrangement_type !== "FLAT_FEE" ? calculatedAmount : null,
-          calculatedMonthlyAmount: monthlyRevenue,
-          calculationNote,
-          notes: notes || null,
-          customFormula: custom_formula || null,
-          createdBy: req.userId || null,
-        },
-        client
-      );
-
-      await activityRepo.createActivity(
-        {
-          candidateId: placement.candidate_id,
-          activityType: "REVENUE_UPDATED",
-          actorType: "USER",
-          actorId: req.userId || null,
-          summary: `Revenue arrangement set — ${arrangement_type}: ${calculationNote}`,
-          payload: {
-            placement_id: placementId,
-            arrangement_type,
-            value: numericValue,
-            calculated: calculatedAmount,
-          },
-        },
-        client
-      );
+      const exec = await executeRevenueArrangement(client, {
+        placementId,
+        organizationId: orgId,
+        arrangementType: arrangement_type,
+        value,
+        notes: notes || null,
+        customFormula: custom_formula || null,
+        createdBy: req.userId || null,
+      });
 
       const outboxEvent = await emitAndMaybePublish(client, {
         eventType: "orbit.revenue.arranged",
@@ -287,25 +204,18 @@ async function createRevenueArrangement(req, res, next) {
         payload: {
           placement_id: placementId,
           arrangement_type,
-          value: numericValue,
+          value: parseFloat(value),
         },
       });
 
-      return { result: arrangement, outboxEvent };
+      return { result: exec, outboxEvent };
     });
 
     publishToOrchFailOpen(outboxEvent);
 
     res.status(201).json({
-      arrangement: result,
-      summary: {
-        bill_rate: billRate,
-        pay_rate: payRate,
-        spread,
-        calculated_hourly: calculatedAmount,
-        calculated_monthly: monthlyRevenue,
-        calculation_note: calculationNote,
-      },
+      arrangement: result.arrangement,
+      summary: result.summary,
     });
   } catch (err) {
     next(err);

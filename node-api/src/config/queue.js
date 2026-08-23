@@ -1,6 +1,7 @@
 const { PgBoss } = require("pg-boss");
 const env = require("./env");
 const log = require("../utils/logger");
+const { withPgRetry } = require("../utils/pgRetry");
 
 const QUEUES = [
   "jd.uploaded",
@@ -21,7 +22,7 @@ async function startBoss() {
     schema: "pgboss",
     ssl: { rejectUnauthorized: false },
     // Session pooler allows ~15 clients total — share budget with Node + Python pools
-    max: 2,
+    max: 1,
     connectionTimeoutMillis: 20000,
   });
 
@@ -29,11 +30,12 @@ async function startBoss() {
     log.error("[pg-boss] error:", err.message);
   });
 
-  await boss.start();
-
-  for (const name of QUEUES) {
-    await boss.createQueue(name);
-  }
+  await withPgRetry("pg-boss start", async () => {
+    await boss.start();
+    for (const name of QUEUES) {
+      await boss.createQueue(name);
+    }
+  });
 
   log.info(`[pg-boss] started; queues: ${QUEUES.join(", ")}`);
   return boss;

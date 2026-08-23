@@ -22,6 +22,7 @@ const PLATFORM_EVENT_TYPES = [
   "orbit.placement.confirmed",
   "orbit.revenue.arrange_requested",
   "orbit.revenue.arranged",
+  "orbit.activity.note_requested",
   "orbit.activity.noted",
   "orbit.bench.hold",
 ];

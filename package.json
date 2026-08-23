@@ -17,7 +17,7 @@
     "dev:syntra-ui": "npm run dev --prefix Front",
     "dev:syntra": "npx concurrently --kill-others-on-fail -n api,ui -c cyan,yellow \"npm run dev:syntra-api\" \"npx wait-on -t 120000 http-get://127.0.0.1:4000/health && npm run dev:syntra-ui\"",
     "dev": "npm run dev:syntra",
-    "dev:orch-admin": "npx concurrently --kill-others-on-fail -n orch,admin -c magenta,blue \"npm run dev:orch\" \"npm run dev:admin\"",
+    "dev:orch-admin": "npx concurrently -n orch,admin -c magenta,blue \"npm run dev:orch\" \"node scripts/wait-ms.js 6000 && npm run dev:admin\"",
     "dev:full": "npx concurrently --kill-others-on-fail -n syntra,orch -c yellow,magenta \"npm run dev:syntra\" \"npm run dev:orch\"",
     "smoke:e2e": "tsx scripts/smoke-e2e.ts",
     "smoke:generate-threshold": "tsx scripts/smoke-generate-threshold.ts",

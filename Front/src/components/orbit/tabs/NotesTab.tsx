@@ -2,6 +2,10 @@ import React, { useState, useEffect } from 'react';
 import { StickyNote, Plus, Loader2, Clock, User, AlertCircle } from 'lucide-react';
 import { CandidateProfile, OrbitActivityItem } from '../../../types';
 import { apiFetch } from '../../../services/api';
+import {
+  isOrchestrationAccepted,
+  pollOrbitNoteCount,
+} from '../../../utils/orbitOrchestration';
 
 interface NotesTabProps {
   candidate: CandidateProfile;
@@ -50,9 +54,13 @@ export const NotesTab: React.FC<NotesTabProps> = ({ candidate }) => {
         }),
       });
 
-      if (!res.ok) {
+      if (!res.ok && res.status !== 202) {
         const data = await res.json().catch(() => ({}));
         throw new Error(data.error || 'Failed to save note');
+      }
+
+      if (isOrchestrationAccepted(res)) {
+        await pollOrbitNoteCount(candidate.id, notes.length);
       }
 
       setNewNote('');

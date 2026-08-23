@@ -123,10 +123,8 @@ async function listCandidates({ userId = null, limit = 50 } = {}) {
         ON r.candidate_id = c.id AND r.is_current = true
      ${countWhere}`;
 
-  const [listResult, countResult] = await Promise.all([
-    pool.query(listSql, queryParams),
-    pool.query(countSql, countParams),
-  ]);
+  const listResult = await pool.query(listSql, queryParams);
+  const countResult = await pool.query(countSql, countParams);
   return {
     rows: listResult.rows,
     total: countResult.rows[0]?.total ?? 0,

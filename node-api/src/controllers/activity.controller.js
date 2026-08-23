@@ -1,6 +1,11 @@
 const activityRepo = require("../repositories/activity.repository");
 const { withTransaction } = require("../config/db");
-const env = require("../config/env");
+const {
+  shouldDelegateOrbit,
+  resolveOrgId,
+  queueActivityNoteRequested,
+} = require("../services/orbit/orbitDelegate.service");
+const { executeActivityNote } = require("../services/orbit/orbitExecute.service");
 const {
   emitAndMaybePublish,
   publishToOrchFailOpen,
@@ -33,26 +38,28 @@ async function createNote(req, res, next) {
       throw err;
     }
 
-    const orgId =
-      env.ORCH_ORGANIZATION_ID ||
-      req.body?.organization_id ||
-      req.user?.organizationId ||
-      req.headers["x-organization-id"] ||
-      req.userId ||
-      undefined;
+    if (shouldDelegateOrbit()) {
+      const envelope = await queueActivityNoteRequested(req, candidateId, {
+        summary,
+        payload,
+      });
+      return res.status(202).json({
+        status: "orchestration_accepted",
+        event_id: envelope?.event_id ?? null,
+        correlation_id: envelope?.correlation_id ?? null,
+        message:
+          "Note queued — ORBIT activity graph will run via module.orbit.bench",
+      });
+    }
 
+    const orgId = resolveOrgId(req, req.body);
     const { activity, outboxEvent } = await withTransaction(async (client) => {
-      const created = await activityRepo.createActivity(
-        {
-          candidateId,
-          activityType: "NOTE",
-          actorType: "USER",
-          actorId: req.userId || null,
-          summary,
-          payload: payload || {},
-        },
-        client,
-      );
+      const created = await executeActivityNote(client, {
+        candidateId,
+        summary,
+        payload: payload || {},
+        actorId: req.userId || null,
+      });
 
       const outboxEvent = await emitAndMaybePublish(client, {
         eventType: "orbit.activity.noted",
@@ -70,7 +77,6 @@ async function createNote(req, res, next) {
     });
 
     publishToOrchFailOpen(outboxEvent);
-
     res.status(201).json(activity);
   } catch (err) {
     next(err);

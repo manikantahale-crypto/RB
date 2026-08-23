@@ -2,6 +2,7 @@ const app = require("./app");
 const env = require("./config/env");
 const { pool } = require("./config/db");
 const log = require("./utils/logger");
+const { withPgRetry } = require("./utils/pgRetry");
 const { startBoss, stopBoss } = require("./config/queue");
 const { seedEventSchemas } = require("./repositories/outbox.repository");
 const { ensureSchema: ensureRecruiterReviewSchema } = require("./repositories/recruiterReview.repository");
@@ -21,22 +22,54 @@ const {
 
 let server = null;
 let isShuttingDown = false;
+let bossInstance = null;
+
+async function bootstrapPgBossWorkers() {
+  const boss = await withPgRetry("syntra-api pg-boss", () => startBoss());
+  bossInstance = boss;
+
+  await withPgRetry("syntra-api pg-boss workers", async () => {
+    await registerJdUploadedWorker(boss);
+    await registerResumeUploadedWorker(boss);
+    await registerMatchRequestedWorker(boss);
+    await registerAstraRequirementReceivedWorker(boss);
+    await registerAstraEmailPollerWorker(boss);
+  });
+  log.info("pg-boss workers registered successfully");
+
+  if (env.IMAP_POLL_ENABLED) {
+    const minutes = Math.max(1, Math.floor(env.IMAP_POLL_INTERVAL_SECONDS / 60));
+    const cron = `*/${minutes} * * * *`;
+    log.info(`[IMAP Scheduler] Scheduling periodic poll: every ${minutes}m (${cron})`);
+    await withPgRetry("syntra-api imap schedule", () =>
+      boss.schedule("astra.email.poll", cron, {}),
+    );
+  } else {
+    log.info("[IMAP Scheduler] Poller is disabled in environment. Unscheduling.");
+    try {
+      await boss.unschedule("astra.email.poll");
+    } catch (err) {
+      log.warn(`[IMAP Scheduler] Failed to unschedule: ${err.message}`);
+    }
+  }
+}
 
 async function start() {
   log.info("Starting node-api…");
 
   try {
-    const { rows } = await pool.query(
-      "SELECT now() AS now, current_database() AS db"
-    );
-    log.info("Postgres connected", {
-      now: rows[0].now,
-      database: rows[0].db,
-    });
+    await withPgRetry("syntra-api postgres", async () => {
+      const { rows } = await pool.query(
+        "SELECT now() AS now, current_database() AS db",
+      );
+      log.info("Postgres connected", {
+        now: rows[0].now,
+        database: rows[0].db,
+      });
 
-    // Seed ASTRA event schemas in public.event_schemas dynamically
-    await seedEventSchemas();
-    await ensureRecruiterReviewSchema();
+      await seedEventSchemas();
+      await ensureRecruiterReviewSchema();
+    });
     log.info("Platform event schemas verified/seeded.", {
       platformEvents: env.PLATFORM_EVENTS_ENABLED,
       delegateMatch: env.ORCH_DELEGATE_MATCH,
@@ -48,31 +81,17 @@ async function start() {
     process.exit(1);
   }
 
-  const boss = await startBoss();
-  await registerJdUploadedWorker(boss);
-  await registerResumeUploadedWorker(boss);
-  await registerMatchRequestedWorker(boss);
-  await registerAstraRequirementReceivedWorker(boss);
-  await registerAstraEmailPollerWorker(boss);
-  log.info("pg-boss workers registered successfully");
-
-  // Configure recurring email poll schedule dynamically
-  if (env.IMAP_POLL_ENABLED) {
-    const minutes = Math.max(1, Math.floor(env.IMAP_POLL_INTERVAL_SECONDS / 60));
-    const cron = `*/${minutes} * * * *`;
-    log.info(`[IMAP Scheduler] Scheduling periodic poll: every ${minutes}m (${cron})`);
-    await boss.schedule("astra.email.poll", cron, {});
-  } else {
-    log.info("[IMAP Scheduler] Poller is disabled in environment. Unscheduling.");
-    try {
-      await boss.unschedule("astra.email.poll");
-    } catch (err) {
-      log.warn(`[IMAP Scheduler] Failed to unschedule: ${err.message}`);
-    }
-  }
-
+  // Listen first so wait-on /health succeeds even if pg-boss is waiting on a DB slot.
   server = app.listen(env.PORT, () => {
     log.info(`HTTP server listening on http://localhost:${env.PORT}`);
+  });
+
+  bootstrapPgBossWorkers().catch((err) => {
+    log.error("[pg-boss] background bootstrap failed (API still up on :4000):", err.message);
+    log.error(
+      "[pg-boss] If EMAXCONN: stop other dev processes, wait 30s, restart. " +
+        "Start terminal 1 (npm run dev) before terminal 2 (dev:orch-admin).",
+    );
   });
 }
 

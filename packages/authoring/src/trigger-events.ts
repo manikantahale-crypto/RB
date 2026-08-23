@@ -106,6 +106,13 @@ export const TRIGGER_EVENT_CATALOG: readonly TriggerEventCatalogEntry[] = [
     moduleQueue: "module.orbit.bench",
     defaultGraphKey: "orbit.revenue.workflow",
   },
+  {
+    eventType: "orbit.activity.note_requested",
+    label: "ORBIT activity note requested",
+    description: "Request a recruiter note on a candidate timeline.",
+    moduleQueue: "module.orbit.bench",
+    defaultGraphKey: "orbit.activity.workflow",
+  },
 ] as const;
 
 export function isTriggerEventType(eventType: string): boolean {

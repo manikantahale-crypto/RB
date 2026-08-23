@@ -103,6 +103,10 @@ export const PLATFORM_EVENT_PLAN: Record<string, PlatformEventPlan> = {
     kind: 'graph',
     note: 'ORBIT revenue — routed via graph_event_bindings (DB)',
   },
+  [EVENT_TYPES.ORBIT_ACTIVITY_NOTE_REQUESTED]: {
+    kind: 'graph',
+    note: 'ORBIT activity note — routed via graph_event_bindings (DB)',
+  },
   [EVENT_TYPES.ORBIT_LIFECYCLE_TRANSITIONED]: {
     kind: 'terminal',
     note: 'ORBIT lifecycle outcome — audit / same-graph handoff',
@@ -136,6 +140,10 @@ export const PLATFORM_EVENT_PLAN: Record<string, PlatformEventPlan> = {
   'orbit.revenue.arrange_requested': {
     kind: 'graph',
     note: 'ORBIT revenue — routed via graph_event_bindings (DB)',
+  },
+  'orbit.activity.note_requested': {
+    kind: 'graph',
+    note: 'ORBIT activity note — routed via graph_event_bindings (DB)',
   },
   'orbit.lifecycle.transitioned': {
     kind: 'terminal',
@@ -205,6 +213,7 @@ export const GRAPH_TO_MODULE_QUEUE: Record<string, string> = {
   'orbit.lifecycle.workflow': 'module.orbit.bench',
   'orbit.placement.workflow': 'module.orbit.bench',
   'orbit.revenue.workflow': 'module.orbit.bench',
+  'orbit.activity.workflow': 'module.orbit.bench',
   'resume.intake': 'module.design.resume',
   'duplicate.review': 'module.design.duplicate',
   'syntra.match.workflow': 'module.syntra.match',

@@ -13,7 +13,7 @@ function summaryHash(summary) {
 }
 
 function validateResumeDocument(text = "", originalFileName = "") {
-  const lowerName = originalFileName.toLowerCase();
+  const lowerName = (originalFileName || "").toLowerCase();
 
   let resumeScore = 0;
   let jdScore = 0;

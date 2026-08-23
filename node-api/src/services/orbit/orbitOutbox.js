@@ -89,7 +89,7 @@ async function emitAndMaybePublish(client, fields) {
   const row = await emitOrbitEvent(client, fields);
   if (!row) return null;
 
-  log.info(`[orbit.outbox] EMIT ${fields.eventType} aggregate=${fields.aggregateType}:${fields.aggregateId}`);
+  log.info(`[ORBIT] EMIT ${fields.eventType} aggregate=${fields.aggregateType}:${fields.aggregateId}`);
 
   return {
     event_id: row.event_id,

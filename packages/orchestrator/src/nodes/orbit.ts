@@ -24,6 +24,7 @@ export const ORBIT_EVENT_TYPES = {
   PLACEMENT_CONFIRMED: 'orbit.placement.confirmed',
   REVENUE_ARRANGE_REQUESTED: 'orbit.revenue.arrange_requested',
   REVENUE_ARRANGED: 'orbit.revenue.arranged',
+  ACTIVITY_NOTE_REQUESTED: 'orbit.activity.note_requested',
   ACTIVITY_NOTED: 'orbit.activity.noted',
   BENCH_HOLD: 'orbit.bench.hold',
 } as const;
@@ -92,7 +93,7 @@ async function postOrbit(
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
-        // SAO requireAuth — service token optional until /internal/orbit exists.
+        'X-Orchestrator-Callback': '1',
         ...(process.env.SYNTRA_SERVICE_TOKEN
           ? { Authorization: `Bearer ${process.env.SYNTRA_SERVICE_TOKEN}` }
           : {}),
@@ -165,12 +166,13 @@ export const orbitLifecycleTransition: NodeImpl = async (state, ctx) => {
   });
 
   const r = await postOrbit(
-    `/candidates/${candidateId}/lifecycle/transition`,
+    `/internal/orbit/candidates/${candidateId}/lifecycle/transition`,
     {
       to_state: toState,
       note: p.note ?? null,
       context: p.context ?? null,
       organization_id: trigger.organization_id,
+      transitioned_by: null,
     },
     {
       state: {
@@ -251,7 +253,7 @@ export const orbitPlacementConfirm: NodeImpl = async (state, ctx) => {
   });
 
   const placementId = uuidv4();
-  const r = await postOrbit('/placements', body, {
+  const r = await postOrbit('/internal/orbit/placements', body, {
     placement: {
       id: placementId,
       candidate_id: candidateId,
@@ -310,7 +312,7 @@ export const orbitRevenueArrange: NodeImpl = async (state, ctx) => {
   });
 
   const r = await postOrbit(
-    `/placements/${placementId}/revenue`,
+    `/internal/orbit/placements/${placementId}/revenue`,
     {
       arrangement_type: arrangementType,
       value,
@@ -376,9 +378,8 @@ export const orbitActivityNote: NodeImpl = async (state, ctx) => {
   });
 
   const r = await postOrbit(
-    `/candidates/${candidateId}/activities`,
+    `/internal/orbit/candidates/${candidateId}/activities`,
     {
-      activity_type: p.activity_type ?? 'NOTE',
       summary,
       payload: p.payload ?? {},
     },

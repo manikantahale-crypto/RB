@@ -40,3 +40,30 @@ export async function apiFetch(
     headers,
   });
 }
+
+/** Retry transient API failures (e.g. Supabase pool exhausted under dev load). */
+export async function apiFetchWithRetry(
+  input: string | URL | Request,
+  init?: RequestInit,
+  retries = 3,
+): Promise<Response> {
+  let lastResponse: Response | null = null;
+  for (let attempt = 0; attempt < retries; attempt++) {
+    try {
+      const res = await apiFetch(input, init);
+      lastResponse = res;
+      if (res.ok) return res;
+      // Do not retry auth/client errors
+      if (res.status >= 400 && res.status < 500) return res;
+      if (attempt < retries - 1) {
+        await new Promise((r) => setTimeout(r, 600 * (attempt + 1)));
+        continue;
+      }
+      return res;
+    } catch (err) {
+      if (attempt >= retries - 1) throw err;
+      await new Promise((r) => setTimeout(r, 600 * (attempt + 1)));
+    }
+  }
+  return lastResponse!;
+}

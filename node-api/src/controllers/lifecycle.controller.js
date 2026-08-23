@@ -1,7 +1,11 @@
 const lifecycleRepo = require("../repositories/lifecycle.repository");
-const activityRepo = require("../repositories/activity.repository");
 const { withTransaction } = require("../config/db");
-const env = require("../config/env");
+const {
+  shouldDelegateOrbit,
+  resolveOrgId,
+  queueLifecycleTransitionRequested,
+} = require("../services/orbit/orbitDelegate.service");
+const { executeLifecycleTransition } = require("../services/orbit/orbitExecute.service");
 const {
   emitAndMaybePublish,
   publishToOrchFailOpen,
@@ -46,42 +50,32 @@ async function transitionLifecycle(req, res, next) {
       throw err;
     }
 
-    const orgId =
-      env.ORCH_ORGANIZATION_ID ||
-      req.body?.organization_id ||
-      req.user?.organizationId ||
-      req.headers["x-organization-id"] ||
-      req.userId ||
-      undefined;
+    if (shouldDelegateOrbit()) {
+      const envelope = await queueLifecycleTransitionRequested(req, candidateId, {
+        to_state,
+        note,
+        context,
+      });
+      return res.status(202).json({
+        status: "orchestration_accepted",
+        event_id: envelope?.event_id ?? null,
+        correlation_id: envelope?.correlation_id ?? null,
+        message:
+          "Lifecycle transition queued — ORBIT graph will run via module.orbit.bench",
+        requested_state: to_state,
+      });
+    }
 
+    const orgId = resolveOrgId(req, req.body);
     const { result, outboxEvents } = await withTransaction(async (client) => {
-      const current = await lifecycleRepo.getLatestLifecycleState(candidateId);
-      const fromState = current?.state || "AVAILABLE";
-
-      const newState = await lifecycleRepo.recordTransition(
-        {
-          candidateId,
-          organizationId: orgId,
-          toState: to_state,
-          fromState,
-          note: note || null,
-          context: context || null,
-          transitionedBy: req.userId || null,
-        },
-        client,
-      );
-
-      await activityRepo.createActivity(
-        {
-          candidateId,
-          activityType: "LIFECYCLE_CHANGED",
-          actorType: "USER",
-          actorId: req.userId || null,
-          summary: `Status updated: ${fromState} → ${to_state}${note ? ` — ${note}` : ""}`,
-          payload: { from_state: fromState, to_state, note, context },
-        },
-        client,
-      );
+      const exec = await executeLifecycleTransition(client, {
+        candidateId,
+        toState: to_state,
+        note: note || null,
+        context: context || null,
+        organizationId: orgId,
+        transitionedBy: req.userId || null,
+      });
 
       const events = [];
       const transitioned = await emitAndMaybePublish(client, {
@@ -92,7 +86,7 @@ async function transitionLifecycle(req, res, next) {
         organizationId: orgId,
         payload: {
           candidate_id: candidateId,
-          from_state: fromState,
+          from_state: exec.fromState,
           to_state,
           ...(note ? { note } : {}),
         },
@@ -116,7 +110,7 @@ async function transitionLifecycle(req, res, next) {
         if (hold) events.push(hold);
       }
 
-      return { result: newState, outboxEvents: events };
+      return { result: exec.state, outboxEvents: events };
     });
 
     for (const ev of outboxEvents) {

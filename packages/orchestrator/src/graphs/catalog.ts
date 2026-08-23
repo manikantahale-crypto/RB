@@ -184,4 +184,22 @@ export const graphSeedCatalog: GraphSeed[] = [
     },
     { id: 'graph_orbit_revenue_v1', version: 1, status: 'active' },
   ),
+  defineGraph(
+    {
+      graphKey: 'orbit.activity.workflow',
+      agentName: 'orbit',
+      nodes: [
+        {
+          id: 'note',
+          impl: 'orbit.activity.note',
+          config: { actionClass: 'INTERNAL_WRITE' },
+        },
+      ],
+      edges: [
+        ['__start__', 'note'],
+        ['note', '__end__'],
+      ],
+    },
+    { id: 'graph_orbit_activity_v1', version: 1, status: 'active' },
+  ),
 ];

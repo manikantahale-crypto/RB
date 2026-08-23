@@ -226,4 +226,5 @@ module.exports = {
   deleteJobsBulk,
   bulkSaveJobs,
   retryJob,
+  mapJobListItem,
 };

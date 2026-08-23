@@ -6,8 +6,8 @@ const env = require("./env");
 const pool = new Pool({
   connectionString: env.DATABASE_URL,
   ssl: { rejectUnauthorized: false }, // Supabase requires SSL
-  max: 3,
-  idleTimeoutMillis: 10000,
+  max: 2,
+  idleTimeoutMillis: 8000,
   connectionTimeoutMillis: 15000,
   keepAlive: true,
   keepAliveInitialDelayMillis: 10000,

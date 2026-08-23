@@ -12,9 +12,10 @@ FROM (VALUES
   ('syntra.profile.prepared', 'syntra.duplicate.detect', 'module.design.duplicate', '01900000-0000-7000-8000-000000000502'),
   ('syntra.match.requested', 'syntra.match.workflow', 'module.syntra.match', '01900000-0000-7000-8000-000000000501'),
   ('syntra.duplicate.review_required', 'duplicate.review', 'module.design.duplicate', '01900000-0000-7000-8000-000000000502'),
-  ('orbit.lifecycle.transition_requested', 'orbit.lifecycle.workflow', 'module.orbit.bench', NULL),
-  ('orbit.placement.confirm_requested', 'orbit.placement.workflow', 'module.orbit.bench', NULL),
-  ('orbit.revenue.arrange_requested', 'orbit.revenue.workflow', 'module.orbit.bench', NULL)
+  ('orbit.lifecycle.transition_requested', 'orbit.lifecycle.workflow', 'module.orbit.bench', '01900000-0000-7000-8000-000000000505'),
+  ('orbit.placement.confirm_requested', 'orbit.placement.workflow', 'module.orbit.bench', '01900000-0000-7000-8000-000000000505'),
+  ('orbit.revenue.arrange_requested', 'orbit.revenue.workflow', 'module.orbit.bench', '01900000-0000-7000-8000-000000000505'),
+  ('orbit.activity.note_requested', 'orbit.activity.workflow', 'module.orbit.bench', '01900000-0000-7000-8000-000000000505')
 ) AS v(event_type, graph_key, module_queue, agent_id)
 WHERE NOT EXISTS (
   SELECT 1 FROM graph_event_bindings b

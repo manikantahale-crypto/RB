@@ -208,4 +208,5 @@ module.exports = {
   updateCandidate,
   deleteCandidate,
   deleteCandidatesBulk,
+  mapCandidateListItem,
 };

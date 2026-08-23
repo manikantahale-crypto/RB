@@ -3,14 +3,13 @@ import { Loader2, AlertCircle } from 'lucide-react';
 import { Sidebar } from './components/Sidebar';
 import { Header } from './components/Header';
 import { RecruiterReviewBanner } from './components/RecruiterReviewBanner';
-import { OrchestrationActivityPanel } from './components/OrchestrationActivityPanel';
 import { Dashboard } from './components/Dashboard';
 import { UploadAnalyze } from './components/UploadAnalyze';
 import { DataStore } from './components/DataStore';
 import { AIWorkspace } from './components/AIWorkspace';
 import { AuthScreen } from './components/Auth/AuthScreen';
 import { useAuth } from './context/AuthContext';
-import { apiFetch } from './services/api';
+import { apiFetch, apiFetchWithRetry } from './services/api';
 import { NavigationScreen, JobRequirement, CandidateProfile } from './types';
 import { cleanFileName, cleanJobTitle, calculateSeniority } from './utils';
 
@@ -40,13 +39,18 @@ export default function App() {
     setLoading(true);
     setError(null);
     try {
-      const [jobsRes, candRes] = await Promise.all([
-        apiFetch('/jobs'),
-        apiFetch('/candidates')
-      ]);
+      const jobsRes = await apiFetchWithRetry('/jobs');
+      const candRes = await apiFetchWithRetry('/candidates');
 
       if (!jobsRes.ok || !candRes.ok) {
-        throw new Error("Failed to load data records from the backend API.");
+        let detail = '';
+        if (!jobsRes.ok) detail += ` jobs=${jobsRes.status}`;
+        if (!candRes.ok) detail += ` candidates=${candRes.status}`;
+        throw new Error(
+          detail.includes('500') || detail.includes('503')
+            ? 'Database connection pool is full. Use npm run dev + npm run dev:orch-admin only (not dev:worker separately), wait 10s, then refresh.'
+            : `Failed to load data records from the backend API.${detail}`,
+        );
       }
 
       const jobsData = await jobsRes.json();
@@ -305,7 +309,6 @@ export default function App() {
         <Header activeScreen={activeScreen} />
 
         <RecruiterReviewBanner />
-        <OrchestrationActivityPanel />
 
         <main className="flex-1 flex flex-col min-w-0 overflow-y-auto">
           {showLoader && (

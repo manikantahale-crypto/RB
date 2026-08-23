@@ -61,6 +61,7 @@ const { requireAuth } = require("./middleware/auth");
 
 app.use("/auth", require("./routes/auth.routes"));
 app.use(require("./routes/internal.routes"));
+app.use(require("./routes/internal.orbit.routes"));
 app.use(require("./routes/internal.astra.routes"));
 app.use("/api/astra", require("./routes/astra.routes"));
 app.use("/astra", require("./routes/astra.routes"));
@@ -71,6 +72,7 @@ app.use("/candidates", requireAuth, require("./routes/candidate.routes"));
 app.use("/placements", requireAuth, require("./routes/placement.routes"));
 app.use("/skills", requireAuth, require("./routes/skill.routes"));
 app.use("/stats", requireAuth, require("./routes/stats.routes"));
+app.use("/dashboard", requireAuth, require("./routes/dashboard.routes"));
 app.use(requireAuth, require("./routes/matches.routes"));
 app.use(requireAuth, require("./routes/ai.routes"));
 app.use(requireAuth, require("./routes/recruiterReview.routes"));

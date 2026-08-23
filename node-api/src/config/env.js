@@ -46,6 +46,8 @@ module.exports = {
   ORCH_EMIT_JD_RECEIVED: flag("ORCH_EMIT_JD_RECEIVED", false),
   /** Route match scoring through orchestrator graph (skip internal match.requested worker). */
   ORCH_DELEGATE_MATCH: flag("ORCH_DELEGATE_MATCH", true),
+  /** Route ORBIT UI actions through orchestrator graphs (module.orbit.bench). */
+  ORCH_DELEGATE_ORBIT: flag("ORCH_DELEGATE_ORBIT", true),
   /** Orchestrator HTTP API — used by admin runtime trace; Syntra writes outbox directly. */
   ORCH_API_URL: (process.env.ORCH_API_URL || "http://localhost:4100").replace(/\/$/, ""),
   SYNTRA_API_URL: (process.env.SYNTRA_API_URL || `http://localhost:${process.env.PORT || "4000"}`).replace(/\/$/, ""),

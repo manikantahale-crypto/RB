@@ -3,6 +3,10 @@ import { X, Loader2, AlertCircle, ArrowRightCircle } from 'lucide-react';
 import { CandidateProfile, OrbitLifecycleState } from '../../types';
 import { apiFetch } from '../../services/api';
 import { StatusBadge } from './StatusBadge';
+import {
+  isOrchestrationAccepted,
+  pollOrbitLifecycleState,
+} from '../../utils/orbitOrchestration';
 
 interface TransitionModalProps {
   candidate: CandidateProfile;
@@ -50,9 +54,13 @@ export const TransitionModal: React.FC<TransitionModalProps> = ({
         }),
       });
 
-      if (!res.ok) {
+      if (!res.ok && res.status !== 202) {
         const data = await res.json().catch(() => ({}));
         throw new Error(data.error || 'Failed to update lifecycle status');
+      }
+
+      if (isOrchestrationAccepted(res)) {
+        await pollOrbitLifecycleState(candidate.id, selected);
       }
 
       onSuccess(selected);

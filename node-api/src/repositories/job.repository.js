@@ -165,10 +165,8 @@ async function listJobs({ userId = null, limit = 50 } = {}) {
 
   const countSql = `SELECT COUNT(*)::int AS total FROM syntra.jobs ${countWhere}`;
 
-  const [listResult, countResult] = await Promise.all([
-    pool.query(listSql, queryParams),
-    pool.query(countSql, countParams),
-  ]);
+  const listResult = await pool.query(listSql, queryParams);
+  const countResult = await pool.query(countSql, countParams);
   return {
     rows: listResult.rows,
     total: countResult.rows[0]?.total ?? 0,

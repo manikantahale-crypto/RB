@@ -19,6 +19,8 @@ import {
   createLlmClientFromEnv,
   ensureAuthoringSchema,
   ensureEventBindingsSchema,
+  devPoolOpts,
+  withPgRetry,
   type LLMClient,
 } from "@tekisho/authoring";
 import { registerAgentRoutes } from "./routes/agents.js";
@@ -41,11 +43,7 @@ const dataUrl = process.env.DATABASE_RELAY_URL?.trim() || migratorUrl;
 const port = Number(process.env.ADMIN_API_PORT ?? 4200);
 
 function poolOpts(connectionString: string) {
-  return {
-    connectionString,
-    ssl: { rejectUnauthorized: false },
-    max: 2,
-  };
+  return devPoolOpts(connectionString, 1);
 }
 
 function tryCreateLlm(): LLMClient | undefined {
@@ -64,8 +62,14 @@ async function main(): Promise<void> {
   const schemaUrl = migratorUrl as string;
   const sharePool = schemaUrl === dataUrl;
   const migratorPool = new pg.Pool(poolOpts(schemaUrl));
-  await ensureAuthoringSchema(migratorPool);
-  await ensureEventBindingsSchema(migratorPool);
+  migratorPool.on("error", (err: Error) => {
+    console.error("[admin-api] pg pool error:", err.message);
+  });
+
+  await withPgRetry("admin-api schema", async () => {
+    await ensureAuthoringSchema(migratorPool);
+    await ensureEventBindingsSchema(migratorPool);
+  });
 
   const pool = sharePool ? migratorPool : new pg.Pool(poolOpts(dataUrl));
   const llm = tryCreateLlm();
