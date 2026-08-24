@@ -11,7 +11,8 @@
     "bootstrap:pgboss": "tsx src/bootstrap-pgboss.ts",
     "bootstrap:checkpointer": "tsx src/bootstrap-checkpointer.ts",
     "bootstrap:runtime": "npm run bootstrap:pgboss && npm run bootstrap:checkpointer",
-    "test": "vitest run"
+    "test": "vitest run",
+    "manual:run": "tsx scripts/manual-run.ts"
   },
   "devDependencies": {
     "@types/pg": "^8.20.4",

@@ -46,7 +46,14 @@ tmp-*.mjs
 check-*.mjs
 check-*.ts
 packages/db/scripts/
-apps/worker/scripts/
+
+# `apps/worker/scripts/` was ignored wholesale here, which was wrong in a way
+# that hides itself: the folder already holds three COMMITTED scripts
+# (seed-graphs, send-msg, trigger-event) — .gitignore does not affect files
+# that are already tracked, so they stayed visible while every NEW script added
+# beside them was silently dropped from its commit. A half-ignored folder is
+# the worst kind: it looks like it works right up until someone's file goes
+# missing. Scratch probes in there are covered by the name patterns above.
 
 # Scratch probe files — one-off scripts named test-something.ts, NOT real tests.
 # The rule that used to live here excluded every *.test.ts and **/tests/ in the
