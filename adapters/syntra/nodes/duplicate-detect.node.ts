@@ -104,7 +104,32 @@ export const duplicateDetect = defineNode({
    * Both arms pinned, because a detector that silently always says "no" would
    * pass a single-fixture suite forever.
    *
-   * HONEST STATUS: hand-written, not captured. Re-capture before the fixture runner lands.
+   * FIXTURE 2 IS CAPTURED from a live SYNTRA on 2026-08-24:
+   *
+   *     POST /internal/candidates/<id>/duplicates/detect
+   *     HTTP 200  { "status": "ok", "candidateId": "<id>", "duplicate": false }
+   *
+   * so `status: "ok"` below is observed, not inferred. The candidate was chosen
+   * by running this endpoint's own duplicate query read-only first and picking
+   * one that returns nothing — that is what makes the call a pure SELECT. The
+   * other arm reaches `createDuplicateReview` and publishes an event, so it was
+   * deliberately not exercised.
+   *
+   * FIXTURE 1 REMAINS UNCAPTURED for that reason: `review_required` is read
+   * from the handler source, not observed. Capturing it means creating two
+   * candidates that look like duplicates and cleaning up the review row and the
+   * event afterwards — worth doing, not worth doing casually.
+   *
+   * STATUS: corrected against the handler that produces the response —
+   * `node-api/src/routes/internal.routes.js`
+   * `POST /internal/candidates/:id/duplicates/detect`, which answers
+   * `{ status: "ok", candidateId, duplicate: false }` when it finds nothing and
+   * `{ status: "review_required", candidate_b, duplicate_review_id, signals }`
+   * when it does. Both status strings were guessed wrong here — "clear" and
+   * "duplicate_suspected" are words this endpoint never says. The field names
+   * the node reads (`candidate_b`, `duplicate_review_id`) were right.
+   *
+   * Still NOT captured from a live run — read from the source of the response.
    */
   fixtures: [
     {
@@ -116,7 +141,7 @@ export const duplicateDetect = defineNode({
         reviewRequired: true,
         duplicateOf: "c7e8f9a0-0000-4000-8000-000000000999",
         duplicateReviewId: "e1f2a3b4-0000-4000-8000-000000000404",
-        status: "duplicate_suspected",
+        status: "review_required",
         stubbed: false,
       },
     },
@@ -129,7 +154,7 @@ export const duplicateDetect = defineNode({
         reviewRequired: false,
         duplicateOf: null,
         duplicateReviewId: null,
-        status: "clear",
+        status: "ok",
         stubbed: false,
       },
     },

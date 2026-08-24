@@ -125,8 +125,48 @@ export const matchProcess = defineNode({
   },
 
   /**
-   * HONEST STATUS: hand-written from the response shape, not captured from a
-   * live SYNTRA run. Re-capture before the fixture runner lands.
+   * CAPTURED from a live SYNTRA on 2026-08-24:
+   *
+   *     POST /internal/matches/process   { jobId, resumeId, candidateId }
+   *     HTTP 200 (5.4s)
+   *     { "status": "processed", "jobId": "<id>", "resumeId": "<id>" }
+   *
+   * confirming both corrections below: `status` is "processed", and no score
+   * field comes back.
+   *
+   * ⚠ AND ONE THING THE CAPTURE TAUGHT US THAT READING DID NOT.
+   *
+   * That 200 was returned WITHOUT SCORING ANYTHING. `saveScoreResult` is an
+   * `UPDATE syntra.matches ... WHERE job_id = $1 AND resume_id = $2`, so it
+   * needs a shortlist row for the pair to already exist — the funnel creates
+   * those. Our captured pair had none, so the update touched zero rows, and
+   * the endpoint still answered "processed". Verified: zero match rows existed
+   * for the pair afterwards.
+   *
+   * So `status: "processed"` from this endpoint means "the request was
+   * accepted", NOT "a score was written". A run detail showing this node green
+   * is not evidence that a match was scored. If that distinction matters to a
+   * screen — and for a scoring node it does — the fix is on SYNTRA's side:
+   * report what was updated. Do not infer it here.
+   *
+   * STATUS: corrected against the handler that produces the response —
+   * `node-api/src/routes/internal.routes.js` `POST /internal/matches/process`,
+   * which answers exactly `{ status: "processed", jobId, resumeId }`.
+   *
+   * Two guesses were wrong and are now fixed:
+   *   - `status` was guessed as "scored". SYNTRA says "processed".
+   *   - `skillMatchScore` was guessed as 0.82 "from SYNTRA". The handler
+   *     returns NO score field at all, so the `r.skillMatchScore ?? r.score ??
+   *     r.matchScore ?? input.skillMatchScore ?? null` chain falls through to
+   *     the producer's value, or to null when the producer carried none.
+   *
+   * The second one is worth pausing on: the "prefer SYNTRA's score" branch in
+   * `run` is unreachable against today's SYNTRA. It is kept because the chain
+   * is harmless and the endpoint may grow a score, but nothing exercises it —
+   * do not read it as evidence that a score arrives.
+   *
+   * Still NOT captured from a live run. Read from the source of the response,
+   * which is better evidence than a guess and weaker evidence than a capture.
    *
    * Note for the fixture runner: this node is deterministic from OUR side — one HTTP call
    * in, one mapping out — so exact comparison is right. The non-determinism is
@@ -134,7 +174,7 @@ export const matchProcess = defineNode({
    */
   fixtures: [
     {
-      name: "scores a pair",
+      name: "scores a pair — SYNTRA returns no score, so the node reports none",
       input: {
         jobId: "8f14e45f-ceea-467a-9f4b-4a2c1e9d0a11",
         resumeId: "b3d4c2a1-0000-4000-8000-000000000101",
@@ -145,8 +185,8 @@ export const matchProcess = defineNode({
         jobId: "8f14e45f-ceea-467a-9f4b-4a2c1e9d0a11",
         resumeId: "b3d4c2a1-0000-4000-8000-000000000101",
         candidateId: "c7e8f9a0-0000-4000-8000-000000000202",
-        skillMatchScore: 0.82,
-        status: "scored",
+        skillMatchScore: null,
+        status: "processed",
         stubbed: false,
       },
     },
@@ -163,7 +203,7 @@ export const matchProcess = defineNode({
         resumeId: "b3d4c2a1-0000-4000-8000-000000000101",
         candidateId: null,
         skillMatchScore: 0.61,
-        status: "scored",
+        status: "processed",
         stubbed: false,
       },
     },

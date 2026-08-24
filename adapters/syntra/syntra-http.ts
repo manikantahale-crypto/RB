@@ -13,7 +13,10 @@ const SYNTRA_BASE = process.env.SYNTRA_API_URL || 'http://localhost:4000';
 
 /**
  * `force` always fakes, `off` always fails hard, `auto` (the default) fakes
- * once with a warning when SYNTRA is unreachable so local smoke stays green.
+ * once with a warning when SYNTRA is UNREACHABLE so local smoke stays green.
+ *
+ * "Unreachable" means the connection never completed — DNS, refused, reset,
+ * timed out. It does NOT mean an error response. See `postSyntra`.
  *
  * This is a DEV convenience and is not the contract's `stub`. Contract stubs
  * are CI machinery and never run in a real process; this runs in a real
@@ -43,17 +46,24 @@ export async function postSyntra(
     };
   }
 
+  // Only the connection attempt is stubbable. Everything after it is a real
+  // answer from SYNTRA and must be reported as one.
+  //
+  // THIS SPLIT IS THE WHOLE POINT. Both halves used to live in one try/catch,
+  // so the `!res.ok` throw was caught by the same handler as a refused
+  // connection and turned into `{ status: 'stubbed' }` — a 404 or a 500 came
+  // back as a SUCCESSFUL stubbed response, the node's output schema accepted
+  // it, and the run finished green. Four nodes were calling endpoints that do
+  // not exist in node-api at all, and nothing ever said so.
+  let res: Response;
   try {
-    const res = await fetch(`${SYNTRA_BASE}${path}`, {
+    res = await fetch(`${SYNTRA_BASE}${path}`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: body ? JSON.stringify(body) : undefined,
     });
-    if (!res.ok) {
-      throw new Error(`Syntra ${path} failed: ${res.status} ${await res.text()}`);
-    }
-    return (await res.json()) as SyntraResponse;
   } catch (err) {
+    // fetch only rejects when the request never got an answer.
     if (mode === 'off') throw err;
     console.warn(
       `[syntra] unreachable (${SYNTRA_BASE}${path}) — stubbing response. ` +
@@ -70,6 +80,14 @@ export async function postSyntra(
       error: err instanceof Error ? err.message : String(err),
     };
   }
+
+  // SYNTRA answered. Whatever it said is the truth, including 404 and 500 —
+  // never stubbed over, in any mode. `classifySyntraError` reads the status
+  // code out of this exact message, so the format is load-bearing.
+  if (!res.ok) {
+    throw new Error(`Syntra ${path} failed: ${res.status} ${await res.text()}`);
+  }
+  return (await res.json()) as SyntraResponse;
 }
 
 /**

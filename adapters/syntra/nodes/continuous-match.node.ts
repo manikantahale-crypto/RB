@@ -89,7 +89,29 @@ export const continuousMatch = defineNode({
     redactPaths: [],
   },
 
-  /** HONEST STATUS: hand-written, not captured. Re-capture before the fixture runner lands. */
+  /**
+   * STATUS: corrected against the handler that produces the response —
+   * `node-api/src/routes/internal.routes.js`
+   * `POST /internal/jobs/:id/continuous-match`, which answers
+   * `{ status: "ok", jobId, result_count, match_job_id, top_score, poolSize,
+   * finalists }`. `status` was guessed as "completed"; SYNTRA says "ok". The
+   * three field names the node reads were right.
+   *
+   * ⚠ THE SECOND FIXTURE CANNOT PASS EXACT COMPARISON, AND THAT IS A NODE BUG,
+   * NOT A FIXTURE BUG. `match_job_id` is `created[0]?.matchId ?? null`, so a
+   * search finding nobody returns null — and `run` then MINTS a random uuid for
+   * it (`r.match_job_id ?? crypto.randomUUID()`). The node's output is
+   * therefore non-deterministic in exactly the case this fixture pins, and no
+   * value written here can be right.
+   *
+   * Left as-is rather than quietly deleted, because the fixture is correct
+   * about the behaviour that matters (nobody found, count 0, no score) and the
+   * runner failing on it is the signal that should start the argument: should a
+   * node invent an id for a match job SYNTRA never created? A run detail
+   * showing a match job id that exists nowhere is worse than a null.
+   *
+   * Still NOT captured from a live run — read from the source of the response.
+   */
   fixtures: [
     {
       name: "finds candidates on the bench",
@@ -100,7 +122,7 @@ export const continuousMatch = defineNode({
         matchJobId: "d5f6a7b8-0000-4000-8000-000000000303",
         resultCount: 4,
         topScore: 0.88,
-        status: "completed",
+        status: "ok",
         stubbed: false,
       },
     },
@@ -113,7 +135,7 @@ export const continuousMatch = defineNode({
         matchJobId: "d5f6a7b8-0000-4000-8000-000000000304",
         resultCount: 0,
         topScore: null,
-        status: "completed",
+        status: "ok",
         stubbed: false,
       },
     },

@@ -119,8 +119,27 @@ export const resumeProcess = defineNode({
   },
 
   /**
-   * HONEST STATUS: hand-written from the response shape, not captured from a
-   * live SYNTRA run. Re-capture before the fixture runner lands.
+   * CAPTURED from a live SYNTRA on 2026-08-24. The guessed `status` was right:
+   *
+   *     POST /internal/resumes/<id>/process   { candidateId }
+   *     HTTP 200 (7.1s)  { "status": "processed", "resumeId": "<id>" }
+   *
+   * Confirmed on the row afterwards: the resume was parsed by an LLM
+   * (`primary_role`, `total_experience`, summary), embedded, and marked
+   * `processing_status=processed`.
+   *
+   * TWO THINGS THIS ENDPOINT DOES THAT THE NODE'S OUTPUT DOES NOT SHOW, both
+   * worth knowing before anyone points it at real data:
+   *
+   *   1. When `candidateId` is supplied it OVERWRITES that candidate's
+   *      identity fields — full name, email, phone, immigration status,
+   *      location, linkedin, github — from whatever the LLM extracted.
+   *   2. It ALWAYS runs the matching funnel afterwards. Unlike the JD path,
+   *      `runForResume` has no `ORCH_DELEGATE_MATCH` guard, so calling this
+   *      endpoint searches every open requirement and can write shortlist rows.
+   *
+   * Captured against a throwaway candidate + resume created for the purpose
+   * and deleted afterwards, for reason 1.
    */
   fixtures: [
     {

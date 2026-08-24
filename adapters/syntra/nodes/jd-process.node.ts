@@ -147,14 +147,31 @@ export const jdProcess = defineNode({
   },
 
   /**
-   * HONEST STATUS: hand-written from the response shape, NOT captured from a
-   * live SYNTRA run — SYNTRA :4000 was not running when this was converted, so
-   * the only responses available locally were the stub's.
+   * CAPTURED from a live SYNTRA on 2026-08-24. This is no longer a guess.
    *
-   * Nothing executes fixtures yet — the runner is still to come. Before it lands,
-   * re-capture both of these against a real dev SYNTRA and correct `status`
-   * and `parserVersion` to whatever it actually returns. A fixture that was
-   * guessed is worse than none, because it looks like evidence.
+   * `POST /internal/jobs/<id>/process` answered, in 8.6s:
+   *
+   *     HTTP 200  { "status": "processed", "jobId": "<id>" }
+   *
+   * The guessed `status: "processed"` was right, and `parserVersion: "syntra"`
+   * is correct because the node derives it from `r.stub !== true` rather than
+   * from anything SYNTRA sends.
+   *
+   * What the call did, confirmed on the row afterwards: parsed the JD with an
+   * LLM (`primary_role`, `jd_summary`, 5 skills), generated a
+   * `text-embedding-3-small` v1 embedding, set `processing_status=processed`,
+   * and wrote one `syntra.jd.parsed` event to the outbox. The matching funnel
+   * did NOT run — `ORCH_DELEGATE_MATCH=1` with `PLATFORM_EVENTS_ENABLED=1`
+   * defers it to the orchestrator.
+   *
+   * Captured against a throwaway job created for the purpose and deleted
+   * afterwards, because this endpoint OVERWRITES the parse of whatever job it
+   * is given (`saveAiResultAndEmbedding`). Never point it at a real
+   * requirement to "just check something".
+   *
+   * Fixture 2 (`requirement_id` from the astra producer) is NOT captured — it
+   * exercises this node's input aliasing, not a different SYNTRA response, so
+   * the same response applies.
    */
   fixtures: [
     {
