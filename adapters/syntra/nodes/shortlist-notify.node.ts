@@ -23,19 +23,28 @@ const Input = z
 const Output = z.object({
   jobId: z.string(),
   matchJobId: z.string().nullable(),
+  /**
+   * Always true: this node calls the endpoint every time, exactly as the engine
+   * implementation did. It is kept because run detail's honest answer to "was
+   * anyone told?" is the record that the send was attempted, and because a
+   * future refusal — if one is ever justified in its own change — has somewhere
+   * to report itself.
+   */
   notified: z.boolean(),
   status: z.string(),
   stubbed: z.boolean(),
 });
 
-const Config = z.object({
-  /**
-   * Not adminExposed. Suppressing notifications for small shortlists sounds
-   * like a preference, but it decides whether a person is told about a
-   * candidate — that is workflow structure and it rides review.
-   */
-  minResultsToNotify: z.number().int().min(0).optional(),
-});
+/**
+ * Empty on purpose.
+ *
+ * A `minResultsToNotify` suppression threshold was invented during the
+ * conversion and has been removed: the engine implementation always called the
+ * endpoint, nobody asked for the change, and deciding that a person is NOT told
+ * about a shortlist is a product decision, not a conversion detail. If it is
+ * wanted, it arrives as its own change with its own argument.
+ */
+const Config = z.object({});
 
 export const shortlistNotify = defineNode({
   key: "syntra.shortlist.notify",
@@ -131,38 +140,25 @@ export const shortlistNotify = defineNode({
       },
     },
     {
-      name: "stays silent when the shortlist is below the threshold",
+      name: "notifies from the astra producer's requirement_id, with no match job",
       input: {
         requirement_id: "8f14e45f-ceea-467a-9f4b-4a2c1e9d0a11",
-        match_job_id: "d5f6a7b8-0000-4000-8000-000000000305",
         result_count: 0,
       },
-      config: { minResultsToNotify: 1 },
+      config: {},
       expectedOutput: {
         jobId: "8f14e45f-ceea-467a-9f4b-4a2c1e9d0a11",
-        matchJobId: "d5f6a7b8-0000-4000-8000-000000000305",
-        notified: false,
-        status: "suppressed",
+        matchJobId: null,
+        notified: true,
+        status: "notified",
         stubbed: false,
       },
     },
   ],
 
-  run: async (ctx: NodeRunCtx, input, config) => {
+  run: async (ctx: NodeRunCtx, input, _config) => {
     const jobId = input.jobId ?? input.requirement_id!;
     const matchJobId = input.match_job_id ?? null;
-
-    // Checked BEFORE the call. An external send that should not happen must
-    // not be attempted, not merely ignored afterwards.
-    const floor = config.minResultsToNotify;
-    if (typeof floor === "number" && (input.result_count ?? 0) < floor) {
-      ctx.logger.info("shortlist below notify threshold — not notifying", {
-        jobId,
-        resultCount: input.result_count ?? 0,
-        floor,
-      });
-      return { jobId, matchJobId, notified: false, status: "suppressed", stubbed: false };
-    }
 
     ctx.logger.info("calling Syntra shortlist notify", { jobId, orgId: ctx.orgId });
     const r = await postSyntra(`/internal/jobs/${jobId}/shortlist/notify`, {

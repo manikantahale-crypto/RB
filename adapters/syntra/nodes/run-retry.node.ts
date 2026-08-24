@@ -3,6 +3,26 @@
  *
  * The question this node had to answer: "A node that retries runs, inside a run. Check this cannot loop."
  *
+ * ── ADDED, NOT CONVERTED ────────────────────────────────────────────────
+ * `maxRetryDepth` and `retryableErrorCodes`, and the two checks in `run` that
+ * read them, are NEW BEHAVIOUR. The engine implementation this node replaces
+ * had no loop guard at all — it called the endpoint and returned.
+ *
+ * This is called out because a conversion is supposed to add nothing, and this
+ * one did. It is stated here rather than left for a reviewer to discover: the
+ * rest of this file is a faithful conversion, and these two config fields are
+ * the exception.
+ *
+ * Why it was kept rather than removed for parity: checking "can this loop?"
+ * showed that it can (below), and the only other thing stopping it is an
+ * assertion about a service another team owns which nobody has confirmed. A
+ * brake we own is worth having on a loop that costs money every turn.
+ *
+ * Nothing routes to this node today — no active binding names a graph that
+ * contains it — so the guard has never fired in production, and this comment
+ * is the record of where it came from if it ever needs to be re-argued.
+ * ────────────────────────────────────────────────────────────────────────
+ *
  * THE LOOP, WRITTEN OUT, because "check this cannot loop" deserves an answer
  * rather than a reassurance:
  *
@@ -59,6 +79,7 @@ const Output = z.object({
   stubbed: z.boolean(),
 });
 
+/** Both fields are the added behaviour the header describes — neither existed before. */
 const Config = z.object({
   /**
    * Not adminExposed. This is a safety limit on an automatic loop, not a
