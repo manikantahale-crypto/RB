@@ -2,7 +2,7 @@ import { Annotation, StateGraph, type CompiledGraph, isGraphInterrupt } from '@l
 import type { BaseCheckpointSaver } from '@langchain/langgraph-checkpoint';
 import type { Pool } from 'pg';
 import type { EventInput } from '../types.js';
-import { nodeRegistry, type NodeKey } from '../nodes/registry.js';
+import { nodeRegistry, type NodeRegistry } from '../nodes/registry.js';
 import type { SyntraGraphState } from '../nodes/types.js';
 import { createNodeCtx } from '../nodes/ctx.js';
 import {
@@ -98,12 +98,21 @@ export class GraphCompiler {
   private cache = new Map<string, Cached>();
   private policy: PolicyEngine;
 
+  private nodes: NodeRegistry;
+
   constructor(
     private pool: Pool,
     private checkpointer?: BaseCheckpointSaver,
     policy?: PolicyEngine,
+    /**
+     * Supplied by the composition root (`apps/worker`), which is the only
+     * place allowed to import module adapters. Defaults to the engine's
+     * built-in nodes so scripts and tests keep working unchanged.
+     */
+    nodes?: NodeRegistry,
   ) {
     this.policy = policy ?? new PolicyEngine(pool);
+    this.nodes = nodes ?? nodeRegistry;
   }
 
   /**
@@ -309,7 +318,14 @@ export class GraphCompiler {
     };
 
     for (const node of def.nodes) {
-      const factory = nodeRegistry[node.impl as NodeKey];
+      const factory = this.nodes[node.impl];
+      if (!factory) {
+        throw new Error(
+          `DEFINITION_INVALID: unknown impl "${node.impl}" — not in the registry ` +
+            `supplied to GraphCompiler. If this node was just converted to a ` +
+            `contract, add it to the worker's composition.`,
+        );
+      }
       const impl = factory();
       const config = node.config ?? {};
       const actionClass = resolveActionClass(node.impl, config);

@@ -1,0 +1,72 @@
+# Ownership boundaries, enforced by GitHub. Last matching pattern wins.
+#
+# The boundary is drawn on the paths that already exist. This file moves NO
+# files and changes no code — it only decides who reviews what.
+#
+# ─────────────────────────────────────────────────────────────────────────────
+# BEFORE ENABLING: the team handles below are placeholders. Replace them with
+# real GitHub teams under the AI-BenchSales org (or individual @usernames),
+# then turn on Settings → Branches → "Require review from Code Owners".
+#
+#   @AI-BenchSales/orch-authoring   orchestrator authoring layer + admin UI
+#   @AI-BenchSales/product-modules  SYNTRA / ASTRA / ORBIT services and UIs
+#   @SuhasGangireddy                authoring lead
+#   @<modules-lead>                 modules lead — set this before enabling
+#
+# A pattern with an unresolvable owner is silently ignored by GitHub, so a typo
+# here reads as "no review required" rather than as an error. Check the
+# Settings → Code owners page after the first push.
+# ─────────────────────────────────────────────────────────────────────────────
+
+
+# ── default ──────────────────────────────────────────────────────────────────
+# Anything not claimed below reaches a lead rather than nobody.
+*                                   @SuhasGangireddy
+
+# ── orchestrator authoring ───────────────────────────────────────────────────
+# The authoring layer, the admin surfaces, and the contracts they build on.
+/packages/authoring/                @AI-BenchSales/orch-authoring
+/apps/admin/                        @AI-BenchSales/orch-authoring
+/apps/admin-api/                    @AI-BenchSales/orch-authoring
+
+# The two contract packages define what a node and a routing rule ARE, so
+# everything else is written against them. Lead review.
+/packages/node-contract/            @SuhasGangireddy
+/packages/routing-contract/         @SuhasGangireddy
+
+# ── shared runtime · both groups ─────────────────────────────────────────────
+# Actively developed from both sides — authoring changes wire into it, module
+# work extends it. Neither side should land here alone.
+/packages/orchestrator/             @AI-BenchSales/orch-authoring @AI-BenchSales/product-modules
+/apps/worker/                       @AI-BenchSales/orch-authoring @AI-BenchSales/product-modules
+/apps/api/                          @AI-BenchSales/orch-authoring @AI-BenchSales/product-modules
+
+# ── adapters ─────────────────────────────────────────────────────────────────
+# The shell and its rules are platform work. An individual node contract
+# declares the shape of a service endpoint, so it belongs with whoever owns
+# that endpoint — otherwise a response field changes on one side and the
+# contract fails closed on the other.
+/adapters/                          @AI-BenchSales/orch-authoring
+/adapters/syntra/                   @AI-BenchSales/product-modules
+/adapters/astra/                    @AI-BenchSales/product-modules
+
+# ── product modules ──────────────────────────────────────────────────────────
+/node-api/                          @AI-BenchSales/product-modules
+/Front/                             @AI-BenchSales/product-modules
+/packages/agents/                   @AI-BenchSales/product-modules
+/packages/observability/            @AI-BenchSales/product-modules
+
+# ── the chokepoint · BOTH LEADS REQUIRED ─────────────────────────────────────
+# These cannot be duplicated without the system drifting apart, and this
+# repository has already proved it: two migration numbering series, no runner,
+# a tracking table maintained by hand, and at least one migration
+# (V28__ml_scoring_log.sql) applied to the database whose file exists in no
+# branch. That is what an unowned shared resource looks like.
+/packages/db/                       @SuhasGangireddy @<modules-lead>
+/packages/db/migrations/            @SuhasGangireddy @<modules-lead>
+/packages/domain/                   @SuhasGangireddy @<modules-lead>
+/packages/graph-contract/           @SuhasGangireddy @<modules-lead>
+
+# ── governance ───────────────────────────────────────────────────────────────
+/.github/                           @SuhasGangireddy
+/docs/adr/                          @SuhasGangireddy

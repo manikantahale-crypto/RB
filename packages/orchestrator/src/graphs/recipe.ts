@@ -1,4 +1,3 @@
-import { nodeRegistry } from '../nodes/registry.js';
 import { assertKnownStateSchema } from './state.js';
 import { entryInputSchemas } from '../contracts/payloads.js';
 import {
@@ -34,11 +33,16 @@ export function validateDefinition(def: GraphDefinition): void {
     );
   }
 
-  for (const node of def.nodes) {
-    if (!(node.impl in nodeRegistry)) {
-      throw new Error(`DEFINITION_INVALID: unknown impl "${node.impl}"`);
-    }
-  }
+  // The "does this impl exist?" check deliberately does NOT happen here.
+  //
+  // Seed recipes are validated at module load, before any registry has been
+  // composed — and the real registry is assembled by the worker
+  // from the engine's own nodes plus the module adapters. Checking against the
+  // engine's list alone would reject every node that has been moved to a
+  // contract.
+  //
+  // GraphCompiler does the check instead, against the registry it was actually
+  // given, and names the missing impl.
 }
 
 /** Author a recipe in git; worker seeds it into graph_definitions (design §8). */

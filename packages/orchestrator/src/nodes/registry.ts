@@ -56,3 +56,14 @@ export const nodeRegistry = {
 } as const satisfies Record<string, NodeFactory>;
 
 export type NodeKey = keyof typeof nodeRegistry;
+
+/**
+ * The shape GraphCompiler accepts.
+ *
+ * Open-keyed on purpose. The engine's own `nodeRegistry` above is one valid
+ * value, but the registry the worker actually runs is *composed* — engine nodes
+ * plus whatever the module adapters contribute — so it cannot be constrained to
+ * `NodeKey`. A node moved to a contract keeps its key and overrides the entry
+ * above; nothing here needs deleting when that happens.
+ */
+export type NodeRegistry = Record<string, NodeFactory>;

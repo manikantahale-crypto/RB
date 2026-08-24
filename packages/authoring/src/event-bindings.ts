@@ -92,7 +92,10 @@ export class EventAlreadyBoundError extends Error {
  * insert/update this agent's binding. Same agent may replace its own binding.
  */
 export async function upsertActiveEventBinding(
-  client: PoolClient | DbQueryable,
+  // Not `PoolClient | DbQueryable`: a union of two call signatures is not
+  // callable, which is what made three lines below fail to typecheck.
+  // PoolClient already satisfies DbQueryable structurally.
+  client: DbQueryable,
   args: {
     eventType: string;
     orgId: string | null;

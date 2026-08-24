@@ -26,6 +26,7 @@ import { ensureJobPinTable } from "./version-pin.js";
 import { ensureIngressEventSchemas } from "./ensure-event-schemas.js";
 import { ensureFailedWorkflowsTable } from "@tekisho/orchestrator/src/workflow/failed-workflows.js";
 import { runWorkflowWithOrgContext } from "./run-with-org.js";
+import { composeNodeRegistry, describeNodeRegistry } from "./node-registry.js";
 
 const databaseUrl = new URL(env.DATABASE_MIGRATOR_URL);
 
@@ -70,7 +71,14 @@ async function bootstrapPgBoss(): Promise<void> {
   });
   await withPgRetry("worker checkpointer", () => checkpointer.setup());
 
-  const compiler = new GraphCompiler(pool, checkpointer);
+  // The composition root supplies the nodes; the engine only defines the shape.
+  const compiler = new GraphCompiler(
+    pool,
+    checkpointer,
+    undefined, // policy — default
+    composeNodeRegistry(),
+  );
+  console.log(`[Nodes] ${describeNodeRegistry()}`);
   await withPgRetry("worker graph seed", () => compiler.ensureSchemaAndSeed());
   await withPgRetry("worker failed_workflows", () =>
     ensureFailedWorkflowsTable(pool),

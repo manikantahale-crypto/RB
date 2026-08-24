@@ -24,6 +24,9 @@ coverage/
 *.log
 .turbo/
 .cache/
+.vite/
+test-results/
+playwright-report/
 
 # OS / IDE
 .DS_Store
@@ -45,11 +48,10 @@ check-*.ts
 packages/db/scripts/
 apps/worker/scripts/
 
-# Local test suites & test-only helpers (keep out of git for now)
-**/*.test.ts
-**/*.test.js
-**/*.spec.ts
-**/*.spec.js
-**/tests/
-**/__tests__/
-packages/orchestrator/src/nodes/test-*.ts
+# Scratch probe files — one-off scripts named test-something.ts, NOT real tests.
+# The rule that used to live here excluded every *.test.ts and **/tests/ in the
+# repository. It dates from when there were no tests to commit, and it means any
+# test added since was silently dropped from its commit while CI stayed green.
+# Real tests belong in git.
+/packages/orchestrator/src/nodes/test-*.ts
+/node-api/test-*.js

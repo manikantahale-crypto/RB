@@ -7,6 +7,7 @@
   "types": "./src/bootstrap-pgboss.ts",
   "scripts": {
     "start": "tsx src/bootstrap-pgboss.ts",
+    "typecheck": "tsc --noEmit",
     "bootstrap:pgboss": "tsx src/bootstrap-pgboss.ts",
     "bootstrap:checkpointer": "tsx src/bootstrap-checkpointer.ts",
     "bootstrap:runtime": "npm run bootstrap:pgboss && npm run bootstrap:checkpointer",

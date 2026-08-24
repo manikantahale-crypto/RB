@@ -2,7 +2,9 @@
   "extends": "../../tsconfig.base.json",
   "compilerOptions": {
     "outDir": "dist",
-    "rootDir": "src"
+    "rootDir": "src",
+    // graph-definition.ts imports node:crypto for checksumOf.
+    "types": ["node"]
   },
   "include": ["src"]
 }

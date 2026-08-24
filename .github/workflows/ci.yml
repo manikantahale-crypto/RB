@@ -1,0 +1,124 @@
+# CI — the checks every PR must pass.
+#
+# This repository had no CI before this file. Jobs are named so a red build
+# says which rule broke, not just "CI failed".
+#
+# Nothing here needs a database, a network service, or an API key, and no test
+# may ever call a real LLM.
+#
+# First slice. Still to come: the fixture runner, the event-chain
+# check, and routing simulation against committed expected outcomes — each
+# becomes another named job here.
+
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches:
+      - feature/unified-sao-orch
+      - feature/orch-authoring-platform
+
+# A new push to the same branch cancels the run already in flight.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  typecheck:
+    name: typecheck
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+
+      - name: node contract — the constitution
+        run: npm run typecheck -w @tekisho/node-contract
+
+      - name: routing contract
+        run: npm run typecheck -w @tekisho/routing-contract
+
+      - name: graph contract
+        run: npm run typecheck -w @tekisho/graph-contract
+
+      - name: authoring
+        run: npm run typecheck -w @tekisho/authoring
+
+      - name: admin UI
+        run: npm run typecheck -w @tekisho/admin
+
+      - name: admin API
+        run: npm run typecheck -w @tekisho/admin-api
+
+      - name: adapters — every *.node.ts
+        run: npm run typecheck:adapters
+
+  test:
+    name: tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+
+      # Runs every workspace with a test script. Packages without tests pass
+      # rather than fail — see passWithNoTests in their vitest configs.
+      #
+      # Note for anyone adding tests: the orchestrator and authoring configs
+      # used to match only `tests/**`, so a test written beside the code was
+      # silently skipped while this job stayed green. Both now match either
+      # layout. If you add a test and the count here does not go up, that is
+      # the first thing to check.
+      - name: unit tests
+        run: npm test --workspaces --if-present
+
+  secrets:
+    name: no committed credentials
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      # WILL FAIL until two pre-existing files are sanitised:
+      #   .env.example          — a real-looking Supabase URL and password
+      #   packages/db/flyway.conf — flyway.password
+      # Both are already pushed, so removing the line is not enough; the values
+      # must be rotated. Blocking on purpose — a committed live credential is
+      # not a warning.
+      - name: scan tracked files
+        run: bash .github/check-secrets.sh
+
+  # ── Known debt ──────────────────────────────────────────────────────────
+  # Non-blocking on purpose. A build red from day one gets ignored, and is then
+  # worth nothing when a real break happens. The counts are in the step names
+  # so they can be driven down and this job promoted into `typecheck`.
+  #
+  # Both counts share two root causes, neither introduced by recent work:
+  #   packages/domain/events/platform-event.ts — generic index on EventPayloadMap
+  #   packages/orchestrator/src/routing/table.ts — duplicate object literal keys
+  # The worker inherits the engine's errors; fixing the engine fixes both.
+  known-debt:
+    name: known debt (not blocking)
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+
+      - name: engine — 11 errors
+        run: npm run typecheck -w @tekisho/orchestrator
+
+      - name: worker — 11 errors, inherited from the engine
+        run: npm run typecheck -w @tekisho/worker
