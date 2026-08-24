@@ -1,7 +1,7 @@
 # Stage 1 — What we build
 
 **Plan we follow:** [`agent-authoring-admin-design-final.md`](./agent-authoring-admin-design-final.md)  
-**Index:** [`PLAN.md`](./PLAN.md) · **Status:** [`STATUS.md`](./STATUS.md)
+**Status:** [`STATUS.md`](./STATUS.md)
 
 **Pipeline:** Agent List → Policy Editor → Generate → **`generated`**  
 **Constraint:** *nothing executes* (no compile / publish / activate / run).

@@ -232,7 +232,7 @@ API returned **202 accepted**.
 | 3 | `npm run start -w @tekisho/api` | Front door API `:4100` |
 
 ```powershell
-cd C:\Users\Digi\Documents\orchaestration\orchaestration
+# from the repository root
 
 # Terminal 2
 npm start
@@ -328,13 +328,15 @@ From commit `c00f101` (*ingress/router, recipe defs, and tenant DB context*), pl
 | File | What it is |
 |------|------------|
 | `PHASE_1.md` | **This file** — full Phase 1 explanation |
-| `PHASE_2.md` | Hardening plan |
-| `PHASE_3.md` | Module fan-out plan |
-| `FRONT_DOOR.md` | How to run / call ingress |
-| `WORKFLOW_MAP.md` | Pictures + file map |
-| `plan.md` | What’s next (often local / gitignored) |
-| `STATUS_TRACKER.md` | Checklist (often local / gitignored) |
-| `ORCHESTRATOR_AUDIT.md` | Audit write-up (often local / gitignored) |
+| `BRIDGE.md` | Ingress path — how an event reaches the orchestrator |
+| `UNIFIED_STACK.md` | How SYNTRA, the orchestrator and admin fit together |
+| `DEMO_GUIDE.md` | Starting the whole stack and watching it run |
+| `docs/adr/` | Settled decisions — node contract, node registry, routing fan-out |
+
+The Phase 2 and Phase 3 plans that used to be listed here were removed: both
+still claimed "not started" long after the work was done. What remains genuinely
+open from them is replay and checkpoint pruning. Recover either from history if
+the detail is needed — `git log --diff-filter=D -- PHASE_2.md`.
 
 ### API (front door HTTP)
 
@@ -414,11 +416,10 @@ From commit `c00f101` (*ingress/router, recipe defs, and tenant DB context*), pl
 | Doc | Use it for |
 |-----|------------|
 | `PHASE_1.md` | This full Phase 1 story |
-| `FRONT_DOOR.md` | Run / test ingress |
-| `WORKFLOW_MAP.md` | Diagrams + file roles |
-| `plan.md` | What to do next |
-| `STATUS_TRACKER.md` | Checklist |
-| `ORCHESTRATOR_AUDIT.md` | Deeper “built vs design” |
+| `BRIDGE.md` | Run / test ingress |
+| `UNIFIED_STACK.md` | Which service is which, and what talks to what |
+| `DEMO_GUIDE.md` | Starting all four processes in order |
+| `apps/admin/ADMIN_UX_GUIDE.md` | The admin UI, screen by screen |
 
 ---
 

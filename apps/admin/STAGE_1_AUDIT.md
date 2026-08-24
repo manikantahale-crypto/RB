@@ -3,7 +3,7 @@
 **Date:** 2026-08-11  
 **Status:** Stage 1 done (Generate ends at `generated`)  
 **Design we follow:** [`agent-authoring-admin-design-final.md`](./agent-authoring-admin-design-final.md)  
-**Short plan:** [`STAGE_1.md`](./STAGE_1.md) · [`PLAN.md`](./PLAN.md) · [`STATUS.md`](./STATUS.md)
+**Short plan:** [`STAGE_1.md`](./STAGE_1.md) · [`STATUS.md`](./STATUS.md)
 
 This file explains Stage 1 in plain English: what we built, which files do what, what goes in, what comes out, and which gates stop bad work.
 
@@ -178,7 +178,6 @@ SPA proxies `/api` → `:4200`.
 | File | What it is |
 |------|------------|
 | `agent-authoring-admin-design-final.md` | Full design (source of truth) |
-| `PLAN.md` | Stage split map |
 | `STAGE_1.md` / `STAGE_2.md` / `STAGE_3.md` | Per-stage scope |
 | `RUNTIME.md` | Runtime companion (not built in Stage 1) |
 | `STATUS.md` | Checklist / changelog |

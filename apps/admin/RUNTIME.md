@@ -1,7 +1,6 @@
 # Runtime companion (already built — not an authoring stage)
 
 **Canonical source:** [`agent-authoring-admin-design-final.md`](./agent-authoring-admin-design-final.md) §10, §11 (runtime column), §12.2  
-**Plan index:** [`PLAN.md`](./PLAN.md)
 
 This is **not** Stage 1 / 2 / 3 work. The final design includes it so the whole loop is legible. Authoring stages **write** to the graph store; this runtime **reads** published/active graphs and executes them.
 

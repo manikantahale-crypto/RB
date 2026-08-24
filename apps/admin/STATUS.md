@@ -3,7 +3,7 @@
 **Updated:** 2026-08-13  
 **Design / plan (final):** [`agent-authoring-admin-design-final.md`](./agent-authoring-admin-design-final.md)  
 **LLM generator:** [`llm-graph-generator-design.md`](./llm-graph-generator-design.md)  
-**Stages:** [`PLAN.md`](./PLAN.md) · [`STAGE_1.md`](./STAGE_1.md) · [`STAGE_1_AUDIT.md`](./STAGE_1_AUDIT.md) · [`STAGE_2.md`](./STAGE_2.md) · [`STAGE_2_AUDIT.md`](./STAGE_2_AUDIT.md) · [`STAGE_3.md`](./STAGE_3.md) · [`STAGE_3_AUDIT.md`](./STAGE_3_AUDIT.md) · [`RUNTIME.md`](./RUNTIME.md)  
+**Stages:** [`STAGE_1.md`](./STAGE_1.md) · [`STAGE_1_AUDIT.md`](./STAGE_1_AUDIT.md) · [`STAGE_2.md`](./STAGE_2.md) · [`STAGE_2_AUDIT.md`](./STAGE_2_AUDIT.md) · [`STAGE_3.md`](./STAGE_3.md) · [`STAGE_3_AUDIT.md`](./STAGE_3_AUDIT.md) · [`RUNTIME.md`](./RUNTIME.md)  
 **Compile / Publish designs:** [`COMPILE_DESIGN.md`](./COMPILE_DESIGN.md) · [`PUBLISH_DESIGN.md`](./PUBLISH_DESIGN.md)
 
 Legend: ✅ Done · 🟡 Partial · ❌ Not started · ⛔ Blocked

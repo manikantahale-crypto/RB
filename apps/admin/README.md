@@ -5,7 +5,6 @@
 | Doc | Purpose |
 |-----|---------|
 | [`agent-authoring-admin-design-final.md`](./agent-authoring-admin-design-final.md) | Final design (canonical) |
-| [`PLAN.md`](./PLAN.md) | Stage division index — section → stage map (nothing missing) |
 | [`STAGE_1.md`](./STAGE_1.md) | Stage 1: Agent List → Policy Editor → Generate → `generated` |
 | [`STAGE_1_AUDIT.md`](./STAGE_1_AUDIT.md) | Full Stage 1 audit |
 | [`STAGE_2.md`](./STAGE_2.md) | Stage 2: Compile → `compiled` |

@@ -1,7 +1,6 @@
 # Stage 3 — Publish (+ activate)
 
 **Canonical source:** [`agent-authoring-admin-design-final.md`](./agent-authoring-admin-design-final.md)  
-**Plan index:** [`PLAN.md`](./PLAN.md)  
 **Prerequisite:** Stage 2 complete (status `compiled`)  
 **Transitions:** `compiled ──Publish──▶ published ──activate──▶ active`  
 **Owns:** review-gate publish; activate so runtime can resolve the graph; rollback

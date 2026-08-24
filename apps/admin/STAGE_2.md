@@ -1,7 +1,6 @@
 # Stage 2 — Compile
 
 **Canonical source:** [`agent-authoring-admin-design-final.md`](./agent-authoring-admin-design-final.md)  
-**Plan index:** [`PLAN.md`](./PLAN.md)  
 **Prerequisite:** Stage 1 complete (status `generated`)  
 **Transition:** `generated ──Compile──▶ compiled`  
 **Owns:** parse + validate artifact into a graph; checksum; version; **does not** publish or activate

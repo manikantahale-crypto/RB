@@ -3,7 +3,7 @@
 Authoring HTTP API for Stage 1 (Save policy + Generate).
 
 **All plan / status / design docs:** [`../admin/`](../admin/)  
-Especially: [`../admin/agent-authoring-admin-design-final.md`](../admin/agent-authoring-admin-design-final.md), [`../admin/PLAN.md`](../admin/PLAN.md), [`../admin/STAGE_1.md`](../admin/STAGE_1.md), [`../admin/STATUS.md`](../admin/STATUS.md)
+Especially: [`../admin/agent-authoring-admin-design-final.md`](../admin/agent-authoring-admin-design-final.md), [`../admin/STAGE_1.md`](../admin/STAGE_1.md), [`../admin/STATUS.md`](../admin/STATUS.md)
 
 Do **not** add a second copy of those docs here.
 
