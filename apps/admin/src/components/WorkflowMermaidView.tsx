@@ -8,6 +8,7 @@ import {
   type RefObject,
 } from "react";
 import mermaid from "mermaid";
+import { token } from "../lib/tokens.js";
 import type { GraphDefinition } from "@tekisho/authoring/src/graph-definition.js";
 import {
   resolveNodeCopy,
@@ -48,14 +49,14 @@ const MERMAID_FONT_FAMILY =
 
 const EDGE_TONE_COLORS = {
   positive: {
-    bg: "#ecfdf3",
-    text: "#027a48",
-    border: "#a6e8bf",
+    bg: "var(--success-bg-canvas)",
+    text: "var(--green-success-strong)",
+    border: "var(--success-border-canvas)",
   },
   negative: {
-    bg: "#fef3f2",
-    text: "#b42318",
-    border: "#fecdca",
+    bg: "var(--danger-bg-canvas)",
+    text: "var(--status-danger-fg)",
+    border: "var(--danger-border-canvas)",
   },
 } as const;
 
@@ -69,7 +70,13 @@ function ensureMermaidInit() {
     themeVariables: {
       fontFamily: MERMAID_FONT_FAMILY,
       // Neutral default — per-tone colors applied after render.
-      edgeLabelBackground: "#ffffff",
+      //
+      // RESOLVED, not `var(...)`. Mermaid runs theme variables through its own
+      // colour maths — lighten, darken, pick contrasting text — so a custom
+      // property string reaches those functions unparsed and renders an
+      // invisible diagram. Reading the token keeps the value in tokens.css,
+      // so restyling the app still restyles the diagram.
+      edgeLabelBackground: token("--neutral-0", "#ffffff"),
     },
     flowchart: {
       htmlLabels: true,
@@ -137,7 +144,7 @@ function applyEdgeLabelTones(svgEl: Element) {
       "div, span, p, label",
     )) {
       // Soft mask so text stays readable where it crosses a connector line.
-      el.style.background = "#f6f7f9";
+      el.style.background = "var(--surface-tint-c)";
       el.style.color = colors.text;
       el.style.border = "none";
       el.style.borderRadius = "0";
@@ -217,14 +224,14 @@ type NodeViewModel = {
 
 const OUTCOME_STYLES = {
   positive: {
-    bg: "#ecfdf3",
-    text: "#027a48",
-    border: "#a6e8bf",
+    bg: "var(--success-bg-canvas)",
+    text: "var(--green-success-strong)",
+    border: "var(--success-border-canvas)",
   },
   negative: {
-    bg: "#fef3f2",
-    text: "#b42318",
-    border: "#fecdca",
+    bg: "var(--danger-bg-canvas)",
+    text: "var(--status-danger-fg)",
+    border: "var(--danger-border-canvas)",
   },
 } as const;
 
@@ -232,11 +239,11 @@ const STATUS_CHIP: Record<
   NodeRunStatus,
   { label: string; bg: string; color: string; border: string }
 > = {
-  pending: { label: "Pending", bg: "#f8fafc", color: "#64748b", border: "#e2e8f0" },
-  running: { label: "Running", bg: "#eff6ff", color: "#1d4ed8", border: "#bfdbfe" },
-  succeeded: { label: "Done", bg: "#ecfdf3", color: "#027a48", border: "#a6e8bf" },
-  failed: { label: "Failed", bg: "#fef3f2", color: "#b42318", border: "#fecdca" },
-  waiting: { label: "Waiting on you", bg: "#fff8ec", color: "#7a3d00", border: "#e2a53a" },
+  pending: { label: "Pending", bg: "var(--slate-50)", color: "var(--slate-500)", border: "var(--slate-200)" },
+  running: { label: "Running", bg: "var(--info-bg)", color: "var(--info-fg)", border: "var(--info-border)" },
+  succeeded: { label: "Done", bg: "var(--success-bg-canvas)", color: "var(--green-success-strong)", border: "var(--success-border-canvas)" },
+  failed: { label: "Failed", bg: "var(--danger-bg-canvas)", color: "var(--status-danger-fg)", border: "var(--danger-border-canvas)" },
+  waiting: { label: "Waiting on you", bg: "var(--warning-bg-canvas)", color: "var(--warning-fg-canvas)", border: "var(--warning-accent-canvas)" },
 };
 
 function sectionHeading(label: string) {
@@ -247,7 +254,7 @@ function sectionHeading(label: string) {
         fontWeight: 800,
         letterSpacing: "0.12em",
         textTransform: "uppercase",
-        color: "#94a3b8",
+        color: "var(--slate-400)",
         marginBottom: 6,
       }}
     >
@@ -268,9 +275,9 @@ function HeaderIcon({ isGate }: { isGate: boolean }) {
         alignItems: "center",
         justifyContent: "center",
         flexShrink: 0,
-        background: isGate ? "#fef3c7" : "#f1f5f9",
-        border: isGate ? "1px solid #e2a53a" : "1px solid #e2e8f0",
-        color: isGate ? "#7a3d00" : "#334155",
+        background: isGate ? "var(--warning-bg-canvas-alt)" : "var(--slate-100)",
+        border: isGate ? "1px solid var(--warning-accent-canvas)" : "1px solid var(--slate-200)",
+        color: isGate ? "var(--warning-fg-canvas)" : "var(--slate-700)",
         fontSize: 16,
         fontWeight: 800,
       }}
@@ -299,13 +306,13 @@ function NodeDetailPanel({
   const familyBlurb = toolFamilyBlurb(details.family);
   const familyColor =
     details.family === "astra"
-      ? { bg: "#eff6ff", text: "#1d4ed8", border: "#bfdbfe" }
+      ? { bg: "var(--info-bg)", text: "var(--info-fg)", border: "var(--info-border)" }
       : details.family === "syntra"
-        ? { bg: "#ecfdf5", text: "#0d7a68", border: "#a7f3d0" }
+        ? { bg: "var(--success-bg-canvas-alt)", text: "var(--green-600)", border: "var(--success-border-canvas-alt)" }
         : details.family === "platform"
-          ? { bg: "#f5f3ff", text: "#6d28d9", border: "#ddd6fe" }
+          ? { bg: "var(--purple-bg-canvas)", text: "var(--purple-fg-canvas)", border: "var(--purple-border-canvas)" }
           : null;
-  const headerBg = isGate ? "#fff8ec" : "#fff";
+  const headerBg = isGate ? "var(--warning-bg-canvas)" : "var(--neutral-0)";
   const whyHeading = isStart
     ? "When this workflow starts"
     : isEnd
@@ -334,8 +341,8 @@ function NodeDetailPanel({
         alignSelf: "stretch",
         display: "flex",
         flexDirection: "column",
-        background: "#fff",
-        borderLeft: "1px solid #e5e7eb",
+        background: "var(--neutral-0)",
+        borderLeft: "1px solid var(--slate-210)",
         overflow: "hidden",
         minHeight: 0,
       }}
@@ -347,7 +354,7 @@ function NodeDetailPanel({
           gap: 12,
           padding: "14px 14px 12px",
           background: headerBg,
-          borderBottom: "1px solid #eef2f7",
+          borderBottom: "1px solid var(--slate-150)",
           flexShrink: 0,
         }}
       >
@@ -357,7 +364,7 @@ function NodeDetailPanel({
             style={{
               fontSize: 11,
               fontWeight: 700,
-              color: isGate ? "#7a3d00" : "#64748b",
+              color: isGate ? "var(--warning-fg-canvas)" : "var(--slate-500)",
               marginBottom: 2,
             }}
             data-testid="workflow-node-kicker"
@@ -365,7 +372,7 @@ function NodeDetailPanel({
             {copy.kicker}
           </div>
           <div
-            style={{ fontSize: 17, fontWeight: 800, color: "#0f172a", lineHeight: 1.25 }}
+            style={{ fontSize: 17, fontWeight: 800, color: "var(--slate-900)", lineHeight: 1.25 }}
             data-testid="workflow-node-title"
           >
             {copy.title}
@@ -418,11 +425,11 @@ function NodeDetailPanel({
             flexShrink: 0,
             width: 32,
             height: 32,
-            border: "1px solid #e5e7eb",
-            background: "#fff",
+            border: "1px solid var(--slate-210)",
+            background: "var(--neutral-0)",
             borderRadius: 10,
             fontWeight: 800,
-            color: "#64748b",
+            color: "var(--slate-500)",
             cursor: "pointer",
             fontSize: 16,
             lineHeight: 1,
@@ -449,7 +456,7 @@ function NodeDetailPanel({
                 margin: 0,
                 fontSize: 15,
                 lineHeight: 1.6,
-                color: "#334155",
+                color: "var(--slate-700)",
               }}
             >
               {familyBlurb}
@@ -464,7 +471,7 @@ function NodeDetailPanel({
               margin: 0,
               fontSize: 15,
               lineHeight: 1.6,
-              color: "#334155",
+              color: "var(--slate-700)",
             }}
             data-testid="workflow-node-why-text"
           >
@@ -482,7 +489,7 @@ function NodeDetailPanel({
               margin: 0,
               fontSize: 15,
               lineHeight: 1.6,
-              color: "#334155",
+              color: "var(--slate-700)",
             }}
             data-testid="workflow-node-produces-text"
           >
@@ -867,9 +874,9 @@ export function WorkflowMermaidView({
     <div
       className="workflow-canvas workflow-canvas--mermaid"
       style={{
-        background: "#f8fafc",
+        background: "var(--slate-50)",
         borderRadius: 14,
-        boxShadow: "0 2px 16px rgba(0,0,0,0.09), 0 0 0 1px rgba(0,0,0,0.06)",
+        boxShadow: "var(--shadow-popover)",
         overflow: "hidden",
         display: "flex",
         flexDirection: "column",
@@ -881,8 +888,8 @@ export function WorkflowMermaidView({
           alignItems: "center",
           justifyContent: "space-between",
           padding: "10px 16px",
-          background: "rgba(255,255,255,0.94)",
-          borderBottom: "1px solid #e5e7eb",
+          background: "var(--white-alpha-94)",
+          borderBottom: "1px solid var(--slate-210)",
           flexShrink: 0,
         }}
       >
@@ -891,7 +898,7 @@ export function WorkflowMermaidView({
             style={{
               fontSize: 10,
               fontWeight: 800,
-              color: "#64748b",
+              color: "var(--slate-500)",
               letterSpacing: "0.14em",
             }}
           >
@@ -901,7 +908,7 @@ export function WorkflowMermaidView({
             style={{
               fontSize: 15,
               fontWeight: 700,
-              color: "#0f172a",
+              color: "var(--slate-900)",
               whiteSpace: "nowrap",
               overflow: "hidden",
               textOverflow: "ellipsis",
@@ -913,7 +920,7 @@ export function WorkflowMermaidView({
             <span
               style={{
                 fontSize: 12,
-                color: "#64748b",
+                color: "var(--slate-500)",
                 whiteSpace: "nowrap",
                 overflow: "hidden",
                 textOverflow: "ellipsis",
@@ -923,7 +930,7 @@ export function WorkflowMermaidView({
               Click Start to see when this runs · {friendlyEventLabel(triggerEventType)}
             </span>
           ) : (
-            <span style={{ fontSize: 12, color: "#94a3b8" }}>
+            <span style={{ fontSize: 12, color: "var(--slate-400)" }}>
               Click any step — including Start — for plain-English details
             </span>
           )}
@@ -971,7 +978,7 @@ export function WorkflowMermaidView({
       </div>
 
       {error ? (
-        <p className="muted" style={{ padding: "8px 16px", color: "#b45309" }} role="alert">
+        <p className="muted" style={{ padding: "8px 16px", color: "var(--warning-strong-canvas)" }} role="alert">
           Mermaid render failed: {error}
         </p>
       ) : null}
@@ -980,11 +987,11 @@ export function WorkflowMermaidView({
         <div
           style={{
             fontSize: 11,
-            color: "#94a3b8",
+            color: "var(--slate-400)",
             padding: "5px 14px",
-            borderTop: "1px solid #e5e7eb",
+            borderTop: "1px solid var(--slate-210)",
             textAlign: "right",
-            background: "#fff",
+            background: "var(--neutral-0)",
             flexShrink: 0,
           }}
         >
@@ -1004,14 +1011,14 @@ function MermaidLegend() {
         alignItems: "center",
         gap: 12,
         fontSize: 11,
-        color: "#64748b",
+        color: "var(--slate-500)",
         flexShrink: 0,
       }}
     >
-      <LegendChip shape="circle" bg="#14161c" border="transparent" label="Start / End" />
-      <LegendChip shape="square" bg="#fff" border="#0d7a68" label="SYNTRA" />
-      <LegendChip shape="square" bg="#fff" border="#2563eb" label="ASTRA" />
-      <LegendChip shape="square" bg="#fff8ec" border="#e2a53a" label="Needs a person" />
+      <LegendChip shape="circle" bg="var(--slate-950)" border="transparent" label="Start / End" />
+      <LegendChip shape="square" bg="var(--neutral-0)" border="var(--green-600)" label="SYNTRA" />
+      <LegendChip shape="square" bg="var(--neutral-0)" border="var(--info-fg-canvas)" label="ASTRA" />
+      <LegendChip shape="square" bg="var(--warning-bg-canvas)" border="var(--warning-accent-canvas)" label="Needs a person" />
     </div>
   );
 }

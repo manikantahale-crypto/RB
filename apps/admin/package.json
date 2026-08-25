@@ -9,7 +9,8 @@
     "build": "tsc -p tsconfig.app.json --noEmit && vite build",
     "preview": "vite preview",
     "typecheck": "tsc -p tsconfig.app.json --noEmit",
-    "test:e2e": "playwright test"
+    "test:e2e": "playwright test",
+    "check:tokens": "node scripts/check-tokens.mjs"
   },
   "dependencies": {
     "@tekisho/authoring": "*",

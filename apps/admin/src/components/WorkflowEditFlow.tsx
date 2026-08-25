@@ -12,6 +12,7 @@ import {
 import dagre from "dagre";
 import { getToolCatalog } from "@tekisho/authoring/src/tool-registry.js";
 import type { WorkflowStep } from "../lib/workflow-steps.js";
+import { token } from "../lib/tokens.js";
 
 const NODE_WIDTH = 220;
 const NODE_HEIGHT = 56;
@@ -66,21 +67,21 @@ function StepNode({ data }: { data: { label: string; index: number } }) {
         width: NODE_WIDTH,
         height: NODE_HEIGHT,
         boxSizing: "border-box",
-        background: "#fff",
-        border: "1.5px solid #e4e6eb",
+        background: "var(--neutral-0)",
+        border: "1.5px solid var(--slate-220)",
         borderRadius: 10,
         padding: "10px 14px",
         display: "flex",
         flexDirection: "column",
         justifyContent: "center",
         gap: 4,
-        boxShadow: "0 1px 3px rgba(0,0,0,0.06)",
+        boxShadow: "var(--shadow-card)",
         fontSize: 13,
         fontWeight: 600,
-        color: "#0f172a",
+        color: "var(--slate-900)",
       }}
     >
-      <span style={{ fontSize: 10, color: "#94a3b8", fontWeight: 700 }}>
+      <span style={{ fontSize: 10, color: "var(--slate-400)", fontWeight: 700 }}>
         Step {String(data.index).padStart(2, "0")}
       </span>
       <span style={{ lineHeight: 1.3 }}>{data.label}</span>
@@ -133,7 +134,7 @@ export function WorkflowEditFlow({ steps, version }: WorkflowEditFlowProps) {
       className="workflow-canvas workflow-canvas--edit-flow"
       data-testid="workflow-edit-flow"
       style={{
-        background: "#f8fafc",
+        background: "var(--slate-50)",
         borderRadius: 14,
         border: "1px solid var(--line)",
         overflow: "hidden",
@@ -158,7 +159,9 @@ export function WorkflowEditFlow({ steps, version }: WorkflowEditFlowProps) {
           connectionLineType={ConnectionLineType.SmoothStep}
           proOptions={{ hideAttribution: true }}
         >
-          <Background gap={20} size={0.6} color="#e8edf2" />
+          {/* Resolved, not `var(...)`: this becomes an SVG presentation
+              attribute, where custom properties are not reliably supported. */}
+          <Background gap={20} size={0.6} color={token("--slate-230", "#e8edf2")} />
         </ReactFlow>
       </div>
       <p className="muted" style={{ padding: "8px 16px 12px", fontSize: 12, margin: 0 }}>

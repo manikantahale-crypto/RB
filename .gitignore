@@ -43,8 +43,13 @@ plans/
 # Ad-hoc / local scripts (scratch probes, one-off SQL, send helpers)
 tmp-*
 tmp-*.mjs
-check-*.mjs
-check-*.ts
+# Anchored to the repository root. Unanchored, `check-*` matched at ANY depth
+# and swallowed real committed tooling — apps/admin/scripts/check-tokens.mjs
+# would have been dropped from its commit, leaving a package.json script
+# pointing at a file nobody else has. Scratch probes live at the root; a
+# `check-` script inside a package is part of the package.
+/check-*.mjs
+/check-*.ts
 packages/db/scripts/
 
 # `apps/worker/scripts/` was ignored wholesale here, which was wrong in a way

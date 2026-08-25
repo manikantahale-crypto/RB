@@ -1,4 +1,5 @@
 import type { GraphDefinition } from "@tekisho/authoring/src/graph-definition.js";
+import { token } from "./tokens.js";
 import {
   displayEdgeLabel,
   resolveEdgeTone,
@@ -82,7 +83,7 @@ export function graphToMermaid(
     const family = resolveToolFamily(node.impl);
     const familyText = toolFamilyLabel(family);
     const familyHtml = familyText
-      ? `<br/><span style='font-size:11px;font-weight:600;color:#64748b'>${escapeHtml(familyText)}</span>`
+      ? `<br/><span style='font-size:11px;font-weight:600;color:${token("--slate-500", "#64748b")}'>${escapeHtml(familyText)}</span>`
       : "";
     // Hidden data attribute for click mapping — no tool key visible to recruiters.
     lines.push(
@@ -124,22 +125,22 @@ export function graphToMermaid(
   }
 
   lines.push(
-    "  classDef startend fill:#14161c,color:#fff,stroke:#14161c,stroke-width:2px,font-weight:bold",
+    `  classDef startend fill:${token("--slate-950", "#14161c")},color:${token("--neutral-0", "#ffffff")},stroke:${token("--slate-950", "#14161c")},stroke-width:2px,font-weight:bold`,
   );
   lines.push(
-    "  classDef action fill:#ffffff,stroke:#e4e6eb,stroke-width:1.5px,color:#0f172a",
+    `  classDef action fill:${token("--neutral-0", "#ffffff")},stroke:${token("--slate-220", "#e4e6eb")},stroke-width:1.5px,color:${token("--slate-900", "#0f172a")}`,
   );
   lines.push(
-    "  classDef syntra fill:#ffffff,stroke:#0d7a68,stroke-width:2px,color:#0f172a",
+    `  classDef syntra fill:${token("--neutral-0", "#ffffff")},stroke:${token("--green-600", "#0d7a68")},stroke-width:2px,color:${token("--slate-900", "#0f172a")}`,
   );
   lines.push(
-    "  classDef astra fill:#ffffff,stroke:#2563eb,stroke-width:2px,color:#0f172a",
+    `  classDef astra fill:${token("--neutral-0", "#ffffff")},stroke:${token("--info-fg-canvas", "#2563eb")},stroke-width:2px,color:${token("--slate-900", "#0f172a")}`,
   );
   lines.push(
-    "  classDef platform fill:#ffffff,stroke:#7c3aed,stroke-width:2px,color:#0f172a",
+    `  classDef platform fill:${token("--neutral-0", "#ffffff")},stroke:${token("--violet-600", "#7c3aed")},stroke-width:2px,color:${token("--slate-900", "#0f172a")}`,
   );
   lines.push(
-    "  classDef gate fill:#fff8ec,stroke:#e2a53a,stroke-width:2px,color:#0f172a",
+    `  classDef gate fill:${token("--warning-bg-canvas", "#fff8ec")},stroke:${token("--warning-accent-canvas", "#e2a53a")},stroke-width:2px,color:${token("--slate-900", "#0f172a")}`,
   );
   lines.push("  class flowStart,flowEnd startend");
   if (actionIds.length) classLines.push(`  class ${actionIds.join(",")} action`);
@@ -152,10 +153,10 @@ export function graphToMermaid(
 
   // Color branch edges to match popover outcome tones.
   for (const i of positiveEdgeIndexes) {
-    lines.push(`  linkStyle ${i} stroke:#027a48,stroke-width:2px`);
+    lines.push(`  linkStyle ${i} stroke:${token("--green-success-strong", "#027a48")},stroke-width:2px`);
   }
   for (const i of negativeEdgeIndexes) {
-    lines.push(`  linkStyle ${i} stroke:#b42318,stroke-width:2px`);
+    lines.push(`  linkStyle ${i} stroke:${token("--status-danger-fg", "#b42318")},stroke-width:2px`);
   }
 
   return lines.join("\n");

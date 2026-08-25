@@ -1,0 +1,413 @@
+/* =========================================================================
+   DESIGN TOKENS — the one file to edit when the look changes.
+   =========================================================================
+
+   HOW TO USE THIS FILE
+
+   Layer 1 · PRIMITIVES   raw values, named for what they ARE (green-600).
+                          Edit these to change the palette itself.
+   Layer 2 · SEMANTIC     named for what they are FOR (--action-primary-bg).
+                          Edit these to change what a thing looks like without
+                          touching every component.
+   Layer 3 · LEGACY       the original token names, now pointing at layer 2.
+                          They exist because ~320 rules already use them.
+                          Do not add new ones; prefer a semantic token.
+
+   THE ONE RULE THAT KEEPS THIS WORKING:
+   components never write a raw colour. No `#fff`, no `rgb(...)`, no
+   `slategray` in a stylesheet or a `style={{ }}` prop — always
+   `var(--something)`. A raw colour cannot be re-themed, and one that slips in
+   makes the next designer's single-file change come back half-applied.
+   `npm run check:tokens` fails the build when one appears.
+
+   CHANGING THE BRAND COLOUR: edit --green-600 (and its ramp) in layer 1.
+   CHANGING WHAT BUTTONS LOOK LIKE: edit --action-primary-* in layer 2.
+   ========================================================================= */
+
+:root {
+  /* ===================================================================
+     LAYER 1 · PRIMITIVES
+     =================================================================== */
+
+  /* --- Neutrals -------------------------------------------------------
+     Deliberately green-tinted rather than pure grey, so they sit with the
+     accent instead of fighting it. This is the app's one neutral family;
+     components previously mixed in a second, bluer set (Tailwind slate),
+     which is why greys did not match across screens. */
+  --neutral-0:   #ffffff;
+  --neutral-25:  #f7faf8;
+  --neutral-50:  #f3f7f4;
+  --neutral-100: #f0f4f1;
+  --neutral-200: #d5e0d9;
+  --neutral-300: #b8c9bf;
+  --neutral-400: #8fa398;
+  --neutral-500: #5a6b62;
+  --neutral-600: #3f4f47;
+  --neutral-700: #2a3831;
+  --neutral-800: #1b2721;
+  --neutral-900: #101a16;
+
+  /* --- Accent (brand) --- */
+  --green-50:  #e6f6ec;
+  --green-100: #b7e0c4;
+  --green-400: #1a7a42;
+  --green-500: #0d7a68;
+  --green-600: #0d7a68;
+  --green-700: #095a4d;
+  --green-800: #0d5c2e;
+  --green-alpha-14: color-mix(in srgb, var(--green-600) 14%, transparent);
+  --green-alpha-28: color-mix(in srgb, var(--green-600) 28%, transparent);
+
+  /* --- Translucent variants ------------------------------------------
+     Derived with color-mix rather than written as rgba(), so they follow
+     their base colour. Change --green-600 and every accent glow, ring and
+     hover wash below moves with it — which is the point of the whole file.
+
+     There are eight alphas of the accent and five of the ink here. That is
+     more than a design needs; they accumulated one component at a time.
+     Collapsing them is a designer's call and an edit to this block only. */
+  --accent-alpha-08: color-mix(in srgb, var(--green-600) 8%, transparent);
+  --accent-alpha-12: color-mix(in srgb, var(--green-600) 12%, transparent);
+  --accent-alpha-20: color-mix(in srgb, var(--green-600) 20%, transparent);
+  --accent-alpha-25: color-mix(in srgb, var(--green-600) 25%, transparent);
+  --accent-alpha-30: color-mix(in srgb, var(--green-600) 30%, transparent);
+  --accent-alpha-40: color-mix(in srgb, var(--green-600) 40%, transparent);
+  --accent-alpha-45: color-mix(in srgb, var(--green-600) 45%, transparent);
+  --accent-alpha-55: color-mix(in srgb, var(--green-600) 55%, transparent);
+
+  --ok-alpha-07: color-mix(in srgb, var(--green-400) 7%, transparent);
+  --ok-alpha-10: color-mix(in srgb, var(--green-400) 10%, transparent);
+  --ok-alpha-28: color-mix(in srgb, var(--green-400) 28%, transparent);
+  --ok-alpha-35: color-mix(in srgb, var(--green-400) 35%, transparent);
+
+  --ink-alpha-03: color-mix(in srgb, var(--neutral-900) 3%, transparent);
+  --ink-alpha-04: color-mix(in srgb, var(--neutral-900) 4%, transparent);
+  --ink-alpha-06: color-mix(in srgb, var(--neutral-900) 6%, transparent);
+  --ink-alpha-08: color-mix(in srgb, var(--neutral-900) 8%, transparent);
+
+  --warn-alpha-06: color-mix(in srgb, var(--warning-strong) 6%, transparent);
+  --warn-alpha-07: color-mix(in srgb, var(--warning-strong) 7%, transparent);
+  --warn-alpha-28: color-mix(in srgb, var(--warning-strong) 28%, transparent);
+  --warn-alpha-30: color-mix(in srgb, var(--warning-strong) 30%, transparent);
+
+  --danger-alpha-07: color-mix(in srgb, var(--red-muted) 7%, transparent);
+  --danger-alpha-28: color-mix(in srgb, var(--red-muted) 28%, transparent);
+
+  --slate-alpha-07: color-mix(in srgb, var(--blue-slate-b) 7%, transparent);
+  --slate-alpha-30: color-mix(in srgb, var(--blue-slate-b) 30%, transparent);
+  --green-bright-alpha-20: color-mix(in srgb, var(--green-bright) 20%, transparent);
+  --blue-bright-alpha-45: color-mix(in srgb, var(--blue-bright) 45%, transparent);
+
+  --violet-600: #7c3aed;
+  --white-alpha-94: rgba(255, 255, 255, 0.94);
+  --white-alpha-45: rgba(255, 255, 255, 0.45);
+  --white-alpha-55: rgba(255, 255, 255, 0.55);
+  --white-alpha-65: rgba(255, 255, 255, 0.65);
+  --white-alpha-85: rgba(255, 255, 255, 0.85);
+  --black-alpha-12: rgba(0, 0, 0, 0.12);
+  --scrim: rgba(15, 23, 15, 0.45);
+  --surface-veil-cool: rgba(245, 248, 252, 0.95);
+  --surface-veil-warm: rgba(255, 252, 245, 0.9);
+
+  /* --- Status ramps, each a background / border / foreground triple ---
+     These were the most duplicated values in the stylesheet: the same
+     three greens, ambers and reds repeated for every pill and banner. */
+  --success-bg:     #e6f6ec;
+  --success-border: #b7e0c4;
+  --success-fg:     #0d5c2e;
+
+  --warning-bg:     #fffbf2;
+  --warning-bg-alt: #fff6e5;
+  --warning-border: #f0d9a8;
+  --warning-fg:     #6b4f00;
+  --warning-strong: #9a4f10;
+
+  --danger-bg:      #fdeaea;
+  --danger-bg-alt:  #fde8ec;
+  --danger-border:  #f0b4be;
+  --danger-fg:      #b42318;
+  --danger-strong:  #912018;
+  /* The muted brick red the app used for --danger before tokens existed.
+     Kept distinct from --danger-fg: they are two different reds, and folding
+     one into the other silently restyles every danger element. */
+  --red-muted:      #a33a3a;
+
+  --info-bg:        #eff6ff;
+  --info-border:    #bfdbfe;
+  --info-fg:        #1d4ed8;
+
+  /* --- Accent: AI / generated content -------------------------------
+     Purple marks machine-generated artifacts (proposals, ledgers) so they
+     read as distinct from human-authored ones. */
+  --purple-50:  #f3e8ff;
+  --purple-100: #ede9ff;
+  --purple-200: #c5b8ff;
+  --purple-500: #6b48ff;
+  --purple-700: #6b21a8;
+
+  /* --- Values inherited from before the token system ------------------
+     Every colour that existed in the stylesheet is named here, at its exact
+     original value, so tokenising changed nothing visually.
+
+     ⚠ THESE CONTAIN DELIBERATE NEAR-DUPLICATES. Seven barely-different
+     off-whites and four near-identical mid-greens accumulated one screen at
+     a time. They are preserved rather than merged because collapsing them
+     changes how screens look, and that is a designer's call, not a
+     refactor's. When someone does collapse them, it is an edit to this
+     block alone — no component changes. */
+
+  /* off-whites and page tints — candidates to collapse to 2 or 3 */
+  --surface-tint-a: #f3f7f4;
+  --surface-tint-b: #f4f6f8;
+  --surface-tint-c: #f6f7f9;
+  --surface-tint-d: #f6f8f7;
+  --surface-tint-e: #f6f9f7;
+  --surface-tint-f: #f8fafc;
+  --surface-tint-g: #fafafa;
+  --surface-tint-mint: #f4fffb;
+  --surface-tint-sage: #e8efe9;
+
+  /* greys used before the neutral ramp existed */
+  --grey-900-alt: #111;
+  --grey-850-alt: #1a1a1a;
+  --grey-700-alt: #444;
+  --grey-600-alt: #555;
+  --grey-400-alt: #999;
+  --grey-300-alt: #c8c8c8;
+  --grey-200-alt: #ddd;
+
+  /* greens */
+  --green-success-strong: #027a48;
+  --green-mid-a: #1a6b3a;
+  --green-mid-b: #1a6b4a;
+  --green-bright: #1a9b4a;
+  --green-soft: #7ec8a0;
+  --green-tint: #f0faf3;
+
+  /* ambers */
+  --amber-deep: #8a4b12;
+  --amber-strong-alt: #9a3412;
+  --amber-mid: #e0b45a;
+  --amber-soft: #e8d9a8;
+  --amber-tint-a: #fff0d0;
+  --amber-tint-b: #fff4e6;
+  --amber-tint-c: #fff8e6;
+
+  /* reds */
+  --red-wine: #8a1c2e;
+  --red-rust: #8a2a12;
+  --red-alert: #b00020;
+  --red-tint: #fff6f7;
+
+  /* --- The second neutral family -------------------------------------
+     ⚠ Components were written against Tailwind's slate scale while the
+     stylesheet used the green-tinted neutrals above. That is why greys did
+     not match between a panel and the canvas inside it. Both are preserved
+     at their exact values so tokenising changed nothing on screen.
+
+     THE FIX IS ONE EDIT HERE: point each of these at its --neutral-*
+     equivalent and the whole app converges on one grey. Left undone
+     deliberately — it is a visible change and belongs to a designer. */
+  --slate-50:  #f8fafc;
+  --slate-100: #f1f5f9;
+  --slate-150: #eef2f7;
+  --slate-200: #e2e8f0;
+  --slate-210: #e5e7eb;
+  --slate-220: #e4e6eb;
+  --slate-230: #e8edf2;
+  --slate-400: #94a3b8;
+  --slate-500: #64748b;
+  --slate-700: #334155;
+  --slate-900: #0f172a;
+  --slate-950: #14161c;
+
+  /* status variants used by the graph canvas and mermaid view */
+  --success-bg-canvas: #ecfdf3;
+  --success-bg-canvas-alt: #ecfdf5;
+  --success-border-canvas: #a6e8bf;
+  --success-border-canvas-alt: #a7f3d0;
+  --danger-bg-canvas: #fef3f2;
+  --danger-border-canvas: #fecdca;
+  --warning-bg-canvas: #fff8ec;
+  --warning-bg-canvas-alt: #fef3c7;
+  --warning-fg-canvas: #7a3d00;
+  --warning-accent-canvas: #e2a53a;
+  --warning-strong-canvas: #b45309;
+  --info-fg-canvas: #2563eb;
+  --purple-bg-canvas: #f5f3ff;
+  --purple-border-canvas: #ddd6fe;
+  --purple-fg-canvas: #6d28d9;
+
+  /* blues */
+  --blue-vivid: #0b5fff;
+  --blue-deep: #1e40af;
+  --blue-slate-a: #2a5478;
+  --blue-slate-b: #2f5a7a;
+  --blue-bright: #3b82f6;
+  --blue-muted: #7aa2c4;
+  --blue-tint-a: #e8f0ff;
+  --blue-tint-b: #e8f1f8;
+
+  /* --- Spacing scale — a 4px rhythm. Use these instead of stray pixels. */
+  --space-0: 0;
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 20px;
+  --space-6: 24px;
+  --space-8: 32px;
+  --space-10: 40px;
+  --space-12: 48px;
+
+  /* --- Radii --- */
+  --radius-sm: 6px;
+  --radius-md: 10px;
+  --radius-lg: 14px;
+  --radius-pill: 999px;
+
+  /* --- Elevation --- */
+  --shadow-sm: 0 1px 2px rgba(16, 26, 22, 0.06);
+  --shadow-md: 0 1px 0 rgba(16, 26, 22, 0.04), 0 12px 32px rgba(16, 26, 22, 0.06);
+  --shadow-lg: 0 8px 24px rgba(16, 26, 22, 0.12);
+  --shadow-card: 0 1px 3px rgba(0, 0, 0, 0.06);
+  --shadow-popover: 0 2px 16px rgba(0, 0, 0, 0.09), 0 0 0 1px rgba(0, 0, 0, 0.06);
+
+  /* --- Typography --- */
+  --font-family-display: "Fraunces", Georgia, serif;
+  --font-family-body: "Source Sans 3", "Segoe UI", sans-serif;
+  --font-family-mono: "JetBrains Mono", "Cascadia Mono", Consolas, monospace;
+
+  --font-size-xs: 12px;
+  --font-size-sm: 13px;
+  --font-size-md: 15px;
+  --font-size-lg: 18px;
+  --font-size-xl: 22px;
+  --font-size-2xl: 28px;
+
+  --font-weight-regular: 400;
+  --font-weight-medium: 500;
+  --font-weight-semibold: 600;
+  --font-weight-bold: 700;
+
+  --line-height-tight: 1.25;
+  --line-height-normal: 1.5;
+  --line-height-loose: 1.7;
+
+  /* --- Motion --- */
+  --duration-fast: 120ms;
+  --duration-normal: 200ms;
+  --easing-standard: cubic-bezier(0.2, 0, 0, 1);
+
+  /* ===================================================================
+     LAYER 2 · SEMANTIC — what components actually reference
+     =================================================================== */
+
+  /* Surfaces */
+  --surface-page: var(--neutral-100);
+  --surface-raised: var(--neutral-0);
+  --surface-sunken: var(--neutral-25);
+  --surface-hover: var(--neutral-50);
+
+  /* Text */
+  --text-primary: var(--neutral-900);
+  --text-secondary: var(--neutral-500);
+  --text-muted: var(--neutral-400);
+  --text-inverse: var(--neutral-0);
+  --text-link: var(--green-700);
+
+  /* Borders */
+  --border-subtle: var(--neutral-200);
+  --border-strong: var(--neutral-300);
+  --border-focus: var(--green-600);
+
+  /* Primary action */
+  --action-primary-bg: var(--green-600);
+  --action-primary-bg-hover: var(--green-700);
+  --action-primary-fg: var(--neutral-0);
+
+  /* Secondary action */
+  --action-secondary-bg: var(--neutral-0);
+  --action-secondary-bg-hover: var(--neutral-50);
+  --action-secondary-fg: var(--neutral-900);
+  --action-secondary-border: var(--neutral-200);
+
+  /* Destructive action */
+  --action-danger-bg: var(--danger-fg);
+  --action-danger-fg: var(--neutral-0);
+
+  /* Status — pills, banners, run states. Always the full triple, so a
+     status never renders as text one colour and border another. */
+  --status-success-bg: var(--success-bg);
+  --status-success-border: var(--success-border);
+  --status-success-fg: var(--success-fg);
+
+  --status-warning-bg: var(--warning-bg);
+  --status-warning-border: var(--warning-border);
+  --status-warning-fg: var(--warning-fg);
+
+  --status-danger-bg: var(--danger-bg);
+  --status-danger-border: var(--danger-border);
+  --status-danger-fg: var(--danger-fg);
+
+  --status-info-bg: var(--info-bg);
+  --status-info-border: var(--info-border);
+  --status-info-fg: var(--info-fg);
+
+  --status-neutral-bg: var(--neutral-50);
+  --status-neutral-border: var(--neutral-200);
+  --status-neutral-fg: var(--neutral-500);
+
+  /* Focus ring — one definition, so keyboard users get the same affordance
+     on every control. */
+  --focus-ring: 0 0 0 3px var(--green-alpha-28);
+
+  /* Layout rhythm */
+  --page-padding: var(--space-6);
+  --panel-gap: var(--space-4);
+  --control-gap: var(--space-2);
+  --control-radius: var(--radius-md);
+  --control-height: 36px;
+
+  /* ===================================================================
+     LAYER 3 · LEGACY ALIASES
+     The original names, kept so existing rules keep working. New code
+     should use the semantic tokens above.
+     =================================================================== */
+  --ink: var(--text-primary);
+  --ink-soft: var(--text-secondary);
+  --paper: var(--surface-page);
+  --surface: var(--surface-raised);
+  --surface-soft: var(--surface-sunken);
+  --line: var(--border-subtle);
+  --line-strong: var(--border-strong);
+  --accent: var(--action-primary-bg);
+  --accent-deep: var(--action-primary-bg-hover);
+  --accent-glow: var(--green-alpha-14);
+  --warn: var(--warning-strong);
+  --danger: var(--red-muted);
+  --ok: var(--green-400);
+  --shadow: var(--shadow-md);
+  --radius: var(--radius-md);
+  --font-display: var(--font-family-display);
+  --font-body: var(--font-family-body);
+}
+
+/* =========================================================================
+   DARK THEME — not designed yet, deliberately.
+
+   The structure is ready: because every component reads layer 2, a dark
+   theme is a block that redefines the semantic tokens and nothing else.
+   Adding it means choosing about fifteen values, not editing screens.
+
+   :root[data-theme="dark"] {
+     --surface-page: var(--neutral-900);
+     --surface-raised: var(--neutral-800);
+     --text-primary: var(--neutral-25);
+     ...
+   }
+
+   Left empty rather than half-guessed: a dark palette invented without a
+   designer looking at it produces unreadable status pills, and a broken
+   theme is worse than an absent one.
+   ========================================================================= */
