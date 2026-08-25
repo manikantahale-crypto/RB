@@ -717,3 +717,118 @@ export function getAgentArtifacts(agentId: string) {
     `/runtime/agent-artifacts/${encodeURIComponent(agentId)}`,
   );
 }
+
+/* ─────────────────────── Screen 1 · Workflows registry ─────────────────── */
+
+export type WorkflowRegistryRow = {
+  graphKey: string;
+  module: string;
+  /** Events with an ACTIVE binding here. Empty means nothing can start it. */
+  triggers: string[];
+  activeVersion: number | null;
+  orgActiveVersion: number | null;
+  draftCount: number;
+  versionCount: number;
+  health: {
+    runs24h: number;
+    failed24h: number;
+    waiting: number;
+    lastRunAt: string | null;
+  };
+  /** Active, but no binding points at it — it can never fire. */
+  orphan: boolean;
+};
+
+export function listWorkflows() {
+  return request<{ workflows: WorkflowRegistryRow[]; orgId: string | null }>(
+    "/workflows",
+  );
+}
+
+/* ───────────────────────── Screen 12 · Runs list ───────────────────────── */
+
+export type WorkflowRun = {
+  runId: string;
+  graphKey: string;
+  /** Which door fired — matters when several events start one workflow. */
+  triggerEvent: string | null;
+  triggerEventId: string | null;
+  orgId: string | null;
+  /** Version this run executed, when knowable. */
+  pinnedVersion: number | null;
+  /** "recorded" by the runtime, or "inferred" from a single-version graph. */
+  versionSource: "recorded" | "inferred" | null;
+  status: string;
+  agentName: string | null;
+  startedAt: string | null;
+  completedAt: string | null;
+  durationMs: number | null;
+  correlationId: string | null;
+  error: unknown;
+  stepCount: number;
+};
+
+export function listWorkflowRuns(
+  graphKey: string,
+  opts?: { status?: string; q?: string; limit?: number },
+) {
+  const params = new URLSearchParams();
+  if (opts?.status && opts.status !== "all") params.set("status", opts.status);
+  if (opts?.q) params.set("q", opts.q);
+  if (opts?.limit) params.set("limit", String(opts.limit));
+  const qs = params.toString();
+  return request<{
+    graphKey: string;
+    runs: WorkflowRun[];
+    counts: Record<string, number>;
+    total: number;
+    limit: number;
+  }>(`/workflows/${encodeURIComponent(graphKey)}/runs${qs ? `?${qs}` : ""}`);
+}
+
+/* ──────────────────────── Screen 13 · Run detail ───────────────────────── */
+
+export type RunStep = {
+  seq: number;
+  node: string;
+  tool: string | null;
+  status: string;
+  latencyMs: number | null;
+  output: Record<string, unknown> | null;
+  at: string | null;
+};
+
+export type RunPathNode = {
+  node: string;
+  tool: string | null;
+  attempts: number;
+  /** Outcome of the LAST attempt — a node that retried and succeeded is OK. */
+  status: string;
+  totalLatencyMs: number;
+  firstAt: string | null;
+  errorClass: string | null;
+};
+
+export type RunDetail = {
+  runId: string;
+  graphKey: string;
+  pinnedVersion: number | null;
+  status: string;
+  agentName: string | null;
+  orgId: string | null;
+  triggerEvent: string | null;
+  triggerEventId: string | null;
+  triggerPayload: unknown;
+  correlationId: string | null;
+  threadId: string | null;
+  startedAt: string | null;
+  completedAt: string | null;
+  durationMs: number | null;
+  error: unknown;
+};
+
+export function getRunDetail(runId: string) {
+  return request<{ run: RunDetail; path: RunPathNode[]; steps: RunStep[] }>(
+    `/runs/${encodeURIComponent(runId)}`,
+  );
+}

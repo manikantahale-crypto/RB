@@ -27,6 +27,7 @@ import { registerAgentRoutes } from "./routes/agents.js";
 import { registerCatalogAndCreateRoutes } from "./routes/catalog.js";
 import { registerBuilderOverviewRoutes } from "./routes/builder-overview.js";
 import { registerRuntimeRoutes } from "./routes/runtime.js";
+import { registerWorkflowRoutes } from "./routes/workflows.js";
 
 loadEnv({ path: resolve(process.cwd(), "../../.env") });
 loadEnv();
@@ -96,6 +97,7 @@ async function main(): Promise<void> {
   registerBuilderOverviewRoutes(app, pool);
   registerAgentRoutes(app, pool, { llm, privilegedPool: migratorPool });
   registerRuntimeRoutes(app, migratorPool);
+  registerWorkflowRoutes(app, pool);
 
   const shutdown = async () => {
     await app.close();
