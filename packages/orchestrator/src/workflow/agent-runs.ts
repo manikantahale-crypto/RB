@@ -46,6 +46,27 @@ export async function ensureOrchAuditTables(pool: Pool): Promise<void> {
           created_at           timestamptz NOT NULL DEFAULT now()
         )
       `);
+      /**
+       * The version this run is pinned to.
+       *
+       * Added after the fact, which is why it is an ALTER rather than part of
+       * the CREATE above — existing databases already have this table and
+       * there is no migration runner in this repository.
+       *
+       * It matters more than a display column: a run finishes on the version
+       * it started with, and run detail is required to draw the topology of
+       * THAT version rather than whatever is active now. Without this stored,
+       * a v3 run gets redrawn as v5 the moment v5 ships, and the audit trail
+       * quietly describes something that never happened. The runtime already
+       * knew the number — it pinned it to compile the graph — and then threw
+       * it away.
+       *
+       * Null on rows written before this existed. Nothing back-fills them;
+       * the version they ran is genuinely not recoverable.
+       */
+      await pool.query(`
+        ALTER TABLE orch.runs ADD COLUMN IF NOT EXISTS graph_version int
+      `);
       await pool.query(`
         CREATE INDEX IF NOT EXISTS orch_runs_trigger_idx
           ON orch.runs (trigger_event_id)
@@ -107,6 +128,8 @@ export async function startAgentRun(args: {
   agentName: string;
   triggerEventId: string;
   graphKey: string;
+  /** The version this run is pinned to, from the router's decision. */
+  graphVersion?: number | null;
   langgraphThreadId: string;
   inputRef?: Record<string, unknown>;
 }): Promise<string | null> {
@@ -130,11 +153,29 @@ export async function startAgentRun(args: {
     );
     if (existing.rows[0]?.id) {
       runId = existing.rows[0].id;
+      /**
+       * A re-delivered event restarts the existing run.
+       *
+       * `completed_at` and `error` are CLEARED here, and that is a fix rather
+       * than a detail. Previously this set status back to RUNNING and left
+       * both in place, so a finished run came back to life carrying the
+       * timestamp of the finish it had already had — a state the rest of the
+       * system cannot produce and no screen can explain. Three such rows are
+       * sitting in the database now, showing as RUNNING for six days with a
+       * completion time attached.
+       *
+       * A run that is running has not completed. Keeping the old values made
+       * that sentence false.
+       */
       await args.pool.query(
         `UPDATE orch.runs
-         SET status = 'RUNNING', started_at = COALESCE(started_at, now())
+         SET status = 'RUNNING',
+             started_at = COALESCE(started_at, now()),
+             completed_at = NULL,
+             error = NULL,
+             graph_version = COALESCE($2, graph_version)
          WHERE id = $1`,
-        [runId],
+        [runId, args.graphVersion ?? null],
       );
       console.log(
         `[orch_runs] resume run=${runId} event=${args.triggerEventId}`,
@@ -144,14 +185,15 @@ export async function startAgentRun(args: {
       await args.pool.query(
         `INSERT INTO orch.runs (
            id, organization_id, agent_name, trigger_event_id, graph_key,
-           status, langgraph_thread_id, input_ref, started_at
-         ) VALUES ($1,$2,$3,$4,$5,'RUNNING',$6,$7::jsonb, now())`,
+           graph_version, status, langgraph_thread_id, input_ref, started_at
+         ) VALUES ($1,$2,$3,$4,$5,$6,'RUNNING',$7,$8::jsonb, now())`,
         [
           runId,
           args.organizationId,
           args.agentName,
           args.triggerEventId,
           args.graphKey,
+          args.graphVersion ?? null,
           args.langgraphThreadId,
           inputJson,
         ],

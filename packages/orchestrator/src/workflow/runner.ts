@@ -45,6 +45,14 @@ export class WorkflowRunner {
           agentName: def.agentName ?? 'intake-agent',
           triggerEventId: event.event_id,
           graphKey: workflow_name,
+          // The pin the router decided, recorded on the run so run detail can
+          // later draw the topology this run actually executed.
+          //
+          // Null when nothing pinned — a manual run, or a caller that did not
+          // resolve a version. Left null rather than filled in with whatever
+          // is active now: "we do not know which version this ran" is true and
+          // checkable, while a guess would look identical to a fact.
+          graphVersion: pinnedVersion ?? null,
           langgraphThreadId: threadId,
           inputRef: {
             event_type: event.event_type,
