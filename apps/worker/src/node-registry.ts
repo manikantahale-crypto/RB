@@ -22,33 +22,19 @@ import {
   type NodeRegistry,
 } from '@tekisho/orchestrator/src/nodes/registry.js';
 import { toNodeImpl } from '@tekisho/orchestrator/src/nodes/from-contract.js';
-import { jdProcess } from '../../../adapters/syntra/nodes/jd-process.node.js';
-import { resumeProcess } from '../../../adapters/syntra/nodes/resume-process.node.js';
-import { matchProcess } from '../../../adapters/syntra/nodes/match-process.node.js';
-import { continuousMatch } from '../../../adapters/syntra/nodes/continuous-match.node.js';
-import { duplicateDetect } from '../../../adapters/syntra/nodes/duplicate-detect.node.js';
-import { benchAlert } from '../../../adapters/syntra/nodes/bench-alert.node.js';
-import { shortlistNotify } from '../../../adapters/syntra/nodes/shortlist-notify.node.js';
-import { duplicateMerge } from '../../../adapters/syntra/nodes/duplicate-merge.node.js';
-import { runRetry } from '../../../adapters/syntra/nodes/run-retry.node.js';
+import { nodeContracts } from '../../../adapters/index.js';
 
 /**
  * Nodes that have been moved to a contract.
  *
- * Adding a module's node is one import and one line here — no engine change,
- * no release from the platform team.
+ * The list lives in `adapters/index.ts` because the admin API needs it too —
+ * for the editor's node test — and it has no business importing the engine to
+ * get at a declaration.
+ *
+ * Adding a module's node is one line there — no engine change, no release from
+ * the platform team.
  */
-const contractNodes = [
-  jdProcess,
-  resumeProcess,
-  matchProcess,
-  continuousMatch,
-  duplicateDetect,
-  benchAlert,
-  shortlistNotify,
-  duplicateMerge,
-  runRetry,
-];
+export const contractNodes = nodeContracts;
 
 export function composeNodeRegistry(): NodeRegistry {
   const composed: Record<string, NodeRegistry[string]> = { ...nodeRegistry };

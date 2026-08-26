@@ -12,7 +12,8 @@
     "bootstrap:checkpointer": "tsx src/bootstrap-checkpointer.ts",
     "bootstrap:runtime": "npm run bootstrap:pgboss && npm run bootstrap:checkpointer",
     "test": "vitest run",
-    "manual:run": "tsx scripts/manual-run.ts"
+    "manual:run": "tsx scripts/manual-run.ts",
+    "materialize:nodes": "tsx scripts/materialize-node-registry.ts"
   },
   "devDependencies": {
     "@types/pg": "^8.20.4",
