@@ -6,6 +6,8 @@ import { WorkflowTestPage } from "./pages/WorkflowTestPage";
 import { WorkflowsRegistryPage } from "./pages/WorkflowsRegistry";
 import { WorkflowRunsPage } from "./pages/WorkflowRuns";
 import { RunDetailPage } from "./pages/RunDetail";
+import { GraphEditorPage } from "./pages/GraphEditor";
+import { NewWorkflowPage } from "./pages/NewWorkflow";
 
 function AppShell() {
   const location = useLocation();
@@ -46,6 +48,10 @@ function AppShell() {
         <Route path="/workflows/:graphKey/runs" element={<WorkflowRunsPage />} />
         {/* Screen 13 — one run and the path it took. */}
         <Route path="/runs/:runId" element={<RunDetailPage />} />
+        {/* Screen 4 — the graph editor. */}
+        {/* Screen 2 — describe or clone, then one proposal. */}
+        <Route path="/workflows/new" element={<NewWorkflowPage />} />
+        <Route path="/workflows/:graphKey/edit" element={<GraphEditorPage />} />
         <Route path="/builder" element={<BuilderPage />} />
         <Route path="/builder/:id" element={<BuilderPage />} />
         <Route path="/agents/:id" element={<PolicyEditorPage />} />

@@ -5,6 +5,8 @@ import { App } from "./App";
 // tokens first — styles.css and every component read from it.
 import "./tokens.css";
 import "./styles.css";
+// Per-screen styles, one file each (see ref/Orchestrator_Screen_Development_Guide.md).
+import "./styles/editor.css";
 
 const root = document.getElementById("root");
 if (!root) {

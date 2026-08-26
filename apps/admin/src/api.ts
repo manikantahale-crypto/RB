@@ -204,7 +204,12 @@ export type ApiErrorBody = {
 
 const API_BASE = import.meta.env.VITE_ADMIN_API_URL ?? "/api";
 
-async function request<T>(
+/**
+ * Exported so each screen can keep its own API file (see src/api/) instead of
+ * appending to this one. The shared bits — base URL, headers, error shape —
+ * stay in one place; the calls live with their screen.
+ */
+export async function request<T>(
   path: string,
   init?: RequestInit,
 ): Promise<{ ok: true; data: T } | { ok: false; status: number; body: ApiErrorBody }> {

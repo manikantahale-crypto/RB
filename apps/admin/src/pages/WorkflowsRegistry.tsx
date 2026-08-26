@@ -18,8 +18,9 @@
  *   it has never fired.
  */
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { Link } from "react-router-dom";
+import { Link, useNavigate } from "react-router-dom";
 import { listWorkflows, type WorkflowRegistryRow } from "../api";
+import { startDraft } from "../api/editor";
 
 type SortKey = "activity" | "name" | "module";
 
@@ -93,6 +94,8 @@ function HealthCell({ row }: { row: WorkflowRegistryRow }) {
 }
 
 export function WorkflowsRegistryPage() {
+  const navigate = useNavigate();
+  const [opening, setOpening] = useState<string | null>(null);
   const [rows, setRows] = useState<WorkflowRegistryRow[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [query, setQuery] = useState("");
@@ -157,6 +160,25 @@ export function WorkflowsRegistryPage() {
     return sorted;
   }, [rows, query, sort, moduleFilter]);
 
+  /**
+   * Editing means a NEW DRAFT, never a change to the live version. This copies
+   * the active topology into a draft and opens it; a second click reopens the
+   * same draft rather than stacking another.
+   */
+  const editWorkflow = async (graphKey: string) => {
+    setOpening(graphKey);
+    setError(null);
+    const res = await startDraft(graphKey);
+    setOpening(null);
+    if (res.ok) {
+      navigate(
+        `/workflows/${encodeURIComponent(graphKey)}/edit?version=${res.data.version}`,
+      );
+    } else {
+      setError(res.body.message ?? res.body.error ?? "Could not open an editable draft");
+    }
+  };
+
   const orphans = (rows ?? []).filter((r) => r.orphan);
 
   return (
@@ -169,7 +191,11 @@ export function WorkflowsRegistryPage() {
             doing.
           </p>
         </div>
-        <button type="button" className="wf-btn wf-btn--primary" disabled>
+        <button
+          type="button"
+          className="wf-btn wf-btn--primary"
+          onClick={() => navigate("/workflows/new")}
+        >
           + New workflow
         </button>
       </header>
@@ -255,6 +281,7 @@ export function WorkflowsRegistryPage() {
                 <th scope="col">Live version</th>
                 <th scope="col">Drafts</th>
                 <th scope="col">Last 24 hours</th>
+                <th scope="col"><span className="sr-only">Edit</span></th>
               </tr>
             </thead>
             <tbody>
@@ -308,6 +335,21 @@ export function WorkflowsRegistryPage() {
                     >
                       <HealthCell row={row} />
                     </Link>
+                  </td>
+                  <td>
+                    <button
+                      type="button"
+                      className="wf-btn"
+                      onClick={() => void editWorkflow(row.graphKey)}
+                      disabled={opening === row.graphKey || row.activeVersion == null}
+                      title={
+                        row.activeVersion == null
+                          ? "Nothing active to copy from yet."
+                          : "Open a draft copy of the live version"
+                      }
+                    >
+                      {opening === row.graphKey ? "Opening…" : "Edit"}
+                    </button>
                   </td>
                 </tr>
               ))}
