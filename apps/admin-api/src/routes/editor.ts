@@ -244,6 +244,28 @@ export function registerEditorRoutes(app: FastifyLike, pool: Pool): void {
             [graphKey],
           );
 
+          const bound = triggers.rows.map((t: any) => t.event_type);
+
+          /**
+           * A DRAFT'S TRIGGER IS NOT A BINDING YET.
+           *
+           * `graph_event_bindings` permits only 'active' and 'retired', so a
+           * draft binding has no representation and accepting a proposal keeps
+           * the chosen trigger inside the definition (`entryInput`) until
+           * go-live — see propose.ts. Reading bindings alone therefore shows
+           * "no trigger bound" on every workflow that has never gone live,
+           * which is exactly the ones being edited.
+           *
+           * So fall back to the definition, and say which one this is. The
+           * distinction is real and the canvas must not hide it: bound means
+           * events reach it today, pending means the binding appears at
+           * go-live.
+           */
+          const pending =
+            bound.length === 0 && row.definition?.entryInput
+              ? [String(row.definition.entryInput)]
+              : [];
+
           return {
             graphKey,
             version: row.version,
@@ -254,7 +276,9 @@ export function registerEditorRoutes(app: FastifyLike, pool: Pool): void {
             createdAt: row.created_at,
             // The canvas draws these as the trigger chip. A workflow can have
             // several — it never learns which door fired.
-            triggers: triggers.rows.map((t: any) => t.event_type),
+            triggers: bound.length > 0 ? bound : pending,
+            triggerSource:
+              bound.length > 0 ? "binding" : pending.length > 0 ? "draft" : "none",
             editable: row.status === "draft",
           };
         });

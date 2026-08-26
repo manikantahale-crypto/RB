@@ -84,6 +84,12 @@ export type LoadedVersion = {
   createdAt: string;
   /** Events with an active binding here — the canvas draws these as the chip. */
   triggers: string[];
+  /**
+   * Where `triggers` came from. `binding` means events reach this workflow
+   * today; `draft` means a trigger has been chosen and the binding is created
+   * at go-live — a draft binding cannot be stored. The canvas says which.
+   */
+  triggerSource?: "binding" | "draft" | "none";
   editable: boolean;
 };
 

@@ -135,6 +135,66 @@
   white-space: nowrap;
 }
 
+/* Inserting on an edge is the ONLY way to change structure, so the `+` must
+   stay reachable no matter where a step has been dragged. React Flow gives
+   nodes z-index 0 and leaves the edge-label layer on auto, earlier in the DOM —
+   so a step dropped over an edge midpoint swallows the control that edits it.
+   Scoped to this canvas: the run-detail graph has no insert controls. */
+.ge-canvas-body .react-flow__edgelabel-renderer { z-index: 5; }
+
+/* Note and Tidy up sit together on the right; the step count keeps the left. */
+.ge-canvas-note { margin-left: auto; }
+.ge-tidy {
+  padding: var(--space-1) var(--space-3);
+  font-size: var(--font-size-xs);
+}
+
+/* Zoom controls. React Flow ships its own colours, which are literals and
+   ignore the theme — restated here through tokens so the buttons follow dark
+   mode like everything else. */
+.ge-controls.react-flow__controls {
+  box-shadow: var(--shadow-sm);
+  border-radius: var(--control-radius);
+  overflow: hidden;
+}
+.ge-controls .react-flow__controls-button {
+  width: 26px;
+  height: 26px;
+  background: var(--surface-raised);
+  border-bottom: 1px solid var(--border-subtle);
+  fill: var(--text-secondary);
+}
+.ge-controls .react-flow__controls-button:hover {
+  background: var(--surface-sunken);
+  fill: var(--text-primary);
+}
+.ge-controls .react-flow__controls-button:last-child { border-bottom: none; }
+
+/* Steps advertise that they can be moved; the trigger and the end marker are
+   fixtures of the drawing, not things you arrange. */
+.ge-node { cursor: grab; }
+.ge-node:active { cursor: grabbing; }
+
+/* Where the workflow finishes. Deliberately quieter and narrower than a step —
+   it is a terminus, not something you can select, configure or test. */
+.ge-end {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 120px;
+  box-sizing: border-box;
+  padding: var(--space-2) var(--space-3);
+  border-radius: var(--radius-pill);
+  border: 1.5px dashed var(--border-subtle);
+  background: var(--surface-sunken);
+}
+.ge-end-name {
+  font-size: var(--font-size-xs);
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+}
+
 .ge-node {
   display: flex;
   flex-direction: column;

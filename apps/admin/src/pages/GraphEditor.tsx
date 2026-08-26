@@ -16,13 +16,15 @@
  * means a draft, and the save endpoint refuses anything else — runs are pinned
  * to a version and read their topology back from that row.
  */
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Link, useParams, useSearchParams } from "react-router-dom";
 import {
   Background,
+  Controls,
   Handle,
   Position,
   ReactFlow,
+  useNodesState,
   type Edge,
   type Node,
 } from "@xyflow/react";
@@ -61,21 +63,47 @@ function moduleOf(graphKey: string): string {
 type CanvasNodeData = {
   label: string;
   impl: string;
-  kind: "trigger" | "node";
+  kind: "trigger" | "end" | "node";
   sideEffect: string | null;
   known: boolean;
   selected: boolean;
+  /** Trigger chosen but not bound yet — the binding is made at go-live. */
+  pending?: boolean;
 };
 
 function CanvasNode({ data }: { data: CanvasNodeData }) {
   if (data.kind === "trigger") {
     return (
-      <div className="ge-trigger" title="The event that starts this workflow">
+      <div
+        className="ge-trigger"
+        title={
+          data.pending
+            ? `${data.impl} — chosen, but the binding is created at go-live`
+            : "The event that starts this workflow"
+        }
+      >
         <span className="ge-trigger-bolt" aria-hidden="true">
           ⚡
         </span>
         <span className="ge-trigger-name">{data.label}</span>
+        {data.pending ? (
+          <span className="ge-flag" title="No binding exists yet — nothing reaches this workflow until go-live.">
+            not bound yet
+          </span>
+        ) : null}
         <Handle type="source" position={Position.Bottom} className="ge-handle" />
+      </div>
+    );
+  }
+  // The end of the workflow. It needs a TARGET handle and no source one —
+  // React Flow drops any edge pointing at a node that cannot receive it, and a
+  // dropped final edge takes the `+` after the last step with it, leaving a
+  // canvas where steps can only be inserted before something, never appended.
+  if (data.kind === "end") {
+    return (
+      <div className="ge-end" title="Where this workflow finishes">
+        <Handle type="target" position={Position.Top} className="ge-handle" />
+        <span className="ge-end-name">{data.label}</span>
       </div>
     );
   }
@@ -318,6 +346,7 @@ export function GraphEditorPage() {
         sideEffect: null,
         known: true,
         selected: false,
+        pending: loaded?.triggerSource === "draft",
       } satisfies CanvasNodeData,
     });
 
@@ -332,7 +361,7 @@ export function GraphEditorPage() {
       data: {
         label: "done",
         impl: "end of workflow",
-        kind: "trigger",
+        kind: "end",
         sideEffect: null,
         known: true,
         selected: false,
@@ -386,6 +415,44 @@ export function GraphEditorPage() {
     }
     return { nodes: layout(ns, es), edges: es };
   }, [draft, loaded, selected, contractFor]);
+
+  /**
+   * DRAGGING, WITHOUT LAYOUT BECOMING STATE.
+   *
+   * Positions are computed by dagre from the topology, so the picture can never
+   * disagree with the graph. Dragging has to coexist with that: React Flow owns
+   * the node list while you drag, and dagre recomputes it whenever the topology
+   * changes underneath.
+   *
+   * Where you moved something is remembered HERE, in a ref keyed by node id,
+   * and reapplied over each fresh layout — so selecting a step or inserting one
+   * elsewhere does not throw your arrangement away. It is deliberately not part
+   * of the draft: it is never saved, never checksummed, and never travels to
+   * another person. "Tidy up" drops it and the computed layout returns.
+   */
+  const movedRef = useRef<Record<string, { x: number; y: number }>>({});
+  const [rfNodes, setRfNodes, onNodesChange] = useNodesState<Node>([]);
+
+  useEffect(() => {
+    setRfNodes(
+      nodes.map((n) => {
+        const moved = movedRef.current[n.id];
+        return moved ? { ...n, position: moved } : n;
+      }),
+    );
+  }, [nodes, setRfNodes]);
+
+  // A ref alone cannot drive the "Tidy up" affordance — nothing re-renders when
+  // it changes, so the button would never appear. The positions stay in the ref
+  // (they must not cause a re-render mid-drag); this only tracks whether any
+  // exist.
+  const [arranged, setArranged] = useState(false);
+
+  const tidyUp = useCallback(() => {
+    movedRef.current = {};
+    setArranged(false);
+    setRfNodes(nodes);
+  }, [nodes, setRfNodes]);
 
   const selectedNode = draft?.nodes.find((n) => n.id === selected) ?? null;
   const selectedContract = selectedNode ? contractFor(selectedNode.impl) : null;
@@ -581,22 +648,46 @@ export function GraphEditorPage() {
                 {draft.nodes.length} step{draft.nodes.length === 1 ? "" : "s"}
               </span>
               <span className="ge-canvas-note">
-                layout is computed, never stored · click a step to edit it
+                drag to arrange · click a step to edit it
               </span>
+              {arranged ? (
+                <button
+                  type="button"
+                  className="wf-btn ge-tidy"
+                  onClick={tidyUp}
+                  title="Drop your arrangement and return to the computed layout. Arrangement is never saved."
+                >
+                  Tidy up
+                </button>
+              ) : null}
             </div>
             <div className="ge-canvas-body">
               <ReactFlow
-                nodes={nodes}
+                nodes={rfNodes}
                 edges={edges}
                 nodeTypes={nodeTypes}
                 edgeTypes={edgeTypes}
+                onNodesChange={onNodesChange}
                 fitView
                 fitViewOptions={{ padding: 0.2, maxZoom: 1 }}
-                nodesDraggable={false}
+                nodesDraggable
+                onNodeDragStop={(_, n) => {
+                  movedRef.current[n.id] = n.position;
+                  setArranged(true);
+                }}
+                /* Edges are drawn from the topology. Dragging a wire between
+                   two boxes would imply you can rewire by hand, and you
+                   cannot — structure changes by inserting on an edge. */
                 nodesConnectable={false}
-                zoomOnScroll={false}
-                panOnScroll={false}
-                preventScrolling={false}
+                /* Off, or React Flow stamps z-index:1000 inline on the selected
+                   node — which beats any stylesheet and lets a step you dragged
+                   over an edge bury the `+` that edits structure. */
+                elevateNodesOnSelect={false}
+                minZoom={0.2}
+                maxZoom={2}
+                zoomOnScroll
+                zoomOnPinch
+                panOnDrag
                 proOptions={{ hideAttribution: true }}
                 onNodeClick={(_, n) => {
                   if (n.id !== "__trigger__" && n.id !== "__end_marker__") {
@@ -608,6 +699,11 @@ export function GraphEditorPage() {
                   gap={18}
                   size={0.5}
                   color={token("--slate-230", "#e8edf2")}
+                />
+                <Controls
+                  className="ge-controls"
+                  showInteractive={false}
+                  aria-label="Zoom and fit"
                 />
               </ReactFlow>
             </div>
