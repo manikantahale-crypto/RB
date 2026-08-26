@@ -1,9 +1,14 @@
 {
   "extends": "../../tsconfig.base.json",
   "compilerOptions": {
-    "outDir": "dist",
-    "rootDir": "src"
+    "noEmit": true
   },
-  "include": ["src"],
-  "exclude": ["src/**/*.test.ts", "src/**/*.integration.test.ts"]
+  "include": [
+    "src",
+    "../../adapters/index.ts"
+  ],
+  "exclude": [
+    "src/**/*.test.ts",
+    "src/**/*.integration.test.ts"
+  ]
 }

@@ -28,6 +28,10 @@ import { registerCatalogAndCreateRoutes } from "./routes/catalog.js";
 import { registerBuilderOverviewRoutes } from "./routes/builder-overview.js";
 import { registerRuntimeRoutes } from "./routes/runtime.js";
 import { registerWorkflowRoutes } from "./routes/workflows.js";
+import { registerEditorRoutes } from "./routes/editor.js";
+import { registerNodeTestRoutes } from "./routes/node-test.js";
+import { registerEventCatalogRoutes } from "./routes/event-catalog.js";
+import { registerProposeRoutes } from "./routes/propose.js";
 
 loadEnv({ path: resolve(process.cwd(), "../../.env") });
 loadEnv();
@@ -98,6 +102,10 @@ async function main(): Promise<void> {
   registerAgentRoutes(app, pool, { llm, privilegedPool: migratorPool });
   registerRuntimeRoutes(app, migratorPool);
   registerWorkflowRoutes(app, pool);
+  registerEditorRoutes(app, pool);
+  registerNodeTestRoutes(app, migratorPool);
+  registerEventCatalogRoutes(app, pool);
+  registerProposeRoutes(app, pool);
 
   const shutdown = async () => {
     await app.close();
