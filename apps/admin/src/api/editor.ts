@@ -208,23 +208,85 @@ export function registerDraftEvent(body: {
 export type TriggerCandidate = {
   eventType: string;
   description: string;
-  /** Orders candidates. Not a probability, and not shown as one. */
+  /** The catalogue's own answer to "when is this published". */
+  producedWhen: string;
+  /**
+   * Orders candidates. NOT RENDERED ANYWHERE, deliberately — it is not a
+   * probability and its denominator is the length of the description, so it
+   * cannot be compared across two proposals. It travels for tests.
+   */
   score: number;
   /** The words that made it rank — what the ledger cites. */
   matchedOn: string[];
+  /** How many times anything has actually published it. */
+  publishCount: number;
+  /** False means a workflow triggered on this could never run. */
+  everPublished: boolean;
 };
 
 export type LedgerEntry = {
-  kind: "READ" | "MATCHED" | "CHOSE" | "SET" | "SKIPPED";
+  kind:
+    | "READ"
+    | "SEARCHED"
+    | "MATCHED"
+    | "REJECTED"
+    | "CHOSE"
+    | "SET"
+    | "SKIPPED"
+    /** One sentence turned out to describe two workflows. */
+    | "SPLIT";
   text: string;
   citation?: string;
   action?: "trigger" | "config" | "graph";
+  /**
+   * Computed by code, or reasoned by a model. Rendered as a flag so the two
+   * are never read with the same trust: a `system` line can be checked against
+   * the artifact it cites, a `model` line needs the citation verified first.
+   */
+  source: "system" | "model";
 };
 
 export type Proposal = {
   module: string;
   description: string;
   triggerCandidates: TriggerCandidate[];
+  /** Events that shared no wording at all, so were never ranked. */
+  notRanked: number;
+  /**
+   * The proposed shape.
+   *
+   * `source` is not decoration: `model` is a suggestion built from the whole
+   * description, `placeholder` is one arbitrary step shown because generation
+   * did not happen. Rendering them the same way would present an apology as
+   * advice.
+   */
+  graph: {
+    source: "model" | "placeholder";
+    nodes: Array<{ id: string; impl: string; config?: Record<string, unknown> }>;
+    edges: Array<[string, string]>;
+    /** What the model said it could not build. Never silently dropped. */
+    unsupported: string[];
+    model: string | null;
+    summary: string | null;
+    fallbackReason: string | null;
+  };
+  /**
+   * Set only when the description spanned two applications.
+   *
+   * Null is the ordinary case and the screen shows nothing for it — a concept
+   * nobody needs today should cost them no attention.
+   */
+  handoff: {
+    /** The published event joining the halves, if one was named. */
+    viaEvent: string | null;
+    otherModule: string;
+    /** Whether your half runs before the handoff event or after it. */
+    yourHalf: "before" | "after";
+    theirSteps: string[];
+    yourSteps: string[];
+    /** Active workflows already bound to the handoff event. */
+    handledBy: Array<{ graphKey: string; moduleQueue: string | null }>;
+  } | null;
   suggestedTrigger: string | null;
   availableNodes: Array<{
     key: string;

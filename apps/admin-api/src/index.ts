@@ -105,7 +105,7 @@ async function main(): Promise<void> {
   registerEditorRoutes(app, pool);
   registerNodeTestRoutes(app, migratorPool);
   registerEventCatalogRoutes(app, pool);
-  registerProposeRoutes(app, pool);
+  registerProposeRoutes(app, pool, { llm });
 
   const shutdown = async () => {
     await app.close();
