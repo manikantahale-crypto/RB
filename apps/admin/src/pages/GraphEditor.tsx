@@ -40,6 +40,11 @@ import {
   validate,
 } from "./editor-parts";
 import {
+  insertOnEdge,
+  removeStep,
+  type EdgeRef,
+} from "../lib/graph-edit";
+import {
   listRegistryNodes,
   loadVersion,
   saveDraft,
@@ -67,6 +72,12 @@ type CanvasNodeData = {
   sideEffect: string | null;
   known: boolean;
   selected: boolean;
+  /**
+   * The outcomes this step branches on, if any. A decision is drawn as a step
+   * that fans out rather than a step you pass through, because that is what it
+   * is — the fork lives on the edges leaving it, not in the box.
+   */
+  outcomes?: string[];
   /** Trigger chosen but not bound yet — the binding is made at go-live. */
   pending?: boolean;
 };
@@ -124,6 +135,14 @@ function CanvasNode({ data }: { data: CanvasNodeData }) {
       {data.sideEffect ? (
         <span className={`ge-effect ge-effect--${data.sideEffect}`}>
           {data.sideEffect.replace("_", " ")}
+        </span>
+      ) : null}
+      {data.outcomes?.length ? (
+        <span
+          className="ge-effect ge-effect--control"
+          title={`Branches ${data.outcomes.length} ways: ${data.outcomes.join(", ")}`}
+        >
+          branches {data.outcomes.length} ways
         </span>
       ) : null}
       {!data.known ? <span className="ge-unknown-flag">unknown node</span> : null}
@@ -282,8 +301,15 @@ export function GraphEditorPage() {
   const [error, setError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
   const [savedAt, setSavedAt] = useState<Date | null>(null);
-  /** Which edge the picker is inserting on, as "source->target". */
-  const [insertAt, setInsertAt] = useState<string | null>(null);
+  /**
+   * Which edge the picker is inserting on, in definition space.
+   *
+   * Not the canvas edge id. The id is a display string, and recovering an arm
+   * from it meant splitting on `->` and then on `:` — which any node id
+   * containing either character defeats. The loops below already hold both
+   * ends, so they hand over the reference itself.
+   */
+  const [insertAt, setInsertAt] = useState<EdgeRef | null>(null);
 
   const load = useCallback(async () => {
     if (!graphKey || !version) return;
@@ -368,6 +394,14 @@ export function GraphEditorPage() {
       } satisfies CanvasNodeData,
     });
 
+    const outcomesOf = new Map<string, string[]>();
+    for (const ce of draft.conditionalEdges ?? []) {
+      outcomesOf.set(ce.from, [
+        ...(outcomesOf.get(ce.from) ?? []),
+        ...Object.keys(ce.map),
+      ]);
+    }
+
     for (const n of draft.nodes) {
       const c = contractFor(n.impl);
       ns.push({
@@ -381,6 +415,7 @@ export function GraphEditorPage() {
           sideEffect: c?.sideEffect ?? null,
           known: Boolean(c),
           selected: n.id === selected,
+          outcomes: outcomesOf.get(n.id),
         } satisfies CanvasNodeData,
       });
     }
@@ -392,24 +427,32 @@ export function GraphEditorPage() {
       const target = to === "__end__" ? endId : to;
       if (!ns.some((n) => n.id === source)) continue;
       if (!ns.some((n) => n.id === target)) continue;
+      const ref: EdgeRef = { kind: "plain", from, to };
       es.push({
         id: `${source}->${target}`,
         source,
         target,
         type: "insertable",
-        data: { onInsert: (edgeId: string) => setInsertAt(edgeId) },
+        data: { onInsert: () => setInsertAt(ref) },
       });
     }
     for (const ce of draft.conditionalEdges ?? []) {
-      for (const [label, target] of Object.entries(ce.map)) {
+      for (const [label, to] of Object.entries(ce.map)) {
+        // An arm may end the workflow, and `__end__` is drawn as the "done"
+        // marker like any other terminal edge. Without this the whole arm was
+        // silently not drawn — `astra.requirement.workflow` rejects to
+        // `__end__`, and that path has never appeared on the canvas.
+        const target = to === "__end__" ? endId : to;
+        if (!ns.some((n) => n.id === ce.from)) continue;
         if (!ns.some((n) => n.id === target)) continue;
+        const ref: EdgeRef = { kind: "conditional", from: ce.from, label, to };
         es.push({
           id: `${ce.from}->${target}:${label}`,
           source: ce.from,
           target,
           label,
           type: "insertable",
-          data: { onInsert: (edgeId: string) => setInsertAt(edgeId) },
+          data: { onInsert: () => setInsertAt(ref) },
         });
       }
     }
@@ -480,7 +523,7 @@ export function GraphEditorPage() {
   /** Fields produced by everything upstream of an edge — feeds the picker. */
   const upstreamOutputs = useMemo(() => {
     if (!draft || !insertAt) return [] as string[];
-    const source = insertAt.split("->")[0]!;
+    const source = insertAt.from;
     const out = new Set<string>();
     // Walk backwards from the insertion point, collecting declared outputs.
     const seen = new Set<string>();
@@ -493,59 +536,29 @@ export function GraphEditorPage() {
         for (const f of Object.keys(c?.outputSchema?.properties ?? {})) out.add(f);
       }
       for (const [a, b] of draft.edges) if (b === id) walk(a);
+      // A step reached only through a branch arm has upstream too — without
+      // this the picker reports nothing usable anywhere after a decision.
+      for (const ce of draft.conditionalEdges ?? []) {
+        if (Object.values(ce.map).includes(id)) walk(ce.from);
+      }
     };
     walk(source);
     return [...out];
   }, [draft, insertAt, contractFor]);
 
-  /**
-   * Insert a step on an edge: A → B becomes A → new → B.
-   * The id is derived from the node key and made unique, because a person
-   * should not have to invent one.
-   */
+  /** Insert a step on an edge — see `lib/graph-edit.ts` for both cases. */
   const insertNode = (chosen: RegistryNode) => {
     if (!draft || !insertAt) return;
-    const [rawSource, rawTargetWithLabel] = insertAt.split("->");
-    const rawTargetMarker = (rawTargetWithLabel ?? "").split(":")[0]!;
-    // The canvas draws `__start__` as a trigger chip and `__end__` as a "done"
-    // marker; the definition still speaks in the markers.
-    const source = rawSource === "__trigger__" ? "__start__" : rawSource!;
-    const rawTarget =
-      rawTargetMarker === "__end_marker__" ? "__end__" : rawTargetMarker;
-
-    const base = chosen.key.split(".").pop() ?? "step";
-    let id = base;
-    let n = 2;
-    while (draft.nodes.some((x) => x.id === id)) id = `${base}${n++}`;
-
-    setDraft({
-      ...draft,
-      nodes: [...draft.nodes, { id, impl: chosen.key, config: {} }],
-      edges: [
-        ...draft.edges.filter(([a, b]) => !(a === source && b === rawTarget)),
-        [source, id] as [string, string],
-        [id, rawTarget] as [string, string],
-      ],
-    });
-    setSelected(id);
+    const { def, newNodeId } = insertOnEdge(draft, insertAt, chosen.key);
+    setDraft(def);
+    setSelected(newNodeId);
     setInsertAt(null);
   };
 
-  /** Remove a step and heal the chain around it. */
+  /** Remove a step and heal the chain around it, through both edge lists. */
   const removeNode = (id: string) => {
     if (!draft) return;
-    const incoming = draft.edges.filter(([, b]) => b === id).map(([a]) => a);
-    const outgoing = draft.edges.filter(([a]) => a === id).map(([, b]) => b);
-    const healed: Array<[string, string]> = [];
-    for (const a of incoming) for (const b of outgoing) healed.push([a, b]);
-    setDraft({
-      ...draft,
-      nodes: draft.nodes.filter((x) => x.id !== id),
-      edges: [
-        ...draft.edges.filter(([a, b]) => a !== id && b !== id),
-        ...healed,
-      ],
-    });
+    setDraft(removeStep(draft, id));
     setSelected(null);
   };
 
