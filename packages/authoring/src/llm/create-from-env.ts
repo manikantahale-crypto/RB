@@ -247,7 +247,7 @@ function createGeminiClient(cfg: LlmEnvConfig): LLMClient {
           maxOutputTokens: maxOut,
           responseMimeType: "application/json",
           ...(req.responseJsonSchema
-            ? { responseSchema: req.responseJsonSchema }
+            ? { responseSchema: toGeminiSchema(req.responseJsonSchema) }
             : {}),
           thinkingConfig: { thinkingBudget: 0 },
         },
@@ -356,6 +356,77 @@ function looksTruncatedJson(text: string): boolean {
 }
 
 /** Fallback when the model rejects JSON-mode / thinkingConfig fields. */
+/**
+ * Translate a strict JSON Schema into the subset Gemini's `responseSchema`
+ * accepts.
+ *
+ * WHY THIS EXISTS. The schema we send is written for OpenAI structured
+ * outputs, which REQUIRE `additionalProperties: false` and accept union types
+ * like `["string", "null"]`. Gemini accepts neither, and answers 400 with
+ * `Unknown name "additionalProperties"`. That 400 used to drop the request
+ * into `completeGeminiLegacy`, which sends no schema at all — so the strict
+ * schema silently became no schema, and every claim about constrained output
+ * was false on this provider.
+ *
+ * The knock-on was worse than the lost constraint. Legacy also drops
+ * `thinkingConfig: { thinkingBudget: 0 }`, and on the 2.5 models thinking
+ * tokens are charged against `maxOutputTokens` — so the model spent its budget
+ * thinking and the JSON came back truncated mid-object. The symptom was
+ * "LLM response contained an unclosed JSON object", three levels away from
+ * the cause.
+ *
+ * Whitelist rather than blacklist: an unknown keyword is a 400, and a 400 is
+ * how this whole failure started.
+ */
+const GEMINI_SCHEMA_KEYS = new Set([
+  "type",
+  "format",
+  "description",
+  "nullable",
+  "enum",
+  "items",
+  "properties",
+  "required",
+  "minItems",
+  "maxItems",
+  "propertyOrdering",
+]);
+
+export function toGeminiSchema(schema: unknown): unknown {
+  if (Array.isArray(schema)) return schema.map(toGeminiSchema);
+  if (!schema || typeof schema !== "object") return schema;
+
+  const src = schema as Record<string, unknown>;
+  const out: Record<string, unknown> = {};
+
+  for (const [key, value] of Object.entries(src)) {
+    if (!GEMINI_SCHEMA_KEYS.has(key)) continue;
+
+    if (key === "type" && Array.isArray(value)) {
+      // ["string", "null"] → type: "string", nullable: true
+      const types = value.filter((t) => t !== "null");
+      if (value.includes("null")) out.nullable = true;
+      out.type = types[0] ?? "string";
+      continue;
+    }
+    if (key === "properties" && value && typeof value === "object") {
+      const props: Record<string, unknown> = {};
+      for (const [name, sub] of Object.entries(value as Record<string, unknown>)) {
+        props[name] = toGeminiSchema(sub);
+      }
+      out.properties = props;
+      continue;
+    }
+    if (key === "items") {
+      out.items = toGeminiSchema(value);
+      continue;
+    }
+    out[key] = value;
+  }
+
+  return out;
+}
+
 async function completeGeminiLegacy(
   cfg: LlmEnvConfig,
   req: LLMCompleteRequest,
