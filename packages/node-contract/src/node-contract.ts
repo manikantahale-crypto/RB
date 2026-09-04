@@ -38,11 +38,14 @@ const SemVer = z
   .regex(/^\d+\.\d+\.\d+$/, "must be semver, e.g. `1.0.0`");
 
 /**
- * Closed set. Onboarding a module adds it here — an unknown module is
- * unrepresentable rather than merely discouraged (principle 1).
+ * The modules, and what each one is for, live in `module-registry.ts`.
+ *
+ * They used to be a bare three-name tuple here, which is how `orbit`, `relay`
+ * and `interview` came to be running in production while being unrepresentable
+ * in a contract. Re-exported so every existing import keeps working.
  */
-export const MODULES = ["syntra", "astra", "platform"] as const;
-export type Module = (typeof MODULES)[number];
+export { MODULES, type Module } from "./module-registry.js";
+import { MODULES } from "./module-registry.js";
 
 /**
  * Drives CI stubbing (§6.1). Closed set on purpose: a dependency CI cannot

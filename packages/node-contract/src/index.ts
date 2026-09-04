@@ -35,3 +35,20 @@ export {
   toRegistryRow,
   checksumOf,
 } from "./node-contract.js";
+
+/**
+ * What each application is for, and how work moves between them.
+ *
+ * Separate from the node contract because it answers a different question:
+ * the contract says what one step does, this says which application a step
+ * belongs to and what comes before it.
+ */
+export {
+  MODULE_REGISTRY,
+  moduleEdges,
+  orderModules,
+  moduleForFrontDoor,
+  modulePublishing,
+  type ModuleSpec,
+  type ModuleEdge,
+} from "./module-registry.js";
