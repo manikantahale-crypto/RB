@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import { checkInputsAvailable } from "./check-inputs-available.js";
 import {
   GraphDefinitionSchema,
   validateGraphTopology,
@@ -15,7 +16,9 @@ export type GoLiveGateCheckId =
   | "checksum_matches"
   | "no_runtime_key_collision"
   | "gap_acknowledged"
-  | "one_active_safe";
+  | "one_active_safe"
+  /** Every step can actually get the inputs it requires. */
+  | "inputs_available";
 
 export type GoLiveGateCheck = {
   id: GoLiveGateCheckId;
@@ -38,6 +41,21 @@ export type GoLiveGateInput = {
    * scoped per graph_key (Check 4 / 6). If omitted, only key-shape checks run.
    */
   oneActiveIndexPerGraphKey?: boolean;
+  /**
+   * What the trigger event's payload declares, and what each node requires.
+   *
+   * Optional because the gate is called from places that do not have a
+   * database to hand — a caller with no registry gets the six structural
+   * checks it always got, and check 7 reports that it could not run rather
+   * than passing silently. Missing evidence is not the same as evidence of
+   * safety, and the difference has to be visible.
+   */
+  inputs?: {
+    /** Property names on the trigger event's payload schema. */
+    triggerFields: readonly string[];
+    /** Node key → field names its input schema marks required. */
+    requiredByImpl: Map<string, readonly string[]>;
+  };
 };
 
 export type GoLiveGateResult =
@@ -279,6 +297,52 @@ function checkOneActiveSafe(graphKey: string): GoLiveGateCheck {
  * Deterministic go-live gate — all 6 checks must pass.
  * No LLM judgment; pure verification. Order matches the product spec.
  */
+/**
+ * Check 7 — every step can get the inputs it requires.
+ *
+ * The first check here about data rather than shape. A workflow can satisfy
+ * all six above and still die on its first event, because nothing asked
+ * whether the trigger carries what the steps need.
+ *
+ * Reports rather than assumes when it has no registry: a caller without a
+ * database gets "could not check", never "fine".
+ */
+function checkInputsAreAvailable(
+  def: GraphDefinition,
+  evidence: GoLiveGateInput["inputs"],
+): GoLiveGateCheck {
+  if (!evidence) {
+    return {
+      id: "inputs_available",
+      ok: true,
+      message:
+        "Inputs not checked — no node registry was supplied to the gate.",
+    };
+  }
+
+  const problems = checkInputsAvailable({
+    def,
+    triggerFields: evidence.triggerFields,
+    requiredByImpl: evidence.requiredByImpl,
+  });
+
+  if (problems.length === 0) {
+    return {
+      id: "inputs_available",
+      ok: true,
+      message: "Every step can get what it needs.",
+    };
+  }
+
+  return {
+    id: "inputs_available",
+    ok: false,
+    message:
+      `Can't go live: ${problems.length} step${problems.length === 1 ? "" : "s"} ` +
+      `cannot get what they need. ${problems.map((p) => p.message).join(". ")}.`,
+  };
+}
+
 export function evaluateGoLiveGate(input: GoLiveGateInput): GoLiveGateResult {
   const checks: GoLiveGateCheck[] = [];
 
@@ -335,6 +399,9 @@ export function evaluateGoLiveGate(input: GoLiveGateInput): GoLiveGateResult {
 
   // 6 — ONE-ACTIVE (authored key; transactional supersede verified post-activate)
   checks.push(checkOneActiveSafe(lockedKey));
+
+  // 7 — CAN IT ACTUALLY RUN
+  checks.push(checkInputsAreAvailable(def, input.inputs));
 
   if (checks.some((c) => !c.ok)) {
     return failResult(checks);

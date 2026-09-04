@@ -244,3 +244,13 @@ export {
   type PromptNode,
   type SchemaLike,
 } from "./describe-node-for-prompt.js";
+
+/**
+ * Whether every step in a workflow can actually get the inputs it requires —
+ * the first check about data rather than shape.
+ */
+export {
+  checkInputsAvailable,
+  type InputProblem,
+  type CheckInputsArgs,
+} from "./check-inputs-available.js";
