@@ -18,7 +18,9 @@ export type GoLiveGateCheckId =
   | "gap_acknowledged"
   | "one_active_safe"
   /** Every step can actually get the inputs it requires. */
-  | "inputs_available";
+  | "inputs_available"
+  /** Every step is this application's own, or one another lent out. */
+  | "impls_permitted";
 
 export type GoLiveGateCheck = {
   id: GoLiveGateCheckId;
@@ -55,6 +57,20 @@ export type GoLiveGateInput = {
     triggerFields: readonly string[];
     /** Node key → field names its input schema marks required. */
     requiredByImpl: Map<string, readonly string[]>;
+  };
+  /**
+   * Who owns each step, and which ones were lent out.
+   *
+   * Optional for the same reason as `inputs`: a caller with no registry gets
+   * "could not check" rather than a pass.
+   */
+  ownership?: {
+    /** The application this workflow belongs to, from its key. */
+    graphModule: string;
+    /** Node key → its owning module. */
+    moduleByImpl: Map<string, string>;
+    /** Node keys their owning module marked shareable. */
+    shareableImpls: Set<string>;
   };
 };
 
@@ -343,6 +359,70 @@ function checkInputsAreAvailable(
   };
 }
 
+/**
+ * Check 8 — every step is this application's own, or one another lent out.
+ *
+ * `shareable` has existed on the node contract from the start and has only
+ * ever been ADVISORY: it filters what the editor's palette offers, and nothing
+ * looks at it again. The palette filter also applies only when a module is
+ * supplied, so a caller that omits it is handed private nodes.
+ *
+ * The result is a live workflow, `relay.intake.workflow`, using
+ * `astra.requirement.intake` — which is `shareable = false`. Exactly the
+ * boundary this flag exists to prevent, crossed in production, with nothing to
+ * notice.
+ *
+ * Checking it here rather than in the palette is the point: the palette
+ * decides what is easy to pick, and this decides what may ship. A node reached
+ * some other way — a hand-edited definition, a generated graph, an API call —
+ * meets the same rule.
+ *
+ * Platform capability is exempt by being shareable, not by being special:
+ * `human.gate` and `orch.branch.decision` are lent to everyone and pass here
+ * the same way a lent SYNTRA node does.
+ */
+function checkImplsPermitted(
+  def: GraphDefinition,
+  evidence: GoLiveGateInput["ownership"],
+): GoLiveGateCheck {
+  if (!evidence) {
+    return {
+      id: "impls_permitted",
+      ok: true,
+      message:
+        "Step ownership not checked — no node registry was supplied to the gate.",
+    };
+  }
+
+  const offences: string[] = [];
+  for (const node of def.nodes) {
+    const owner = evidence.moduleByImpl.get(node.impl);
+    // A node the registry has never heard of is check 1's problem, not this
+    // one. Reporting it twice helps nobody.
+    if (owner === undefined) continue;
+    if (owner === evidence.graphModule) continue;
+    if (evidence.shareableImpls.has(node.impl)) continue;
+    offences.push(`${node.id} uses ${node.impl}, which ${owner} keeps private`);
+  }
+
+  if (offences.length === 0) {
+    return {
+      id: "impls_permitted",
+      ok: true,
+      message: "Every step is this application's own or shared with it.",
+    };
+  }
+
+  return {
+    id: "impls_permitted",
+    ok: false,
+    message:
+      `Can't go live: ${offences.length} step${offences.length === 1 ? "" : "s"} ` +
+      `belong to another application. ${offences.join(". ")}. ` +
+      `Ask that application to publish an event you can start from instead.`,
+  };
+}
+
 export function evaluateGoLiveGate(input: GoLiveGateInput): GoLiveGateResult {
   const checks: GoLiveGateCheck[] = [];
 
@@ -402,6 +482,9 @@ export function evaluateGoLiveGate(input: GoLiveGateInput): GoLiveGateResult {
 
   // 7 — CAN IT ACTUALLY RUN
   checks.push(checkInputsAreAvailable(def, input.inputs));
+
+  // 8 — MAY IT USE WHAT IT USES
+  checks.push(checkImplsPermitted(def, input.ownership));
 
   if (checks.some((c) => !c.ok)) {
     return failResult(checks);

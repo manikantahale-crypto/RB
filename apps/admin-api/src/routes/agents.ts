@@ -1367,12 +1367,30 @@ export function registerAgentRoutes(
         oneActiveIndexPerGraphKey = false;
       }
 
+      /**
+       * EVIDENCE FOR THE TWO CHECKS THAT ASK ABOUT MORE THAN SHAPE.
+       *
+       * Checks 7 and 8 need the node registry and the trigger's payload
+       * schema, and the gate is a pure function that cannot reach a database.
+       * Gathered here and handed in.
+       *
+       * When either lookup fails the blob is left out, and the gate reports
+       * "not checked" rather than passing. A check that goes quiet when it
+       * cannot see is worse than no check, because it reads like a pass.
+       */
+      const gateEvidence = await collectGateEvidence(
+        client,
+        row.artifact_source,
+        `${tmpl.agentKey}.authored`,
+      );
+
       const gate = evaluateGoLiveGate({
         artifactSource: row.artifact_source,
         storedChecksum: row.checksum,
         expectedGraphKey: `${tmpl.agentKey}.authored`,
         gapAck: readGapAckFromMeta(row.meta),
         oneActiveIndexPerGraphKey,
+        ...gateEvidence,
       });
 
       if (!gate.ok) {
@@ -2859,4 +2877,87 @@ export function registerAgentRoutes(
       return reply.send({ status: "deleted", agentId });
     });
   });
+}
+
+/* ─────────────────────── evidence for the go-live gate ─────────────────── */
+
+/**
+ * What checks 7 and 8 need from the database.
+ *
+ * `entryInput` on an authored definition holds the trigger event type — the
+ * chosen trigger travels inside the definition because a draft binding cannot
+ * be stored, so this is where the trigger lives until go-live creates one.
+ *
+ * Returns `{}` on any failure. That is deliberate: the gate reports
+ * "not checked" for evidence it did not receive, and blocking a release
+ * because a catalogue query failed would be the wrong trade — the six
+ * structural checks still run.
+ */
+async function collectGateEvidence(
+  client: { query: (t: string, p?: unknown[]) => Promise<{ rows: any[] }> },
+  artifactSource: string,
+  graphKey: string,
+): Promise<{
+  inputs?: {
+    triggerFields: readonly string[];
+    requiredByImpl: Map<string, readonly string[]>;
+  };
+  ownership?: {
+    graphModule: string;
+    moduleByImpl: Map<string, string>;
+    shareableImpls: Set<string>;
+  };
+}> {
+  try {
+    const def = JSON.parse(artifactSource) as {
+      entryInput?: string;
+      nodes?: Array<{ impl?: string }>;
+    };
+    const impls = [
+      ...new Set((def.nodes ?? []).map((n) => String(n.impl ?? ""))),
+    ].filter(Boolean);
+    if (impls.length === 0) return {};
+
+    const { rows } = await client.query(
+      `SELECT key, module, shareable, input_schema
+         FROM node_registry WHERE key = ANY($1::text[])`,
+      [impls],
+    );
+
+    const requiredByImpl = new Map<string, readonly string[]>();
+    const moduleByImpl = new Map<string, string>();
+    const shareableImpls = new Set<string>();
+    for (const r of rows) {
+      const key = String(r.key);
+      moduleByImpl.set(key, String(r.module));
+      if (r.shareable === true) shareableImpls.add(key);
+      const required = r.input_schema?.required;
+      requiredByImpl.set(key, Array.isArray(required) ? required : []);
+    }
+
+    /**
+     * `syntra.authored` → `syntra`. The same derivation the editor and the
+     * materializer use; when the module registry is wired through to this
+     * layer it should come from there instead of a prefix.
+     */
+    const graphModule = graphKey.split(".")[0] ?? "platform";
+
+    let triggerFields: string[] = [];
+    if (def.entryInput) {
+      const ev = await client.query(
+        `SELECT payload_schema FROM event_schemas WHERE event_type = $1 LIMIT 1`,
+        [def.entryInput],
+      );
+      triggerFields = Object.keys(ev.rows[0]?.payload_schema?.properties ?? {});
+    }
+
+    return {
+      // Without a trigger there is nothing to check availability against, and
+      // claiming every field is missing would be noise, not a finding.
+      ...(def.entryInput ? { inputs: { triggerFields, requiredByImpl } } : {}),
+      ownership: { graphModule, moduleByImpl, shareableImpls },
+    };
+  } catch {
+    return {};
+  }
 }
