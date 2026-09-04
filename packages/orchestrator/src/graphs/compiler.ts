@@ -29,6 +29,7 @@ import {
   orchStoryDetail,
 } from '../observability/story-log.js';
 import { recordAgentStep } from '../workflow/agent-runs.js';
+import { withResolvedInputs } from './resolve-inputs.js';
 
 export { validateDefinition, checksumOf, defineGraph } from './recipe.js';
 
@@ -62,6 +63,27 @@ const SyntraState = Annotation.Root({
   branch_key: Annotation<string | null>({
     reducer: (x, y) => (y !== undefined ? y : x),
     default: () => null,
+  }),
+  /**
+   * THE RUN CONTEXT — what each step produced, filed under its step id.
+   *
+   * Until now a node's output was thrown away: the contract bridge returned a
+   * `result` breadcrumb and nothing else, so step 2 could not use what step 1
+   * produced. Three legacy files worked around it by rewriting the trigger
+   * payload as they went, which is undeclared and unavailable to contract
+   * nodes.
+   *
+   * Merged rather than replaced, so the context accumulates down the run and a
+   * step can read from any earlier one by name: `process.jobId`.
+   *
+   * WHAT MAY GO IN HERE. A node's DECLARED output, which is disciplined to be
+   * keys and small derived values — ids, a status, a score. Never a payload:
+   * this channel is checkpointed, and a resume blob in here would sit in
+   * checkpoint rows outside the redaction rules each node declares.
+   */
+  steps: Annotation<Record<string, unknown>>({
+    reducer: (x, y) => ({ ...x, ...(y ?? {}) }),
+    default: () => ({}),
   }),
 });
 
@@ -376,7 +398,33 @@ export class GraphCompiler {
             `agent=${agentName}  node=${node.id}  tool=${node.impl}  graph=${def.graphKey}`,
           );
 
-          const patch = await impl(state, ctx);
+          /**
+           * RESOLVED HERE, NOT IN THE CONTRACT BRIDGE.
+           *
+           * The bridge only wraps contract nodes, and eleven of the twenty-two
+           * are still raw engine functions reading the trigger payload for
+           * fields nothing declares. Doing it here means input maps work for
+           * every node from the first day, rather than for the half that have
+           * been converted.
+           *
+           * A step with no map gets the state untouched, which is every
+           * definition stored before this existed.
+           */
+          const { state: runState, unresolved } = withResolvedInputs(
+            state,
+            node.inputs,
+          );
+          if (unresolved.length > 0) {
+            // Not a failure: an optional field whose source did not run is
+            // allowed to be absent. A required one fails its own input schema
+            // a moment later, with a better message than this could give.
+            orchStory(
+              'TOOL',
+              `node=${node.id}  unresolved input${unresolved.length === 1 ? '' : 's'}: ${unresolved.join(', ')}`,
+            );
+          }
+
+          const patch = await impl(runState, ctx);
           const viaCtx = drainEvents();
           const durationMs = Date.now() - started;
           const payload = patch.trigger_event?.payload as

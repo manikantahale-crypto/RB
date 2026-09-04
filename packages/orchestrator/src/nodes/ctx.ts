@@ -46,6 +46,7 @@ export function createNodeCtx(args: {
 
   const ctx: NodeCtx = {
     orgId,
+    nodeId,
     config: args.config ?? {},
     logger: args.logger ?? {
       info: (...a: unknown[]) => console.log(`[node:${nodeId}]`, ...a),

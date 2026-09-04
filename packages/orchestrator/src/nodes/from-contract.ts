@@ -55,7 +55,20 @@ export function toNodeImpl(contract: AnyNodeContract): NodeImpl {
     );
 
     const checked = parseOrThrow(contract.key, 'output', contract.output, output);
-    return { result: `${contract.key}: ${summarize(checked)}` };
+    /**
+     * Filed under the STEP id, not the node key: the same implementation runs
+     * at several ids across graphs, and a later step refers to the position it
+     * wants — `process.jobId` — not to the implementation that happened to fill
+     * it.
+     *
+     * Nothing reads this yet. Writing it is separable from resolving it, and
+     * landing them together would have made a behaviour change out of what is
+     * currently an addition.
+     */
+    return {
+      result: `${contract.key}: ${summarize(checked)}`,
+      steps: { [ctx.nodeId]: checked },
+    };
   };
 }
 
