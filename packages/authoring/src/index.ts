@@ -232,3 +232,15 @@ export {
   mergeWorkflowIntoPolicyValues,
   stripWorkflowSectionFromPrompt,
 } from "./sync-policy-from-workflow.js";
+
+/**
+ * Describing a node to a model from the schema the runtime enforces, rather
+ * than from the prose catalogue that has drifted from it.
+ */
+export {
+  describeNode,
+  describeNodesForPrompt,
+  describeSchema,
+  type PromptNode,
+  type SchemaLike,
+} from "./describe-node-for-prompt.js";

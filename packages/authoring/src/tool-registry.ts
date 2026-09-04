@@ -229,16 +229,29 @@ export const TOOL_CATALOG: readonly ToolCatalogEntry[] = [
       "Conditional planner: sets branch_key pass | human_review | reject from confidence/actionable. " +
       "Wire graph.conditionalEdges from this node. Use before/with human.gate for human-in-the-loop.",
     input: {
-      confidence_score: "number — from quality/normalize",
+      confidence_score: "number — from whichever step scored the work",
       is_actionable: "boolean",
       passMin: "number (config, default 0.6)",
       humanMin: "number (config, default 0.35)",
     },
+    /**
+     * Deliberately application-neutral.
+     *
+     * This entry used to name `astra.requirement.rejected` as the output event
+     * and `astra.requirement.scored` as the trigger, because ASTRA's intake
+     * gate was the first thing to use it. That is a platform node describing
+     * itself in one application's vocabulary — harmless while every author saw
+     * every tool, and misleading now that the catalogue is scoped: a SYNTRA
+     * author reading it is being pointed at events they do not own.
+     *
+     * The reject event is configurable per graph (`config.onRejectEvent`),
+     * which is what this should have said all along.
+     */
     output: {
-      event: "astra.requirement.rejected",
+      event: "configurable — config.onRejectEvent, when a reject should be announced",
       shape: "state.branch_key; optional reject event when configured",
     },
-    triggeredBy: "astra.requirement.scored",
+    triggeredBy: "any step that produced a score",
   },
   {
     key: "orbit.lifecycle.transition",

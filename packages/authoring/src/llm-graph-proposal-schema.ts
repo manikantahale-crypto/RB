@@ -35,7 +35,20 @@ export const LlmUnsupportedProposalSchema = z.object({
 });
 
 /** JSON Schema passed to provider structured-output APIs (strict). */
-export function buildLlmGraphJsonSchema(): Record<string, unknown> {
+/**
+ * The schema the provider is given, which CONSTRAINS what the model may emit.
+ *
+ * `allowedToolKeys` is not optional in spirit. Structured output sends this
+ * schema to the model, and the decoder can only produce values from the enum —
+ * so an enum listing every node in the system tells the model those are all
+ * legal, however carefully the prose above it says otherwise. That is exactly
+ * how a SYNTRA author's workflow came back with ASTRA steps in it: eleven nodes
+ * in the catalogue, eleven in the rules, and twenty-two in the enum. The enum
+ * won, because it is the only one of the three the sampler enforces.
+ */
+export function buildLlmGraphJsonSchema(
+  allowedToolKeys: readonly string[] = TOOL_KEYS,
+): Record<string, unknown> {
   return {
     type: "object",
     additionalProperties: false,
@@ -50,7 +63,7 @@ export function buildLlmGraphJsonSchema(): Record<string, unknown> {
           required: ["id", "toolKey", "description"],
           properties: {
             id: { type: "string", minLength: 1 },
-            toolKey: { type: "string", enum: [...TOOL_KEYS] },
+            toolKey: { type: "string", enum: [...allowedToolKeys] },
             description: { type: "string" },
           },
         },

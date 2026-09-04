@@ -19,6 +19,12 @@ export type ProposeGraphFromLlmArgs = {
   temperature?: number;
   maxTokens?: number;
   model?: string;
+  /**
+   * The only keys the model may emit. Must be the SAME list the system prompt
+   * describes — the enum is what the decoder enforces, so a wider one silently
+   * overrules every rule in the prompt.
+   */
+  allowedToolKeys?: readonly string[];
 };
 
 export type ProposeGraphFromLlmResult = {
@@ -30,8 +36,6 @@ export type ProposeGraphFromLlmResult = {
   unsupported: string[];
   model: string;
 };
-
-const RESPONSE_SCHEMA = buildLlmGraphJsonSchema();
 
 function parseStructuredProposal(raw: string): LlmGraphProposal {
   let text: string;
@@ -66,6 +70,9 @@ export async function proposeGraphFromLlm(
     throw new GenerationFailedError("user request is empty");
   }
 
+  // Built per call, not once at module load: the allowed set is per author.
+  const responseSchema = buildLlmGraphJsonSchema(args.allowedToolKeys);
+
   let lastErr: unknown;
   for (let attempt = 0; attempt < 2; attempt++) {
     let rawText: string;
@@ -80,7 +87,7 @@ export async function proposeGraphFromLlm(
         temperature: args.temperature ?? 0.2,
         maxTokens: args.maxTokens ?? 4096,
         model: args.model,
-        responseJsonSchema: RESPONSE_SCHEMA,
+        responseJsonSchema: responseSchema,
       });
       rawText = result.text ?? "";
       model = result.model;
