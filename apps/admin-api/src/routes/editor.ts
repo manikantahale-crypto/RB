@@ -54,7 +54,20 @@ export type RegistryNode = {
   persistence: unknown;
   fixtureNames: string[];
   /** "contract" — declared and enforced. "legacy" — an engine function. */
-  source: "contract" | "legacy";
+  /**
+   * Where this node's declaration came from.
+   *
+   *   contract  declared, and the declaration is what runs
+   *   declared  declared, but the engine runs its own implementation, so
+   *             nothing checks one against the other
+   *   legacy    an engine function with no declaration at all
+   *
+   * `declared` exists for the two platform control nodes — `human.gate` parks
+   * a run, `orch.branch.decision` writes graph state — neither of which can
+   * travel back through the contract bridge. Their schemas are real and worth
+   * projecting; the guarantee is not, so the screens must not imply one.
+   */
+  source: "contract" | "declared" | "legacy";
   /** external / financial need written justification and are not testable here. */
   requiresAllowlist: boolean;
   editorTestable: boolean;
@@ -104,7 +117,10 @@ export function registerEditorRoutes(app: FastifyLike, pool: Pool): void {
         dependencies: r.dependencies ?? [],
         persistence: r.persistence ?? null,
         fixtureNames: r.fixture_names ?? [],
-        source: r.source === "legacy" ? "legacy" : "contract",
+        source:
+          r.source === "legacy" || r.source === "declared"
+            ? r.source
+            : "contract",
         requiresAllowlist:
           r.side_effect === "external" || r.side_effect === "financial",
         editorTestable:

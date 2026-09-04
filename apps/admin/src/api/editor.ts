@@ -33,7 +33,20 @@ export type RegistryNode = {
     redactPaths: string[];
   } | null;
   fixtureNames: string[];
-  source: "contract" | "legacy";
+  /**
+   * Where this node's declaration came from.
+   *
+   *   contract  declared, and the declaration is what runs
+   *   declared  declared, but the engine runs its own implementation, so
+   *             nothing checks one against the other
+   *   legacy    an engine function with no declaration at all
+   *
+   * `declared` exists for the two platform control nodes — `human.gate` parks
+   * a run, `orch.branch.decision` writes graph state — neither of which can
+   * travel back through the contract bridge. Their schemas are real and worth
+   * projecting; the guarantee is not, so the screens must not imply one.
+   */
+  source: "contract" | "declared" | "legacy";
   /** external / financial — needs written justification per graph. */
   requiresAllowlist: boolean;
   /** external / financial are never testable in the editor. */
@@ -237,7 +250,6 @@ export type LedgerEntry = {
     | "SPLIT";
   text: string;
   citation?: string;
-  action?: "trigger" | "config" | "graph";
   /**
    * Computed by code, or reasoned by a model. Rendered as a flag so the two
    * are never read with the same trust: a `system` line can be checked against
@@ -293,7 +305,7 @@ export type Proposal = {
     title: string;
     description: string;
     sideEffect: string | null;
-    source: "contract" | "legacy";
+    source: "contract" | "declared" | "legacy";
     hasSchemas: boolean;
   }>;
   extractedConfig: Array<{ field: string; value: number; phrase: string }>;

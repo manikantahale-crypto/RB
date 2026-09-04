@@ -30,16 +30,25 @@ import pg from "pg";
 // up. Both are loaded, nearest first, the same way the smoke scripts do it.
 loadEnv({ path: resolve(process.cwd(), ".env") });
 loadEnv({ path: resolve(process.cwd(), "../../.env") });
-import { toRegistryRow, checksumOf } from "@tekisho/node-contract";
+import { toRegistryRow, checksumOf, MODULES } from "@tekisho/node-contract";
 import { nodeRegistry } from "@tekisho/orchestrator/src/nodes/registry.js";
 import { getToolCatalog } from "@tekisho/authoring";
 import { contractNodes } from "../src/node-registry.js";
+import { declaredNodes } from "../../../adapters/index.js";
 
-/** `astra.requirement.quality` → `astra`; `human.gate` → `platform`. */
+/**
+ * `astra.requirement.quality` → `astra`; `human.gate` → `platform`.
+ *
+ * Only for LEGACY rows — a declared node states its own module and is never
+ * guessed at. The known set comes from the module registry rather than a list
+ * written out here, which is how `orbit` came to be a module in this file and
+ * not in the contract, and `relay` in neither.
+ */
 function moduleOf(key: string): string {
   const head = key.split(".")[0] ?? "";
-  if (head === "syntra" || head === "astra" || head === "orbit") return head;
-  return "platform";
+  return (MODULES as readonly string[]).includes(head) && head !== "platform"
+    ? head
+    : "platform";
 }
 
 async function ensureTable(pool: pg.Pool): Promise<void> {
@@ -65,7 +74,13 @@ async function ensureTable(pool: pg.Pool): Promise<void> {
       persistence    jsonb,
       fixture_names  jsonb NOT NULL DEFAULT '[]',
       has_stub       boolean NOT NULL DEFAULT false,
-      /** 'contract' — declared and enforced. 'legacy' — an engine function. */
+      /**
+       * 'contract'  declared, and the declaration is what runs.
+       * 'declared'  declared, but the engine runs its own implementation, so
+       *             nothing checks one against the other. See declaredNodes
+       *             in adapters/index.ts for why two nodes are like this.
+       * 'legacy'    an engine function with no declaration at all.
+       */
       source         text NOT NULL DEFAULT 'contract',
       checksum       text,
       updated_at     timestamptz NOT NULL DEFAULT now()
@@ -92,8 +107,15 @@ async function main() {
 
     const written: string[] = [];
 
-    // ── contract-backed nodes: the full declaration ────────────────────
-    for (const contract of contractNodes) {
+    /**
+     * One upsert for both kinds of declaration. `source` is the only
+     * difference, and it is load-bearing: the admin screens read it to decide
+     * whether a declaration is a guarantee or a description.
+     */
+    const writeDeclaration = async (
+      contract: (typeof contractNodes)[number] | (typeof declaredNodes)[number],
+      source: "contract" | "declared",
+    ) => {
       const row = toRegistryRow(contract);
       const checksum = checksumOf(row);
       await pool.query(
@@ -105,7 +127,7 @@ async function main() {
          ) VALUES (
            $1,$2,$3,$4,$5,$6,$7,$8::jsonb,$9::jsonb,$10::jsonb,$11::jsonb,
            $12::jsonb,$13,$14::jsonb,$15::jsonb,$16::jsonb,$17::jsonb,
-           $18::jsonb,$19::jsonb,$20,'contract',$21, now()
+           $18::jsonb,$19::jsonb,$20,$22,$21, now()
          )
          ON CONFLICT (registry_key) DO UPDATE SET
            key=$2, version=$3, module=$4, shareable=$5, title=$6,
@@ -114,7 +136,7 @@ async function main() {
            admin_exposed=$12::jsonb, side_effect=$13, idempotency=$14::jsonb,
            execution=$15::jsonb, llm=$16::jsonb, dependencies=$17::jsonb,
            persistence=$18::jsonb, fixture_names=$19::jsonb, has_stub=$20,
-           source='contract', checksum=$21, updated_at=now()`,
+           source=$22, checksum=$21, updated_at=now()`,
         [
           row.registry_key,
           row.key,
@@ -137,13 +159,27 @@ async function main() {
           JSON.stringify(row.fixture_names),
           row.has_stub,
           checksum,
+          source,
         ],
       );
-      written.push(`${row.registry_key} (contract)`);
+      written.push(`${row.registry_key} (${source})`);
+    };
+
+    // ── declared and enforced: the contract is what runs ────────────────
+    for (const contract of contractNodes) {
+      await writeDeclaration(contract, "contract");
+    }
+
+    // ── declared, but the engine runs it ───────────────────────────────
+    for (const contract of declaredNodes) {
+      await writeDeclaration(contract, "declared");
     }
 
     // ── the rest: known to the runtime, undeclared ─────────────────────
-    const contractKeys = new Set(contractNodes.map((c) => c.key));
+    const contractKeys = new Set([
+      ...contractNodes.map((c) => c.key),
+      ...declaredNodes.map((c) => c.key),
+    ]);
     const catalog = getToolCatalog();
 
     for (const key of Object.keys(nodeRegistry)) {
