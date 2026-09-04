@@ -40,9 +40,21 @@ import {
   validate,
 } from "./editor-parts";
 import {
+  ROUTERS,
+  addArm,
+  addBranch,
+  forkAt,
   insertOnEdge,
+  readBands,
+  removeArm,
   removeStep,
+  renameArm,
+  setArmTarget,
+  setArmThreshold,
+  whyNoBranch,
+  whyNotArmName,
   type EdgeRef,
+  type RouterSpec,
 } from "../lib/graph-edit";
 import {
   listRegistryNodes,
@@ -57,10 +69,18 @@ import {
 const NODE_W = 230;
 const NODE_H = 78;
 
-/** `syntra.match.workflow` → `syntra`. Decides which nodes may be inserted. */
-function moduleOf(graphKey: string): string {
+/**
+ * `syntra.match.workflow` → `syntra`. Decides which nodes may be inserted.
+ *
+ * The known modules are read off the registry the API just returned rather
+ * than written out here. A hardcoded list is how this file came to know about
+ * `orbit` while the node contract did not, and neither of them knew about
+ * `relay` or `interview` — both of which run in production.
+ */
+function moduleOf(graphKey: string, known: Iterable<string>): string {
   const head = graphKey.split(".")[0] ?? "";
-  return ["syntra", "astra", "orbit"].includes(head) ? head : "platform";
+  const modules = new Set(known);
+  return head !== "platform" && modules.has(head) ? head : "platform";
 }
 
 /* ─────────────────────────── canvas node ─────────────────────────────── */
@@ -68,7 +88,7 @@ function moduleOf(graphKey: string): string {
 type CanvasNodeData = {
   label: string;
   impl: string;
-  kind: "trigger" | "end" | "node";
+  kind: "trigger" | "end" | "node" | "decision";
   sideEffect: string | null;
   known: boolean;
   selected: boolean;
@@ -118,11 +138,18 @@ function CanvasNode({ data }: { data: CanvasNodeData }) {
       </div>
     );
   }
+  /**
+   * A decision is drawn as the point the flow splits, not as a box with a
+   * caption saying it splits. The outcomes sit along the bottom edge, in the
+   * order their arms leave, so the box and the lines below it say the same
+   * thing — which is what "branches 3 ways" written inside a rectangle never
+   * did.
+   */
   return (
     <div
       className={`ge-node${data.selected ? " ge-node--on" : ""}${
         data.known ? "" : " ge-node--unknown"
-      }`}
+      }${data.outcomes?.length ? " ge-node--fork" : ""}`}
       title={
         data.known
           ? `${data.impl}${data.sideEffect ? ` · ${data.sideEffect}` : ""}`
@@ -137,15 +164,16 @@ function CanvasNode({ data }: { data: CanvasNodeData }) {
           {data.sideEffect.replace("_", " ")}
         </span>
       ) : null}
+      {!data.known ? <span className="ge-unknown-flag">unknown node</span> : null}
       {data.outcomes?.length ? (
-        <span
-          className="ge-effect ge-effect--control"
-          title={`Branches ${data.outcomes.length} ways: ${data.outcomes.join(", ")}`}
-        >
-          branches {data.outcomes.length} ways
+        <span className="ge-outcomes">
+          {data.outcomes.map((o) => (
+            <span className="ge-outcome" key={o}>
+              {o}
+            </span>
+          ))}
         </span>
       ) : null}
-      {!data.known ? <span className="ge-unknown-flag">unknown node</span> : null}
       <Handle type="source" position={Position.Bottom} className="ge-handle" />
     </div>
   );
@@ -155,16 +183,49 @@ const nodeTypes = { canvasNode: CanvasNode };
 const edgeTypes = { insertable: InsertableEdge };
 
 function layout(nodes: Node[], edges: Edge[]): Node[] {
-  const g = new dagre.graphlib.Graph().setDefaultEdgeLabel(() => ({}));
-  g.setGraph({ rankdir: "TB", nodesep: 40, ranksep: 52 });
-  nodes.forEach((n) => g.setNode(n.id, { width: NODE_W, height: NODE_H }));
-  edges.forEach((e) => g.setEdge(e.source, e.target));
+  /**
+   * `multigraph` is not optional here. Two outcomes of one branch often lead
+   * to the same place — both ending the workflow is the usual case — and a
+   * plain graph collapses those into a single edge, so dagre lays out a fork
+   * it cannot see and the arms come back drawn on top of each other.
+   */
+  const g = new dagre.graphlib.Graph({ multigraph: true }).setDefaultEdgeLabel(
+    () => ({}),
+  );
+  const branching = edges.some((e) => e.label);
+  g.setGraph({
+    rankdir: "TB",
+    nodesep: branching ? 64 : 40,
+    // Room for an outcome label to sit above the step it leads into.
+    ranksep: branching ? 78 : 52,
+  });
+  nodes.forEach((n) => {
+    /**
+     * A fork is taller than a step, because its outcomes are drawn along the
+     * bottom of it. Telling dagre the same height it uses for everything else
+     * makes it reserve too little room and the arms leave through the step
+     * below — the overlap this layout exists to avoid.
+     */
+    const outcomes = (n.data as { outcomes?: string[] } | undefined)?.outcomes;
+    g.setNode(n.id, {
+      width: NODE_W,
+      height: outcomes?.length ? NODE_H + 26 : NODE_H,
+    });
+  });
+  edges.forEach((e) =>
+    g.setEdge(
+      e.source,
+      e.target,
+      e.label ? { width: 96, height: 24, labelpos: "c" } : {},
+      e.id,
+    ),
+  );
   dagre.layout(g);
   return nodes.map((n) => {
     const pos = g.node(n.id);
     return {
       ...n,
-      position: { x: pos.x - NODE_W / 2, y: pos.y - NODE_H / 2 },
+      position: { x: pos.x - pos.width / 2, y: pos.y - pos.height / 2 },
       targetPosition: Position.Top,
       sourcePosition: Position.Bottom,
     };
@@ -376,9 +437,17 @@ export function GraphEditorPage() {
       } satisfies CanvasNodeData,
     });
 
-    // The workflow's end. Drawn so the final edge exists — without it there is
-    // no `+` after the last step, and a step can only ever be inserted BEFORE
-    // something, never appended.
+    /**
+     * The workflow's end. Drawn so the final edge exists — without it there is
+     * no `+` after the last step, and a step can only ever be inserted BEFORE
+     * something, never appended.
+     *
+     * ONE PER ARM THAT ENDS, not one shared marker. A branch usually sends two
+     * of its outcomes straight to the end, and pointing both at the same chip
+     * draws two edges along one line with their labels on top of each other —
+     * which is the whole picture of the branch, illegible. The definition still
+     * says `__end__` for all of them; only the drawing separates them.
+     */
     const endId = "__end_marker__";
     ns.push({
       id: endId,
@@ -411,7 +480,7 @@ export function GraphEditorPage() {
         data: {
           label: n.id,
           impl: n.impl,
-          kind: "node",
+          kind: outcomesOf.get(n.id) ? "decision" : "node",
           sideEffect: c?.sideEffect ?? null,
           known: Boolean(c),
           selected: n.id === selected,
@@ -438,12 +507,25 @@ export function GraphEditorPage() {
     }
     for (const ce of draft.conditionalEdges ?? []) {
       for (const [label, to] of Object.entries(ce.map)) {
-        // An arm may end the workflow, and `__end__` is drawn as the "done"
-        // marker like any other terminal edge. Without this the whole arm was
-        // silently not drawn — `astra.requirement.workflow` rejects to
-        // `__end__`, and that path has never appeared on the canvas.
-        const target = to === "__end__" ? endId : to;
         if (!ns.some((n) => n.id === ce.from)) continue;
+        let target = to;
+        if (to === "__end__") {
+          // Its own ending, named for the arm that reaches it.
+          target = `__end__:${ce.from}:${label}`;
+          ns.push({
+            id: target,
+            type: "canvasNode",
+            position: { x: 0, y: 0 },
+            data: {
+              label: "done",
+              impl: "end of workflow",
+              kind: "end",
+              sideEffect: null,
+              known: true,
+              selected: false,
+            } satisfies CanvasNodeData,
+          });
+        }
         if (!ns.some((n) => n.id === target)) continue;
         const ref: EdgeRef = { kind: "conditional", from: ce.from, label, to };
         es.push({
@@ -555,6 +637,16 @@ export function GraphEditorPage() {
     setInsertAt(null);
   };
 
+  /** Fork on an edge — see `lib/graph-edit.ts` for what each router means. */
+  const addBranchHere = (router: RouterSpec) => {
+    if (!draft || !insertAt) return;
+    const { def, newNodeId } = addBranch(draft, insertAt, router);
+    setDraft(def);
+    if (newNodeId) setSelected(newNodeId);
+    else setSelected(insertAt.from);
+    setInsertAt(null);
+  };
+
   /** Remove a step and heal the chain around it, through both edge lists. */
   const removeNode = (id: string) => {
     if (!draft) return;
@@ -564,7 +656,7 @@ export function GraphEditorPage() {
 
   /** What may be inserted: this module's own nodes, plus anything shared. */
   const insertable = useMemo(() => {
-    const mod = moduleOf(graphKey);
+    const mod = moduleOf(graphKey, registry.map((n) => n.module));
     return registry.filter((n) => n.module === mod || n.shareable);
   }, [registry, graphKey]);
 
@@ -586,6 +678,54 @@ export function GraphEditorPage() {
       setError(res.body.message ?? res.body.error ?? "Could not save");
     }
     setSaving(false);
+  };
+
+  /** The fork on the selected step, if it has one. */
+  const selectedFork = draft && selected ? forkAt(draft, selected) : null;
+
+  /** Everywhere an outcome may be sent: any other step, or the end. */
+  const armTargets = useMemo(() => {
+    if (!draft || !selected) return [] as string[];
+    return [...draft.nodes.filter((n) => n.id !== selected).map((n) => n.id), "__end__"];
+  }, [draft, selected]);
+
+  const moveArm = (label: string, target: string) => {
+    if (!draft || !selected) return;
+    setDraft(setArmTarget(draft, selected, label, target));
+  };
+
+  /**
+   * Whether this fork's paths are the graph's to name.
+   *
+   * Only the score decision can be told what to return. The `result.*` routers
+   * read the previous step's output text and can produce exactly two fixed
+   * strings each, so renaming one of those arms would give a path nothing ever
+   * takes — and nothing would report it.
+   */
+  const forkRouter = selectedFork
+    ? (ROUTERS.find((r) => r.key === selectedFork.router) ?? null)
+    : null;
+  const canNamePaths = Boolean(forkRouter?.customOutcomes);
+
+  /** The score bands behind the paths, when the decision has them. */
+  const bands = readBands(selectedNode ?? undefined);
+  const bandOf = (name: string) => bands?.find((b) => b.name === name) ?? null;
+
+  /** A path being renamed, and the text typed so far. */
+  const [renaming, setRenaming] = useState<{ from: string; text: string } | null>(
+    null,
+  );
+  const [newArm, setNewArm] = useState("");
+
+  const commitRename = () => {
+    if (!draft || !selected || !renaming || !selectedFork) return;
+    const next = renaming.text.trim();
+    if (next === renaming.from || whyNotArmName(selectedFork, next, renaming.from)) {
+      setRenaming(null);
+      return;
+    }
+    setDraft(renameArm(draft, selected, renaming.from, next));
+    setRenaming(null);
   };
 
   const configProps = selectedContract?.configSchema?.properties ?? {};
@@ -703,9 +843,13 @@ export function GraphEditorPage() {
                 panOnDrag
                 proOptions={{ hideAttribution: true }}
                 onNodeClick={(_, n) => {
-                  if (n.id !== "__trigger__" && n.id !== "__end_marker__") {
-                    setSelected(n.id);
-                  }
+                  // Everything the canvas draws but the definition does not
+                  // contain — the trigger chip, and one "done" chip per path
+                  // that ends — is named with a `__` prefix and selects
+                  // nothing. Naming the rule beats listing the ids, which is
+                  // how the per-arm endings became clickable in the first
+                  // place.
+                  if (!n.id.startsWith("__")) setSelected(n.id);
                 }}
               >
                 <Background
@@ -756,6 +900,14 @@ export function GraphEditorPage() {
                       {selectedContract.source === "legacy" ? (
                         <span className="ge-flag">no contract</span>
                       ) : null}
+                      {selectedContract.source === "declared" ? (
+                        <span
+                          className="ge-flag"
+                          title="The settings below are declared, but the engine runs its own implementation of this step — nothing checks one against the other."
+                        >
+                          declared, not enforced
+                        </span>
+                      ) : null}
                       {selectedContract.requiresAllowlist ? (
                         <span
                           className="ge-flag ge-flag--warn"
@@ -765,6 +917,205 @@ export function GraphEditorPage() {
                         </span>
                       ) : null}
                     </div>
+
+                    {/*
+                      WHERE EACH PATH GOES.
+
+                      A fork is edges, so this is the only place the arms can be
+                      edited as a set — the canvas can show them but a labelled
+                      line is not somewhere you retarget. Deliberately no way to
+                      add or rename an outcome: the runtime's router returns
+                      exactly these names, and an arm called anything else is
+                      never taken, with no error to notice.
+                    */}
+                    {selectedFork ? (
+                      <>
+                        <h3 className="rd-detail-h">Paths out of this step</h3>
+                        <p className="ge-muted">
+                          {canNamePaths
+                            ? "Name each path, say what score reaches it, and where it goes."
+                            : `Decided by ${selectedFork.router}, which returns these paths and no others — they cannot be renamed.`}
+                        </p>
+                        <div className="ge-arms">
+                          {Object.entries(selectedFork.map).map(
+                            ([label, target]) => {
+                              const band = bandOf(label);
+                              const last =
+                                Object.keys(selectedFork.map).length === 1;
+                              return (
+                                <div className="ge-arm" key={label}>
+                                  <div className="ge-arm-head">
+                                    {renaming?.from === label ? (
+                                      <input
+                                        className="ge-input ge-arm-name"
+                                        autoFocus
+                                        value={renaming.text}
+                                        onChange={(e) =>
+                                          setRenaming({
+                                            from: label,
+                                            text: e.target.value,
+                                          })
+                                        }
+                                        onBlur={commitRename}
+                                        onKeyDown={(e) => {
+                                          if (e.key === "Enter") commitRename();
+                                          if (e.key === "Escape")
+                                            setRenaming(null);
+                                        }}
+                                        aria-label={`Rename the ${label} path`}
+                                      />
+                                    ) : (
+                                      <button
+                                        type="button"
+                                        className="ge-arm-name-btn"
+                                        disabled={!canNamePaths}
+                                        title={
+                                          canNamePaths
+                                            ? "Rename this path"
+                                            : "This router returns fixed names"
+                                        }
+                                        onClick={() =>
+                                          setRenaming({
+                                            from: label,
+                                            text: label,
+                                          })
+                                        }
+                                      >
+                                        {label}
+                                      </button>
+                                    )}
+                                    {canNamePaths ? (
+                                      <button
+                                        type="button"
+                                        className="ge-arm-drop"
+                                        /*
+                                          A fork with one path is not a fork,
+                                          and deleting the last one would leave
+                                          a decision that decides nothing.
+                                        */
+                                        disabled={last}
+                                        title={
+                                          last
+                                            ? "A branch needs at least one path — remove the whole branch instead."
+                                            : `Remove the ${label} path`
+                                        }
+                                        onClick={() =>
+                                          draft &&
+                                          selected &&
+                                          setDraft(
+                                            removeArm(draft, selected, label),
+                                          )
+                                        }
+                                      >
+                                        remove
+                                      </button>
+                                    ) : null}
+                                  </div>
+                                  {band && canNamePaths ? (
+                                    <label className="ge-arm-row">
+                                      <span className="ge-field-name">
+                                        at or above
+                                      </span>
+                                      <input
+                                        className="ge-input"
+                                        type="number"
+                                        step="0.05"
+                                        value={band.min}
+                                        onChange={(e) =>
+                                          draft &&
+                                          selected &&
+                                          setDraft(
+                                            setArmThreshold(
+                                              draft,
+                                              selected,
+                                              label,
+                                              Number(e.target.value),
+                                            ),
+                                          )
+                                        }
+                                      />
+                                    </label>
+                                  ) : null}
+                                  <label className="ge-arm-row">
+                                    <span className="ge-field-name">goes to</span>
+                                    <select
+                                      className="ge-input"
+                                      value={target}
+                                      onChange={(e) =>
+                                        moveArm(label, e.target.value)
+                                      }
+                                    >
+                                      {armTargets.map((t) => (
+                                        <option key={t} value={t}>
+                                          {t === "__end__"
+                                            ? "end the workflow"
+                                            : t}
+                                        </option>
+                                      ))}
+                                    </select>
+                                  </label>
+                                </div>
+                              );
+                            },
+                          )}
+
+                          {canNamePaths ? (
+                            <div className="ge-arm ge-arm--new">
+                              <div className="ge-arm-head">
+                                <input
+                                  className="ge-input ge-arm-name"
+                                  placeholder="another path…"
+                                  value={newArm}
+                                  onChange={(e) => setNewArm(e.target.value)}
+                                  onKeyDown={(e) => {
+                                    if (e.key !== "Enter") return;
+                                    if (
+                                      !draft ||
+                                      !selected ||
+                                      whyNotArmName(selectedFork, newArm)
+                                    )
+                                      return;
+                                    setDraft(
+                                      addArm(draft, selected, newArm.trim()),
+                                    );
+                                    setNewArm("");
+                                  }}
+                                  aria-label="Name for a new path"
+                                />
+                                <button
+                                  type="button"
+                                  className="wf-btn"
+                                  disabled={Boolean(
+                                    whyNotArmName(selectedFork, newArm),
+                                  )}
+                                  onClick={() => {
+                                    if (!draft || !selected) return;
+                                    setDraft(
+                                      addArm(draft, selected, newArm.trim()),
+                                    );
+                                    setNewArm("");
+                                  }}
+                                >
+                                  Add path
+                                </button>
+                              </div>
+                              {newArm.trim().length > 0 &&
+                              whyNotArmName(selectedFork, newArm) ? (
+                                <span className="ge-field-why">
+                                  {whyNotArmName(selectedFork, newArm)}
+                                </span>
+                              ) : (
+                                <span className="ge-field-why">
+                                  It starts below every other path and ends the
+                                  workflow — move its score and its destination
+                                  after adding it.
+                                </span>
+                              )}
+                            </div>
+                          ) : null}
+                        </div>
+                      </>
+                    ) : null}
 
                     <h3 className="rd-detail-h">Settings</h3>
                     {configFields.length === 0 ? (
@@ -879,8 +1230,10 @@ export function GraphEditorPage() {
       {insertAt && draft ? (
         <NodePicker
           candidates={rankCandidates(insertable, upstreamOutputs)}
-          module={moduleOf(graphKey)}
+          module={moduleOf(graphKey, registry.map((n) => n.module))}
           onPick={insertNode}
+          onBranch={addBranchHere}
+          branchBlocked={(r) => whyNoBranch(draft, insertAt, r)}
           onClose={() => setInsertAt(null)}
         />
       ) : null}

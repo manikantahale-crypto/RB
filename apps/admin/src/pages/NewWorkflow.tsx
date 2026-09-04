@@ -41,11 +41,28 @@ export function NewWorkflowPage() {
   const [proposal, setProposal] = useState<Proposal | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
-
-  // ── the decisions ──────────────────────────────────────────────────
+  /* ── the settings ─────────────────────────────────────────────────────
+   *
+   * ARRIVE ANSWERED, NOT ASKED.
+   *
+   * Everything here is chosen for you and changeable. Nothing on this screen
+   * is committed: Accept creates a DRAFT, a draft cannot run, and the binding
+   * is not made until go-live — which has its own gate. Asking someone to
+   * confirm a pre-filled answer teaches them to click past it, so the one
+   * warning that survives is the one whose mistake is invisible later: a
+   * trigger nothing has ever published.
+   */
   const [trigger, setTrigger] = useState<string | null>(null);
-  const [triggerConfirmed, setTriggerConfirmed] = useState(false);
-  const [routingChoice, setRoutingChoice] = useState<RoutingChoice>(null);
+  /**
+   * Default: leave existing routing alone. It is what accepting a draft
+   * already does — no binding is touched — so it is the only option that is
+   * both safe and true. Replacing is opt-in, because it retires somebody
+   * else's live binding.
+   */
+  const [routingChoice, setRoutingChoice] = useState<RoutingChoice>("priority");
+  const [routingOpen, setRoutingOpen] = useState(false);
+  /** Both pickers start folded: the answer is the point, not the options. */
+  const [triggerOpen, setTriggerOpen] = useState(false);
   const [drawerOpen, setDrawerOpen] = useState(false);
 
   const [graphKey, setGraphKey] = useState("");
@@ -55,8 +72,9 @@ export function NewWorkflowPage() {
     setBusy(true);
     setError(null);
     setProposal(null);
-    setTriggerConfirmed(false);
-    setRoutingChoice(null);
+    setRoutingChoice("priority");
+    setRoutingOpen(false);
+    setTriggerOpen(false);
     const res = await proposeWorkflow({ module, description });
     setBusy(false);
     if (res.ok) {
@@ -79,31 +97,21 @@ export function NewWorkflowPage() {
    */
   const topCandidates = (proposal?.triggerCandidates ?? []).slice(0, 3);
 
-  /**
-   * Choosing a trigger always un-confirms it. A confirmation has to be about
-   * the thing actually chosen — the drawer does the same, and picking inline
-   * must not be the one path that leaves a stale ✓ behind.
-   */
-  const pickTrigger = (eventType: string) => {
-    setTrigger(eventType);
-    setTriggerConfirmed(false);
-  };
+  const pickTrigger = (eventType: string) => setTrigger(eventType);
 
-  /** "N of N resolved" — the counter that gates Accept. */
-  const decisions = useMemo(() => {
-    const cards = [
-      { id: "trigger", resolved: Boolean(trigger && triggerConfirmed) },
-      ...(routingNeeded
-        ? [{ id: "routing", resolved: routingChoice !== null }]
-        : []),
-    ];
-    return {
-      cards,
-      resolved: cards.filter((c) => c.resolved).length,
-      total: cards.length,
-      allResolved: cards.every((c) => c.resolved),
-    };
-  }, [trigger, triggerConfirmed, routingNeeded, routingChoice]);
+  /**
+   * The one thing worth interrupting for.
+   *
+   * A trigger nothing has ever published produces a workflow that is created,
+   * looks correct, and is never started by anything. No error, no failed run —
+   * it simply never happens, and somebody finds out weeks later by asking why.
+   * Every other choice on this screen announces itself.
+   */
+  const triggerNeverFired = useMemo(() => {
+    if (!trigger) return false;
+    const c = proposal?.triggerCandidates.find((x) => x.eventType === trigger);
+    return c ? !c.everPublished : false;
+  }, [trigger, proposal]);
 
   /**
    * The steps the proposal actually contains.
@@ -217,189 +225,6 @@ export function NewWorkflowPage() {
 
           {proposal ? (
             <>
-              {/* ── ① decisions ─────────────────────────────────────── */}
-              <section className="nw-block">
-                <h2 className="nw-block-title">
-                  <span>① Decisions — yours to confirm</span>
-                  <span
-                    className={
-                      decisions.allResolved ? "nw-counter nw-counter--done" : "nw-counter"
-                    }
-                    data-testid="nw-counter"
-                  >
-                    {decisions.resolved} of {decisions.total} resolved
-                    {decisions.allResolved ? " ✓" : ""}
-                  </span>
-                </h2>
-
-                <div className="nw-card">
-                  <div className="nw-card-head">
-                    <span className="nw-card-kind">⚡ Trigger</span>
-                    <code className="nw-card-value">
-                      {trigger ?? "nothing chosen"}
-                    </code>
-                  </div>
-                  {trigger ? (
-                    <p className="ge-muted">
-                      {
-                        proposal.triggerCandidates.find(
-                          (c) => c.eventType === trigger,
-                        )?.description
-                      }
-                    </p>
-                  ) : (
-                    <p className="ge-muted">
-                      Nothing in the catalogue matched your description. Choose
-                      one, or register a new event.
-                    </p>
-                  )}
-
-                  {/*
-                    THE TOP THREE, INLINE.
-                    Only the winner used to be shown, with the runner-up buried
-                    in the ledger citation as a bare number — so disagreeing
-                    meant opening the whole catalogue to look for something you
-                    had already been shown. Ranking on word overlap is weak
-                    enough that the second choice is often the right one; making
-                    it one click is the cheapest correction available.
-                  */}
-                  {topCandidates.length > 1 ? (
-                    <ul className="nw-cands" aria-label="Suggested triggers">
-                      {topCandidates.map((c, i) => (
-                        <li key={c.eventType}>
-                          <button
-                            type="button"
-                            className={`nw-cand${
-                              c.eventType === trigger ? " nw-cand--on" : ""
-                            }`}
-                            onClick={() => pickTrigger(c.eventType)}
-                            aria-pressed={c.eventType === trigger}
-                          >
-                            <span className="nw-cand-rank">{i + 1}</span>
-                            <span className="nw-cand-body">
-                              <code className="nw-cand-type">{c.eventType}</code>
-                              <span className="nw-cand-why">
-                                matched{" "}
-                                {c.matchedOn.map((w) => `“${w}”`).join(", ")}
-                              </span>
-                            </span>
-                            {c.everPublished ? (
-                              <span
-                                className="nw-cand-live"
-                                title={`Published ${c.publishCount} times.`}
-                              >
-                                live
-                              </span>
-                            ) : (
-                              <span
-                                className="ge-flag ge-flag--warn"
-                                title="Nothing has ever published this event, so a workflow triggered on it would never run."
-                              >
-                                never fired
-                              </span>
-                            )}
-                          </button>
-                        </li>
-                      ))}
-                    </ul>
-                  ) : null}
-
-                  <div className="nw-card-actions">
-                    <button
-                      type="button"
-                      className={
-                        triggerConfirmed ? "wf-btn" : "wf-btn wf-btn--primary"
-                      }
-                      onClick={() => setTriggerConfirmed(true)}
-                      disabled={!trigger || triggerConfirmed}
-                      data-testid="nw-confirm-trigger"
-                    >
-                      {triggerConfirmed ? "confirmed ✓" : "Confirm"}
-                    </button>
-                    <button
-                      type="button"
-                      className="wf-btn"
-                      onClick={() => setDrawerOpen(true)}
-                    >
-                      Browse all events…
-                    </button>
-                    {proposal.notRanked > 0 ? (
-                      <span className="ge-muted nw-notranked">
-                        {proposal.notRanked} more shared no wording with your
-                        description and were not ranked
-                      </span>
-                    ) : null}
-                  </div>
-                </div>
-
-                {routingNeeded ? (
-                  <div className="nw-card">
-                    <div className="nw-card-head">
-                      <span className="nw-card-kind">⇄ Routing</span>
-                      <span className="ge-muted">
-                        {existingConsumers.map((e) => e.graphKey).join(", ")}{" "}
-                        already answers this event
-                      </span>
-                    </div>
-                    <div className="nw-radios">
-                      <label
-                        className={
-                          proposal.routing.fanoutPossible
-                            ? "nw-radio"
-                            : "nw-radio nw-radio--off"
-                        }
-                      >
-                        <input
-                          type="radio"
-                          name="routing"
-                          disabled={!proposal.routing.fanoutPossible}
-                          checked={routingChoice === "subscribe"}
-                          onChange={() => setRoutingChoice("subscribe")}
-                        />
-                        <span>
-                          Subscribe as well (fan-out)
-                          {!proposal.routing.fanoutPossible ? (
-                            <span className="nw-radio-why">
-                              not possible yet — one active binding per event is
-                              enforced by an index
-                            </span>
-                          ) : null}
-                        </span>
-                      </label>
-                      <label className="nw-radio">
-                        <input
-                          type="radio"
-                          name="routing"
-                          checked={routingChoice === "replace"}
-                          onChange={() => setRoutingChoice("replace")}
-                        />
-                        <span>
-                          Replace it
-                          <span className="nw-radio-why">
-                            retires the existing binding at go-live
-                          </span>
-                        </span>
-                      </label>
-                      <label className="nw-radio">
-                        <input
-                          type="radio"
-                          name="routing"
-                          checked={routingChoice === "priority"}
-                          onChange={() => setRoutingChoice("priority")}
-                        />
-                        <span>
-                          Leave it alone for now
-                          <span className="nw-radio-why">
-                            the draft is created without touching routing
-                          </span>
-                        </span>
-                      </label>
-                    </div>
-                  </div>
-                ) : null}
-              </section>
-
-              {/* ── ② proposed build ────────────────────────────────── */}
               {/* THE SEAM.
 
                   Shown only when one sentence turned out to describe two
@@ -490,59 +315,273 @@ export function NewWorkflowPage() {
                 </section>
               ) : null}
 
+              {/* ── ONE SECTION, NOT THREE ───────────────────────────
+
+                  Settings and the proposed build used to be two numbered
+                  blocks with the seam between them, so reading the screen meant
+                  holding "① is decided, ② is what it built" in your head while
+                  scrolling past a third thing. There is only one object here —
+                  a workflow — and every line of it now reads the same way:
+
+                      what it is        the value        [ Change ]
+
+                  Anything changeable is changed in place, and the choices stay
+                  folded away until asked for. The trigger's runners-up used to
+                  be listed permanently, which made a decided thing look
+                  undecided.
+              */}
               <section className="nw-block">
                 <h2 className="nw-block-title">
-                  <span>② Proposed build — review &amp; edit</span>
+                  <span>Your workflow</span>
+                  <span className="ge-muted">
+                    all of it is chosen already — change what you disagree with
+                  </span>
                 </h2>
-                <div className="nw-card">
-                  <div className="nw-card-head">
-                    <span className="nw-card-kind">name</span>
-                    <input
-                      className="ge-input nw-key"
-                      value={graphKey}
-                      onChange={(e) => setGraphKey(e.target.value)}
-                      aria-label="Workflow name"
-                    />
+
+                <div className="nw-card nw-rows">
+                  {/* ── starts when ───────────────────────────────── */}
+                  <div className="nw-row">
+                    <span className="nw-row-kind">⚡ Starts when</span>
+                    <span className="nw-row-body">
+                      <code className="nw-row-value">
+                        {trigger ?? "nothing chosen"}
+                      </code>
+                      <span className="nw-row-why">
+                        {trigger
+                          ? proposal.triggerCandidates.find(
+                              (c) => c.eventType === trigger,
+                            )?.description ?? "chosen from the event catalogue"
+                          : "Nothing in the catalogue matched your description."}
+                      </span>
+                      {triggerNeverFired ? (
+                        <span className="ge-flag ge-flag--warn">never fired</span>
+                      ) : null}
+                    </span>
+                    <button
+                      type="button"
+                      className="wf-btn nw-row-change"
+                      onClick={() => setTriggerOpen((v) => !v)}
+                      aria-expanded={triggerOpen}
+                    >
+                      {triggerOpen ? "close" : "Change"}
+                    </button>
                   </div>
-                  <div className="nw-card-head">
-                    <span className="nw-card-kind">steps</span>
-                    <span className="nw-steps">
-                      {chosenNodes.length
-                        ? chosenNodes.map((n) => n.impl).join(" → ")
-                        : "no step could be chosen"}
+
+                  {triggerOpen ? (
+                    <div className="nw-row-expand">
+                      {/*
+                        THE TOP THREE. Ranking on word overlap is weak enough
+                        that the second choice is often the right one, so the
+                        runners-up are one click away rather than one search
+                        away — but folded, because a decided thing should not
+                        look like a list of options.
+                      */}
+                      {topCandidates.length > 1 ? (
+                        <ul className="nw-cands" aria-label="Suggested triggers">
+                          {topCandidates.map((c, i) => (
+                            <li key={c.eventType}>
+                              <button
+                                type="button"
+                                className={`nw-cand${
+                                  c.eventType === trigger ? " nw-cand--on" : ""
+                                }`}
+                                onClick={() => pickTrigger(c.eventType)}
+                                aria-pressed={c.eventType === trigger}
+                              >
+                                <span className="nw-cand-rank">{i + 1}</span>
+                                <span className="nw-cand-body">
+                                  <code className="nw-cand-type">
+                                    {c.eventType}
+                                  </code>
+                                  <span className="nw-cand-why">
+                                    matched{" "}
+                                    {c.matchedOn.map((w) => `“${w}”`).join(", ")}
+                                  </span>
+                                </span>
+                                {c.everPublished ? (
+                                  <span
+                                    className="nw-cand-live"
+                                    title={`Published ${c.publishCount} times.`}
+                                  >
+                                    live
+                                  </span>
+                                ) : (
+                                  <span
+                                    className="ge-flag ge-flag--warn"
+                                    title="Nothing has ever published this event, so a workflow triggered on it would never run."
+                                  >
+                                    never fired
+                                  </span>
+                                )}
+                              </button>
+                            </li>
+                          ))}
+                        </ul>
+                      ) : null}
+                      <div className="nw-card-actions">
+                        <button
+                          type="button"
+                          className="wf-btn"
+                          onClick={() => setDrawerOpen(true)}
+                        >
+                          Browse all events…
+                        </button>
+                        {proposal.notRanked > 0 ? (
+                          <span className="ge-muted nw-notranked">
+                            {proposal.notRanked} more shared no wording with your
+                            description and were not ranked
+                          </span>
+                        ) : null}
+                      </div>
+                    </div>
+                  ) : null}
+
+                  {/* ── routing ───────────────────────────────────── */}
+                  {routingNeeded ? (
+                    <>
+                      <div className="nw-row">
+                        <span className="nw-row-kind">⇄ Routing</span>
+                        <span className="nw-row-body">
+                          <span className="nw-row-value">
+                            {routingChoice === "replace"
+                              ? "replaces what answers this today"
+                              : "leaves existing routing alone"}
+                          </span>
+                          <span className="nw-row-why">
+                            {existingConsumers.map((e) => e.graphKey).join(", ")}{" "}
+                            already answers this event.{" "}
+                            {routingChoice === "replace"
+                              ? "At go-live it is retired and stops receiving the event."
+                              : "Nothing about routing changes until go-live."}
+                          </span>
+                        </span>
+                        <button
+                          type="button"
+                          className="wf-btn nw-row-change"
+                          onClick={() => setRoutingOpen((v) => !v)}
+                          aria-expanded={routingOpen}
+                        >
+                          {routingOpen ? "close" : "Change"}
+                        </button>
+                      </div>
+
+                      {routingOpen ? (
+                        <div className="nw-row-expand">
+                          <div className="nw-radios">
+                            <label
+                              className={
+                                proposal.routing.fanoutPossible
+                                  ? "nw-radio"
+                                  : "nw-radio nw-radio--off"
+                              }
+                            >
+                              <input
+                                type="radio"
+                                name="routing"
+                                disabled={!proposal.routing.fanoutPossible}
+                                checked={routingChoice === "subscribe"}
+                                onChange={() => setRoutingChoice("subscribe")}
+                              />
+                              <span>
+                                Subscribe as well (fan-out)
+                                {!proposal.routing.fanoutPossible ? (
+                                  <span className="nw-radio-why">
+                                    not possible yet — one active binding per
+                                    event is enforced by an index
+                                  </span>
+                                ) : null}
+                              </span>
+                            </label>
+                            <label className="nw-radio">
+                              <input
+                                type="radio"
+                                name="routing"
+                                checked={routingChoice === "priority"}
+                                onChange={() => setRoutingChoice("priority")}
+                              />
+                              <span>
+                                Leave it alone
+                                <span className="nw-radio-why">
+                                  the draft is created without touching routing
+                                </span>
+                              </span>
+                            </label>
+                            <label className="nw-radio">
+                              <input
+                                type="radio"
+                                name="routing"
+                                checked={routingChoice === "replace"}
+                                onChange={() => setRoutingChoice("replace")}
+                              />
+                              <span>
+                                Replace it
+                                <span className="nw-radio-why">
+                                  retires the existing binding at go-live
+                                </span>
+                              </span>
+                            </label>
+                          </div>
+                        </div>
+                      ) : null}
+                    </>
+                  ) : null}
+
+                  {/* ── called ────────────────────────────────────── */}
+                  <div className="nw-row">
+                    <span className="nw-row-kind">✎ Called</span>
+                    <span className="nw-row-body">
+                      <input
+                        className="ge-input nw-key"
+                        value={graphKey}
+                        onChange={(e) => setGraphKey(e.target.value)}
+                        aria-label="Workflow name"
+                      />
                     </span>
                   </div>
-                  <div className="nw-card-head">
-                    <span className="nw-card-kind">built by</span>
-                    {proposal.graph.source === "model" ? (
-                      <span className="nw-built nw-built--model">
-                        ✦ {proposal.graph.model}
-                        <span className="nw-built-note">
-                          every step checked against the node registry
-                        </span>
+
+                  {/* ── does ──────────────────────────────────────── */}
+                  <div className="nw-row">
+                    <span className="nw-row-kind">▤ Does</span>
+                    <span className="nw-row-body">
+                      <span className="nw-steps">
+                        {chosenNodes.length
+                          ? chosenNodes.map((n) => n.impl).join(" → ")
+                          : "no step could be chosen"}
                       </span>
-                    ) : (
-                      <span className="nw-built">
-                        one placeholder step
-                        <span className="nw-built-note">
-                          {proposal.graph.fallbackReason}
-                        </span>
+                      <span className="nw-row-why">
+                        {proposal.graph.source === "model" ? (
+                          <>
+                            built by {proposal.graph.model} · every step checked
+                            against the node registry · reshape it in the editor
+                            after you accept
+                          </>
+                        ) : (
+                          <>
+                            one placeholder step · {proposal.graph.fallbackReason}{" "}
+                            · build it out in the editor after you accept
+                          </>
+                        )}
                       </span>
-                    )}
+                    </span>
                   </div>
+
+                  {/* ── settings lifted out of the description ─────── */}
                   {proposal.extractedConfig.length ? (
-                    <div className="nw-card-head">
-                      <span className="nw-card-kind">settings</span>
-                      <span className="nw-config">
-                        {proposal.extractedConfig.map((c) => (
-                          <span key={c.field} className="nw-config-item">
-                            {c.field} {c.value}
-                            <span className="nw-provenance">from your text</span>
-                          </span>
-                        ))}
+                    <div className="nw-row">
+                      <span className="nw-row-kind">⚙ Set to</span>
+                      <span className="nw-row-body">
+                        <span className="nw-config">
+                          {proposal.extractedConfig.map((c) => (
+                            <span key={c.field} className="nw-config-item">
+                              {c.field} {c.value}
+                              <span className="nw-provenance">from your text</span>
+                            </span>
+                          ))}
+                        </span>
                       </span>
                     </div>
                   ) : null}
+
                   {/*
                     THE GAP REPORT. The model is required to declare what it
                     could not build rather than quietly dropping it, and that
@@ -570,12 +609,6 @@ export function NewWorkflowPage() {
                       </span>
                     </div>
                   ) : null}
-
-                  <p className="ge-muted nw-reshape">
-                    {proposal.graph.source === "model"
-                      ? "Accept, then reshape it in the editor — nothing here is final."
-                      : "One step to start with. Accept, then build it out in the editor — that is the escape hatch instead of a blank canvas."}
-                  </p>
                 </div>
               </section>
 
@@ -628,15 +661,6 @@ export function NewWorkflowPage() {
                           >
                             {l.source}
                           </span>
-                          {l.action === "trigger" ? (
-                            <button
-                              type="button"
-                              className="nw-ledger-action"
-                              onClick={() => setDrawerOpen(true)}
-                            >
-                              change
-                            </button>
-                          ) : null}
                         </li>
                       ))}
                     </ol>
@@ -644,17 +668,24 @@ export function NewWorkflowPage() {
                 ) : null}
               </section>
 
+              {/*
+                ACCEPT IS NOT GATED ON AGREEMENT.
+                It used to be disabled until a counter said every decision was
+                resolved. Nothing here is committed — a draft cannot run — so
+                the only real precondition is having something to save. The one
+                warning that survives is beside the button, where it is read.
+              */}
               <div className="nw-accept">
                 <button
                   type="button"
                   className="wf-btn wf-btn--primary"
                   onClick={() => void accept()}
-                  disabled={!decisions.allResolved || busy || chosenNodes.length === 0}
+                  disabled={busy || chosenNodes.length === 0}
                   data-testid="nw-accept"
                   title={
-                    decisions.allResolved
-                      ? undefined
-                      : "Resolve every decision above first."
+                    chosenNodes.length === 0
+                      ? "There are no steps to save yet."
+                      : undefined
                   }
                 >
                   Accept → editor
@@ -664,6 +695,14 @@ export function NewWorkflowPage() {
                   go-live
                 </span>
               </div>
+              {triggerNeverFired ? (
+                <p className="nw-never-fired" role="status">
+                  <strong>Nothing has ever published {trigger}.</strong> This
+                  workflow would be created correctly and then never start,
+                  because no event reaches it. Pick a different trigger, or make
+                  sure something will publish this one before go-live.
+                </p>
+              ) : null}
             </>
           ) : null}
         </>
@@ -675,9 +714,6 @@ export function NewWorkflowPage() {
           moduleHint={module}
           onPick={(e: CatalogEvent) => {
             setTrigger(e.eventType);
-            // Changing the trigger un-resolves the decision — a confirmation
-            // has to be about the thing actually chosen.
-            setTriggerConfirmed(false);
             setDrawerOpen(false);
           }}
           onClose={() => setDrawerOpen(false)}

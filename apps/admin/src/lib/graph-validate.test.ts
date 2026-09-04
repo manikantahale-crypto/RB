@@ -89,6 +89,49 @@ describe("validate", () => {
     );
   });
 
+  it("catches a path the decision can never return", () => {
+    // Renaming an arm without moving its band leaves an edge nothing takes.
+    const def = astra();
+    def.conditionalEdges = [
+      {
+        from: "branch",
+        router: "branch_key",
+        map: { pass: "normalize", escalate: "human", reject: "__end__" },
+      },
+    ];
+    const found = errors(def);
+    expect(found.some((f) => f.text.includes("nothing can ever take"))).toBe(true);
+    expect(found.some((f) => f.detail?.includes("escalate"))).toBe(true);
+  });
+
+  it("accepts a path the decision was configured to return", () => {
+    const def = astra();
+    def.nodes = def.nodes.map((n) =>
+      n.id === "branch"
+        ? {
+            ...n,
+            config: {
+              outcomes: [
+                { name: "pass", min: 0.6 },
+                { name: "escalate", min: 0.3 },
+                { name: "reject", min: 0 },
+              ],
+            },
+          }
+        : n,
+    );
+    def.conditionalEdges = [
+      {
+        from: "branch",
+        router: "branch_key",
+        map: { pass: "normalize", escalate: "human", reject: "__end__" },
+      },
+    ];
+    expect(
+      errors(def).some((f) => f.text.includes("nothing can ever take")),
+    ).toBe(false);
+  });
+
   it("catches a branch with no outcomes", () => {
     const def = astra();
     def.conditionalEdges = [{ from: "branch", router: "branch_key", map: {} }];

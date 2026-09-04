@@ -143,3 +143,402 @@ export function removeStep(def: GraphDefinition, id: string): GraphDefinition {
   if (conditionalEdges.length === 0) delete next.conditionalEdges;
   return next;
 }
+
+/* ─────────────────────────────── branching ───────────────────────────────
+
+   A BRANCH IS TWO THINGS, AND ONLY ONE OF THEM IS A STEP.
+
+   The fork itself lives on the EDGES — a `conditionalEdges` entry whose `map`
+   sends each outcome somewhere. What produces the outcome is either a step
+   that computes it (`orch.branch.decision` writes `state.branch_key`) or the
+   preceding step's own result.
+
+   THE OUTCOME NAMES ARE NOT FREE TEXT. The runtime's router returns exactly
+   these strings; an arm labelled anything else is never taken, and nothing
+   reports it — the run just silently goes the other way. So a branch is added
+   by choosing a router and getting its outcomes, never by typing a label.
+
+   Keep in sync with packages/orchestrator/src/graphs/routers.ts and
+   ALLOWED_ROUTER_KEYS in packages/authoring/src/validate-llm-graph.ts.
+   ───────────────────────────────────────────────────────────────────────── */
+
+export type RouterSpec = {
+  /** The `router` value stored in the definition. */
+  key: string;
+  /** What this branches on, in a person's words. */
+  label: string;
+  /** Every path the runtime can take. Fixed by the router. */
+  outcomes: string[];
+  /**
+   * The step that has to compute the decision, when one is needed. Null means
+   * the router reads the preceding step's own result, so no step is added.
+   */
+  decisionImpl: string | null;
+  /**
+   * Whether the graph may name its own paths.
+   *
+   * True only where the deciding step can be told what to produce. The
+   * `result.*` routers read the previous step's output text and can return
+   * exactly two fixed strings each — renaming one of those arms gives a path
+   * nothing ever takes, and nothing reports it. So those stay closed.
+   */
+  customOutcomes: boolean;
+  why: string;
+};
+
+export const ROUTERS: RouterSpec[] = [
+  {
+    key: "branch_key",
+    label: "On a confidence score",
+    outcomes: ["pass", "human_review", "reject"],
+    decisionImpl: "orch.branch.decision",
+    customOutcomes: true,
+    why: "Adds a step that reads a score and decides. You choose the paths and where each one starts.",
+  },
+  {
+    key: "result.approved_or_end",
+    label: "On whether it was approved",
+    outcomes: ["approved", "rejected"],
+    decisionImpl: null,
+    customOutcomes: false,
+    why: "Reads the result of the step before it. No extra step is added.",
+  },
+  {
+    key: "result.continue_or_gate",
+    label: "On whether a person has answered yet",
+    outcomes: ["continued", "gate"],
+    decisionImpl: null,
+    customOutcomes: false,
+    why: "For a human gate: carry on once it is resumed, otherwise wait.",
+  },
+  {
+    key: "result.has_duplicate_or_end",
+    label: "On whether a duplicate was found",
+    outcomes: ["duplicate_found", "no_duplicate"],
+    decisionImpl: null,
+    customOutcomes: false,
+    why: "Reads the result of the step before it. No extra step is added.",
+  },
+];
+
+/** One `conditionalEdges` entry: a step and where each of its outcomes goes. */
+export type Fork = { from: string; router: string; map: Record<string, string> };
+
+/** The fork on this step, if it has one. One per step is all the runtime reads. */
+export function forkAt(def: GraphDefinition, id: string): Fork | null {
+  return (def.conditionalEdges ?? []).find((ce) => ce.from === id) ?? null;
+}
+
+/**
+ * Why a branch cannot be added on this edge, or null when it can.
+ *
+ * Returned as a sentence rather than a boolean because every one of these is
+ * something a person would otherwise discover by saving and being refused.
+ */
+export function whyNoBranch(
+  def: GraphDefinition,
+  ref: EdgeRef,
+  router: RouterSpec,
+): string | null {
+  if (router.decisionImpl === null) {
+    // The fork hangs off the step that ran before it, so there has to be one.
+    if (ref.from === "__start__") {
+      return "A workflow cannot begin with a branch — the first step has to produce something to decide on.";
+    }
+    if (forkAt(def, ref.from)) {
+      return `${ref.from} already branches. A step can only fork one way.`;
+    }
+    if (ref.kind === "conditional") {
+      return `${ref.from} already branches. Put the new branch on a step further along instead.`;
+    }
+  }
+  return null;
+}
+
+/**
+ * Add a branch on an edge.
+ *
+ * The first outcome inherits wherever the edge was going, so the path that
+ * already worked keeps working. Every other outcome ends the workflow until
+ * somebody builds it out — a visible stub rather than a silent one.
+ *
+ * Note what is NOT created: a plain edge out of the forking step. A step with
+ * both a plain edge and arms runs all of them at once, which is exactly the
+ * corruption `insertOnEdge` exists to avoid.
+ */
+export function addBranch(
+  def: GraphDefinition,
+  ref: EdgeRef,
+  router: RouterSpec,
+): { def: GraphDefinition; newNodeId: string | null } {
+  const arms: Record<string, string> = {};
+  router.outcomes.forEach((name, i) => {
+    arms[name] = i === 0 ? ref.to : "__end__";
+  });
+
+  // ── the router reads the previous step's result: no step to add ────────
+  if (router.decisionImpl === null) {
+    return {
+      newNodeId: null,
+      def: {
+        ...def,
+        edges: def.edges.filter(
+          ([a, b]) => !(a === ref.from && b === ref.to),
+        ),
+        conditionalEdges: [
+          ...(def.conditionalEdges ?? []),
+          { from: ref.from, router: router.key, map: arms },
+        ],
+      },
+    };
+  }
+
+  // ── the decision is its own step, inserted on the edge ─────────────────
+  const id = nextStepId(def, router.decisionImpl);
+  /**
+   * No config is seeded. The decision's thresholds are declared on its node
+   * contract, so the editor's settings panel projects them with their own
+   * defaults — the same as every other step. They used to be copied in here
+   * from a hardcoded list, which was a stopgap for that node having no
+   * declaration at all.
+   */
+  const config: Record<string, unknown> = {};
+
+  const edges =
+    ref.kind === "plain"
+      ? [
+          ...def.edges.filter(([a, b]) => !(a === ref.from && b === ref.to)),
+          [ref.from, id] as [string, string],
+        ]
+      : [...def.edges];
+
+  const conditionalEdges = [
+    // An incoming arm is repointed at the new decision, exactly as inserting a
+    // plain step on an arm does.
+    ...(def.conditionalEdges ?? []).map((ce) =>
+      ref.kind === "conditional" &&
+      ce.from === ref.from &&
+      ce.map[ref.label] === ref.to
+        ? { ...ce, map: { ...ce.map, [ref.label]: id } }
+        : ce,
+    ),
+    { from: id, router: router.key, map: arms },
+  ];
+
+  return {
+    newNodeId: id,
+    def: {
+      ...def,
+      nodes: [...def.nodes, { id, impl: router.decisionImpl, config }],
+      edges,
+      conditionalEdges,
+    },
+  };
+}
+
+/** Point one outcome at a different step. */
+export function setArmTarget(
+  def: GraphDefinition,
+  from: string,
+  label: string,
+  target: string,
+): GraphDefinition {
+  return {
+    ...def,
+    conditionalEdges: (def.conditionalEdges ?? []).map((ce) =>
+      ce.from === from ? { ...ce, map: { ...ce.map, [label]: target } } : ce,
+    ),
+  };
+}
+
+/* ───────────────────────── editing a fork's paths ─────────────────────── */
+
+/**
+ * A name a branch may give one of its paths.
+ *
+ * The name is not decoration: it is the key the runtime matches on, so it has
+ * to be something a decision can actually return. Lowercase, no spaces — the
+ * same shape as the built-in names — and unique within the fork, because a
+ * duplicate silently replaces the arm before it.
+ */
+export function whyNotArmName(
+  fork: Fork,
+  name: string,
+  renamingFrom?: string,
+): string | null {
+  const trimmed = name.trim();
+  if (trimmed.length === 0) return "Give the path a name.";
+  if (!/^[a-z][a-z0-9_]*$/.test(trimmed)) {
+    return "Lowercase letters, numbers and underscores, starting with a letter — it is the value the decision returns, not a caption.";
+  }
+  if (trimmed !== renamingFrom && trimmed in fork.map) {
+    return `This branch already has a ${trimmed} path.`;
+  }
+  return null;
+}
+
+/**
+ * Add a path to a fork.
+ *
+ * It ends the workflow until somebody points it somewhere — a visible stub,
+ * the same as the paths `addBranch` creates.
+ *
+ * The band that makes the decision return this name is added alongside it, at
+ * a threshold below every existing one, because a new path that can never be
+ * reached is the failure this whole area keeps producing. The author moves the
+ * threshold afterwards; they do not have to remember to create it.
+ */
+export function addArm(
+  def: GraphDefinition,
+  from: string,
+  name: string,
+): GraphDefinition {
+  const node = def.nodes.find((n) => n.id === from);
+  const bands = readBands(node);
+
+  return {
+    ...def,
+    nodes: def.nodes.map((n) =>
+      n.id === from && bands
+        ? {
+            ...n,
+            config: {
+              ...(n.config ?? {}),
+              outcomes: [
+                ...bands,
+                { name, min: Math.min(...bands.map((b) => b.min)) - 0.1 },
+              ],
+            },
+          }
+        : n,
+    ),
+    conditionalEdges: (def.conditionalEdges ?? []).map((ce) =>
+      ce.from === from ? { ...ce, map: { ...ce.map, [name]: "__end__" } } : ce,
+    ),
+  };
+}
+
+/** Remove a path, and the band that produced it. */
+export function removeArm(
+  def: GraphDefinition,
+  from: string,
+  name: string,
+): GraphDefinition {
+  return {
+    ...def,
+    nodes: def.nodes.map((n) => {
+      const bands = n.id === from ? readBands(n) : null;
+      if (!bands) return n;
+      return {
+        ...n,
+        config: {
+          ...(n.config ?? {}),
+          outcomes: bands.filter((b) => b.name !== name),
+        },
+      };
+    }),
+    conditionalEdges: (def.conditionalEdges ?? []).map((ce) => {
+      if (ce.from !== from) return ce;
+      const map = { ...ce.map };
+      delete map[name];
+      return { ...ce, map };
+    }),
+  };
+}
+
+/**
+ * Rename a path, in both places at once.
+ *
+ * The arm and the band have to move together. Renaming only the edge gives a
+ * path nothing reaches; renaming only the band gives a decision returning a
+ * name no edge matches, and the runtime falls through to whichever arm is
+ * first. Neither reports anything.
+ */
+export function renameArm(
+  def: GraphDefinition,
+  from: string,
+  oldName: string,
+  newName: string,
+): GraphDefinition {
+  return {
+    ...def,
+    nodes: def.nodes.map((n) => {
+      const bands = n.id === from ? readBands(n) : null;
+      if (!bands) return n;
+      return {
+        ...n,
+        config: {
+          ...(n.config ?? {}),
+          outcomes: bands.map((b) =>
+            b.name === oldName ? { ...b, name: newName } : b,
+          ),
+        },
+      };
+    }),
+    conditionalEdges: (def.conditionalEdges ?? []).map((ce) => {
+      if (ce.from !== from) return ce;
+      const map: Record<string, string> = {};
+      // Rebuilt in order so the arm keeps its place in the list rather than
+      // jumping to the end, which would reorder the paths on the canvas.
+      for (const [label, target] of Object.entries(ce.map)) {
+        map[label === oldName ? newName : label] = target;
+      }
+      return { ...ce, map };
+    }),
+  };
+}
+
+/** Move the score at or above which a path is taken. */
+export function setArmThreshold(
+  def: GraphDefinition,
+  from: string,
+  name: string,
+  min: number,
+): GraphDefinition {
+  return {
+    ...def,
+    nodes: def.nodes.map((n) => {
+      const bands = n.id === from ? readBands(n) : null;
+      if (!bands) return n;
+      return {
+        ...n,
+        config: {
+          ...(n.config ?? {}),
+          outcomes: bands.map((b) => (b.name === name ? { ...b, min } : b)),
+        },
+      };
+    }),
+  };
+}
+
+/**
+ * The bands a decision step is configured with, filling in the defaults the
+ * engine would have used.
+ *
+ * Returns null for a step that is not a score decision — the `result.*`
+ * routers have no bands to read, and editing their arms is not offered.
+ */
+export function readBands(
+  node: { impl: string; config?: Record<string, unknown> } | undefined,
+): Array<{ name: string; min: number }> | null {
+  if (!node || node.impl !== "orch.branch.decision") return null;
+  const declared = (node.config ?? {}).outcomes;
+  if (Array.isArray(declared)) {
+    return declared.filter(
+      (o): o is { name: string; min: number } =>
+        Boolean(o) &&
+        typeof o === "object" &&
+        typeof (o as { name?: unknown }).name === "string" &&
+        typeof (o as { min?: unknown }).min === "number",
+    );
+  }
+  // Mirrors resolveOutcomes in packages/orchestrator/src/nodes/branch.ts.
+  const cfg = node.config ?? {};
+  const passMin = typeof cfg.passMin === "number" ? cfg.passMin : 0.6;
+  const humanMin = typeof cfg.humanMin === "number" ? cfg.humanMin : 0.35;
+  return [
+    { name: "pass", min: passMin },
+    { name: "human_review", min: humanMin },
+    { name: "reject", min: 0 },
+  ];
+}
