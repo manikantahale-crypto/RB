@@ -5,8 +5,19 @@ import { App } from "./App";
 // tokens first — styles.css and every component read from it.
 import "./tokens.css";
 import "./styles.css";
-// Per-screen styles, one file each (see ref/Orchestrator_Screen_Development_Guide.md).
-import "./styles/editor.css";
+/**
+ * Per-screen styles, one file each, imported in screen order.
+ *
+ * The order is the cascade, so it is deliberate rather than alphabetical: a
+ * later file may lean on an earlier one, and shuffling these can restyle a
+ * screen nobody touched. Add a new screen's file at the end.
+ *
+ * `npm run check:styles -w @tekisho/admin` enforces that each file only
+ * contains its own screen's classes.
+ */
+import "./styles/new-workflow.css";
+import "./styles/event-catalog.css";
+import "./styles/graph-editor.css";
 
 const root = document.getElementById("root");
 if (!root) {

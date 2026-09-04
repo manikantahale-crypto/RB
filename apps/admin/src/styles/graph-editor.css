@@ -1,6 +1,17 @@
-/* ═══════════════ Screen 4 · Graph editor ═══════════════════════════════
-   Its own file, imported from main.tsx — styles.css is 4,500 lines and shared
-   by every screen. Every value here comes from tokens.css. */
+/* ═══════════════ Screen 4 · Graph editor, and node testing ═══════════════
+   ONE STYLESHEET PER SCREEN.
+
+   These lived together in `styles/editor.css` until screens 2, 3 and 4 had
+   three different owners and every one of them had that file open. A merge
+   conflict in a stylesheet is the most annoying kind — nothing is broken, the
+   diff is huge, and resolving it means re-reading rules you did not write.
+
+   `npm run check:styles -w @tekisho/admin` keeps the split honest: a class
+   whose prefix does not belong to this screen fails the build.
+
+   Every value here comes from tokens.css.
+   ═══════════════════════════════════════════════════════════════════════ */
+
 
 .ge-page {
   display: flex;
@@ -399,12 +410,17 @@
   gap: var(--space-2);
   pointer-events: all;
 }
+/* A word ON the line, not a chip beside it.
+   This was a bordered pill, which is wide enough that the middle arm of a
+   three-way branch covered the arms either side of it. Now it is text with
+   just enough background to break the line cleanly behind it — the same trick
+   a printed flowchart uses, and it cannot cover a neighbour it does not
+   reach. */
 .ge-edge-label {
-  padding: 1px var(--space-2);
-  border-radius: var(--radius-pill);
+  padding: 0 4px;
   background: var(--surface-raised);
-  border: 1px solid var(--border-subtle);
-  font-size: var(--font-size-xs);
+  font-size: 10px;
+  line-height: 1.5;
   color: var(--text-secondary);
   white-space: nowrap;
 }
@@ -655,467 +671,126 @@
   font-size: var(--font-size-sm);
 }
 
-/* ═══════════════ Screen 3 · Event catalogue drawer ═════════════════════ */
-
-.ec-scrim {
-  position: fixed;
-  inset: 0;
-  background: var(--scrim);
-  display: flex;
-  justify-content: flex-end;
-  z-index: 50;
-}
-.ec-drawer {
-  width: min(560px, 100%);
-  height: 100%;
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-3);
-  padding: var(--space-5);
-  background: var(--surface-raised);
-  box-shadow: var(--shadow-lg);
-  overflow: hidden;
-}
-.ec-head {
-  display: flex;
-  align-items: flex-start;
-  justify-content: space-between;
-  gap: var(--space-4);
-}
-.ec-title {
-  font-family: var(--font-family-display);
-  font-size: var(--font-size-lg);
-  color: var(--text-primary);
-  margin: 0 0 var(--space-1);
-}
-.ec-controls { display: flex; gap: var(--control-gap); }
-.ec-controls .ge-input { flex: 1 1 auto; }
-
-.ec-list {
-  flex: 1 1 auto;
-  overflow-y: auto;
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-2);
-}
-.ec-item {
-  padding: var(--space-3);
-  border: 1px solid var(--border-subtle);
-  border-radius: var(--control-radius);
-  background: var(--surface-raised);
-}
-.ec-item--on { border-color: var(--border-focus); box-shadow: var(--focus-ring); }
-.ec-item-head {
-  display: flex;
-  align-items: center;
-  gap: var(--space-2);
-  width: 100%;
-  padding: 0;
-  border: none;
-  background: none;
-  cursor: pointer;
-  text-align: left;
-  flex-wrap: wrap;
-}
-.ec-item-head:focus-visible { outline: none; box-shadow: var(--focus-ring); border-radius: var(--radius-sm); }
-.ec-type {
-  font-family: var(--font-family-mono);
-  font-size: var(--font-size-sm);
-  font-weight: var(--font-weight-semibold);
-  color: var(--text-primary);
-}
-.ec-selected {
+/* ── branching: the paths out of a step, and a decision's thresholds ──────
+   Reuses .ge-form / .ge-field so a fork's arms read like every other setting
+   in the panel — a branch is not a special kind of object, it is where this
+   step goes next. */
+.ge-field-name {
   font-size: var(--font-size-xs);
   font-weight: var(--font-weight-semibold);
-  color: var(--status-success-fg);
-}
-.ec-desc {
-  margin: var(--space-1) 0 0;
-  font-size: var(--font-size-sm);
   color: var(--text-secondary);
 }
-.ec-aliases { display: flex; gap: var(--space-1); flex-wrap: wrap; margin-top: var(--space-2); }
-.ec-alias {
-  padding: 1px var(--space-2);
-  border-radius: var(--radius-pill);
-  background: var(--surface-sunken);
-  border: 1px solid var(--border-subtle);
+.ge-field-why {
   font-size: var(--font-size-xs);
   color: var(--text-secondary);
-}
-.ec-detail {
-  margin-top: var(--space-3);
-  padding-top: var(--space-3);
-  border-top: 1px dashed var(--border-subtle);
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-3);
-}
-
-.ec-foot {
-  border-top: 1px solid var(--border-subtle);
-  padding-top: var(--space-3);
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-2);
-}
-.ec-alias-note { margin: 0; }
-.ec-register { display: flex; flex-direction: column; gap: var(--space-2); }
-.ec-register-actions { display: flex; gap: var(--control-gap); }
-
-/* ═══════════════ Screen 2 · New workflow ═══════════════════════════════ */
-
-.nw-page { display: flex; flex-direction: column; gap: var(--panel-gap); }
-.nw-crumb {
-  font-family: var(--font-family-mono);
-  font-size: var(--font-size-xs);
-  color: var(--text-muted);
-  margin: 0 0 var(--space-1);
-}
-.nw-tabs { display: flex; gap: var(--space-1); border-bottom: 1px solid var(--border-subtle); }
-
-.nw-compose {
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-3);
-  align-items: flex-start;
-  padding: var(--space-4);
-  border: 1px solid var(--border-subtle);
-  border-radius: var(--radius-lg);
-  background: var(--surface-raised);
-}
-.nw-compose .wf-select { width: fit-content; }
-.nw-textarea {
-  width: 100%;
-  box-sizing: border-box;
-  padding: var(--space-3);
-  border: 1px solid var(--border-subtle);
-  border-radius: var(--control-radius);
-  background: var(--surface-raised);
-  color: var(--text-primary);
-  font-family: var(--font-family-body);
-  font-size: var(--font-size-md);
   line-height: var(--line-height-normal);
-  resize: vertical;
 }
-.nw-textarea:focus-visible {
-  outline: none;
-  border-color: var(--border-focus);
-  box-shadow: var(--focus-ring);
-}
-
-.nw-block {
-  padding: var(--space-4);
-  border: 1px solid var(--border-subtle);
-  border-radius: var(--radius-lg);
+/* A router that cannot be used here still shows, with the reason. Hiding it
+   answers "why can't I branch here" with silence. */
+.ge-pick-item--off { opacity: 0.55; cursor: not-allowed; }
+.ge-pick-item--off:hover {
   background: var(--surface-raised);
-}
-.nw-block-title {
-  display: flex;
-  align-items: baseline;
-  justify-content: space-between;
-  gap: var(--space-3);
-  font-family: var(--font-family-display);
-  font-size: var(--font-size-md);
-  color: var(--text-primary);
-  margin: 0 0 var(--space-3);
-}
-.nw-counter {
-  font-family: var(--font-family-body);
-  font-size: var(--font-size-xs);
-  font-weight: var(--font-weight-semibold);
-  padding: 2px var(--space-2);
-  border-radius: var(--radius-pill);
-  background: var(--status-warning-bg);
-  border: 1px solid var(--status-warning-border);
-  color: var(--status-warning-fg);
-}
-.nw-counter--done {
-  background: var(--status-success-bg);
-  border-color: var(--status-success-border);
-  color: var(--status-success-fg);
+  border-color: var(--border-subtle);
 }
 
-.nw-card {
-  padding: var(--space-3);
-  border: 1px solid var(--border-subtle);
-  border-radius: var(--control-radius);
-  background: var(--surface-sunken);
-  margin-bottom: var(--space-3);
-}
-.nw-card:last-child { margin-bottom: 0; }
-.nw-card-head {
-  display: flex;
-  align-items: center;
-  gap: var(--space-3);
-  flex-wrap: wrap;
-  margin-bottom: var(--space-1);
-}
-.nw-card-kind {
-  font-size: var(--font-size-xs);
-  text-transform: uppercase;
-  letter-spacing: 0.06em;
-  color: var(--text-muted);
-  min-width: 72px;
-}
-.nw-card-value {
-  font-family: var(--font-family-mono);
-  font-size: var(--font-size-sm);
-  font-weight: var(--font-weight-semibold);
-  color: var(--text-primary);
-}
-.nw-card-actions { display: flex; gap: var(--control-gap); margin-top: var(--space-3); }
-.nw-key { max-width: 380px; }
-.nw-steps { font-family: var(--font-family-mono); font-size: var(--font-size-sm); color: var(--text-secondary); }
-.nw-config { display: flex; gap: var(--space-3); flex-wrap: wrap; }
-.nw-config-item { font-size: var(--font-size-sm); color: var(--text-secondary); }
-.nw-provenance {
-  margin-left: var(--space-2);
-  padding: 1px var(--space-2);
-  border-radius: var(--radius-pill);
+/* ── a fork, drawn as a fork ──────────────────────────────────────────────
+   The outcomes run along the bottom edge of the deciding step, in the order
+   their arms leave it, so the box and the lines below it agree. A caption
+   inside a rectangle saying "branches 3 ways" told you a fact; this shows the
+   shape. */
+.ge-node--fork {
+  border-color: var(--status-info-border);
   background: var(--status-info-bg);
-  border: 1px solid var(--status-info-border);
-  color: var(--status-info-fg);
-  font-size: var(--font-size-xs);
 }
-.nw-reshape { margin: var(--space-3) 0 0; }
-
-.nw-radios { display: flex; flex-direction: column; gap: var(--space-2); margin-top: var(--space-2); }
-.nw-radio { display: flex; gap: var(--space-2); align-items: flex-start; font-size: var(--font-size-sm); color: var(--text-primary); }
-.nw-radio--off { color: var(--text-muted); }
-.nw-radio-why { display: block; font-size: var(--font-size-xs); color: var(--text-muted); }
-
-.nw-ledger-toggle {
-  border: none;
-  background: none;
-  padding: 0;
-  font-family: var(--font-family-body);
-  font-size: var(--font-size-sm);
-  font-weight: var(--font-weight-semibold);
-  color: var(--text-link);
-  cursor: pointer;
+.ge-outcomes {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-1);
+  margin-top: var(--space-1);
+  padding-top: var(--space-1);
+  border-top: 1px dashed var(--border-strong);
+  width: 100%;
+  justify-content: center;
 }
-.nw-ledger-toggle:focus-visible { outline: none; box-shadow: var(--focus-ring); }
-.nw-ledger { list-style: none; margin: var(--space-3) 0 0; padding: 0; display: flex; flex-direction: column; gap: var(--space-3); }
-/* Four columns now: kind · claim · who said it · jump-to. */
-.nw-ledger-row { display: grid; grid-template-columns: 84px minmax(0, 1fr) auto auto; gap: var(--space-3); align-items: start; }
-.nw-ledger-kind {
-  font-size: var(--font-size-xs);
-  font-weight: var(--font-weight-bold);
-  letter-spacing: 0.06em;
-  color: var(--text-muted);
-}
-.nw-ledger-row--SKIPPED .nw-ledger-kind { color: var(--status-warning-fg); }
-.nw-ledger-row--MATCHED .nw-ledger-kind { color: var(--status-success-fg); }
-/* A rejection is a normal, useful outcome — never coloured as a failure. */
-.nw-ledger-row--REJECTED .nw-ledger-kind { color: var(--text-muted); }
-.nw-ledger-row--SEARCHED .nw-ledger-kind { color: var(--text-muted); }
-.nw-ledger-note { margin: var(--space-3) 0 0; font-size: var(--font-size-xs); }
-
-/* Who produced the line. Muted for `system`: it is the default, and a flag
-   that shouts on every row stops being read. The model variant is deliberately
-   louder — it marks the lines that need the citation checked. */
-.nw-ledger-src {
-  align-self: start;
-  padding: 1px var(--space-2);
-  border-radius: var(--radius-pill);
-  border: 1px solid var(--border-subtle);
-  background: var(--surface-sunken);
-  color: var(--text-muted);
-  font-size: var(--font-size-xs);
-  letter-spacing: 0.04em;
-}
-.nw-ledger-src--model {
-  border-color: var(--purple-200);
-  background: var(--purple-100);
-  color: var(--purple-700);
-}
-.nw-ledger-text { font-size: var(--font-size-sm); color: var(--text-primary); }
-.nw-ledger-cite { display: block; font-size: var(--font-size-xs); color: var(--text-secondary); margin-top: 2px; }
-.nw-ledger-action {
-  border: 1px solid var(--border-subtle);
+.ge-outcome {
+  font-family: var(--font-family-mono);
+  font-size: 9px;
+  line-height: 1.4;
+  padding: 0 var(--space-1);
   border-radius: var(--radius-sm);
   background: var(--surface-raised);
-  color: var(--text-link);
-  font-size: var(--font-size-xs);
-  padding: 1px var(--space-2);
-  cursor: pointer;
+  border: 1px solid var(--border-subtle);
+  color: var(--text-secondary);
+}
+/* The outcome name rides just above the step its path leads into, so three
+   arms leaving one handle never stack their labels in the same spot. */
+/* A route's name. Reads as a label on the line rather than an object on the
+   canvas, so nothing has to be moved around it. */
+.ge-edge-tools--label { pointer-events: none; }
+.ge-edge-tools--label .ge-edge-label {
+  font-family: var(--font-family-mono);
+  font-weight: var(--font-weight-semibold);
+  color: var(--text-primary);
+  letter-spacing: 0.01em;
 }
 
-/* ── the ranked triggers, inline on the decision card ──────────────────────
-   These are buttons, and they must read as buttons. Guide rule 5: what is
-   interactive has to look interactive — a row that only reveals itself on
-   hover is a row nobody clicks, which has already happened once on this
-   codebase. Hence a visible border at rest, not just on hover. */
-.nw-cands {
-  list-style: none;
-  margin: var(--space-3) 0 0;
-  padding: 0;
+/* ── a fork's paths, as editable rows ─────────────────────────────────────
+   Each path is a small card rather than a row in the settings form, because a
+   path is three things that belong together — its name, the score that
+   reaches it, and where it goes — and a flat form makes those read as six
+   unrelated fields. */
+.ge-arms { display: flex; flex-direction: column; gap: var(--space-3); }
+.ge-arm {
+  padding: var(--space-2) var(--space-3);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--control-radius);
+  background: var(--surface-sunken);
   display: flex;
   flex-direction: column;
   gap: var(--space-2);
 }
-.nw-cand {
-  width: 100%;
-  display: grid;
-  grid-template-columns: auto minmax(0, 1fr) auto;
-  gap: var(--space-3);
+.ge-arm--new { border-style: dashed; }
+.ge-arm-head {
+  display: flex;
   align-items: center;
-  text-align: left;
-  padding: var(--space-2) var(--space-3);
-  border: 1px solid var(--border-subtle);
-  border-radius: var(--control-radius);
-  background: var(--surface-raised);
-  cursor: pointer;
-  transition: border-color var(--duration-fast) var(--easing-standard),
-    background var(--duration-fast) var(--easing-standard);
+  justify-content: space-between;
+  gap: var(--space-2);
 }
-.nw-cand:hover { background: var(--surface-hover); border-color: var(--border-strong); }
-.nw-cand:focus-visible { outline: none; box-shadow: var(--focus-ring); }
-.nw-cand--on {
-  border-color: var(--border-focus);
-  background: var(--accent-alpha-08);
-}
-.nw-cand-rank {
-  width: 20px;
-  height: 20px;
-  display: grid;
-  place-items: center;
-  border-radius: var(--radius-pill);
-  background: var(--surface-sunken);
-  color: var(--text-secondary);
-  font-size: var(--font-size-xs);
-  font-weight: var(--font-weight-semibold);
-}
-.nw-cand--on .nw-cand-rank {
-  background: var(--action-primary-bg);
-  color: var(--action-primary-fg);
-}
-.nw-cand-body { display: flex; flex-direction: column; gap: 1px; min-width: 0; }
-.nw-cand-type {
+/* The name is a button because it is editable, and it has to look it —
+   a name that only reveals itself as clickable on hover is a name nobody
+   renames. */
+.ge-arm-name-btn {
   font-family: var(--font-family-mono);
   font-size: var(--font-size-sm);
+  font-weight: var(--font-weight-semibold);
   color: var(--text-primary);
-  overflow-wrap: anywhere;
-}
-.nw-cand-why { font-size: var(--font-size-xs); color: var(--text-secondary); }
-.nw-cand-live {
+  background: var(--surface-raised);
+  border: 1px dashed var(--border-strong);
+  border-radius: var(--radius-sm);
   padding: 1px var(--space-2);
-  border-radius: var(--radius-pill);
-  background: var(--status-success-bg);
-  border: 1px solid var(--status-success-border);
-  color: var(--status-success-fg);
-  font-size: var(--font-size-xs);
-  font-weight: var(--font-weight-semibold);
+  cursor: pointer;
 }
-.nw-notranked { font-size: var(--font-size-xs); }
-
-.nw-accept { display: flex; align-items: center; gap: var(--space-3); flex-wrap: wrap; }
-
-/* ── how the shape was built ───────────────────────────────────────────────
-   A generated graph and a fallback placeholder must not look alike: one is a
-   suggestion, the other is an apology for not having one. The model variant
-   carries the accent used elsewhere for machine-generated artifacts. */
-.nw-built {
-  display: flex;
-  flex-direction: column;
-  gap: 1px;
-  font-size: var(--font-size-sm);
+.ge-arm-name-btn:hover:not(:disabled) { border-color: var(--border-focus); }
+.ge-arm-name-btn:disabled {
+  cursor: default;
+  border-style: solid;
+  border-color: var(--border-subtle);
   color: var(--text-secondary);
 }
-.nw-built--model { color: var(--purple-700); font-weight: var(--font-weight-semibold); }
-.nw-built-note {
+.ge-arm-name { font-family: var(--font-family-mono); }
+.ge-arm-drop {
+  border: none;
+  background: none;
+  color: var(--text-secondary);
   font-size: var(--font-size-xs);
-  color: var(--text-muted);
-  font-weight: var(--font-weight-regular);
+  cursor: pointer;
+  padding: 0;
 }
-
-/* The gap report — what the model said it could not build. Warning-toned, not
-   danger: an undeliverable request is information, not a failure. */
-.nw-gaps {
-  margin-top: var(--space-3);
-  padding: var(--space-3);
-  border: 1px solid var(--status-warning-border);
-  border-radius: var(--control-radius);
-  background: var(--status-warning-bg);
-  color: var(--status-warning-fg);
-  font-size: var(--font-size-sm);
-}
-.nw-gaps ul { margin: var(--space-2) 0; padding-left: var(--space-5); }
-.nw-gaps li { margin-bottom: var(--space-1); }
-
-/* ── the seam: one sentence, two workflows ───────────────────────────────
-   Drawn as two stacked halves with the published event between them, because
-   the handoff is the thing being taught. Your half is the one with the accent
-   border; theirs is muted on purpose — it is context, not work you can do. */
-.nw-seam-lead {
-  margin: 0 0 var(--space-3);
-  font-size: var(--font-size-sm);
-  line-height: var(--line-height-normal);
-}
-.nw-seam-half {
-  padding: var(--space-2) var(--space-3);
-  border: 1px solid var(--border-subtle);
-  border-radius: var(--control-radius);
-  background: var(--surface-raised);
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-1);
-}
-.nw-seam-half--mine {
-  border-color: var(--border-strong);
-  background: var(--status-info-bg);
-}
-.nw-seam-owner {
-  font-size: var(--font-size-xs);
-  font-weight: var(--font-weight-semibold);
-  letter-spacing: 0.04em;
-  text-transform: uppercase;
-  color: var(--text-muted);
-}
-.nw-seam-steps {
-  font-family: var(--font-family-mono);
-  font-size: var(--font-size-sm);
-  overflow-wrap: anywhere;
-}
-/* The join. A rail above and below the event says "this is a boundary
-   between two runs", which two adjacent boxes on their own do not. */
-.nw-seam-join {
-  display: flex;
-  flex-direction: column;
+.ge-arm-drop:hover:not(:disabled) { color: var(--status-danger-fg); }
+.ge-arm-drop:disabled { opacity: 0.4; cursor: not-allowed; }
+.ge-arm-row {
+  display: grid;
+  grid-template-columns: 5.5rem 1fr;
   align-items: center;
-  gap: var(--space-1);
-  padding: var(--space-2) 0;
-}
-.nw-seam-rail {
-  width: 1px;
-  height: var(--space-3);
-  background: var(--border-strong);
-}
-.nw-seam-event {
-  font-family: var(--font-family-mono);
-  font-size: var(--font-size-xs);
-  padding: var(--space-1) var(--space-3);
-  border: 1px solid var(--status-info-border);
-  border-radius: var(--radius-pill);
-  background: var(--status-info-bg);
-  color: var(--status-info-fg);
-}
-.nw-seam-done,
-.nw-seam-open {
-  margin: var(--space-3) 0 0;
-  padding: var(--space-3);
-  border-radius: var(--control-radius);
-  font-size: var(--font-size-sm);
-  line-height: var(--line-height-normal);
-}
-.nw-seam-done {
-  border: 1px solid var(--status-success-border);
-  background: var(--status-success-bg);
-  color: var(--status-success-fg);
-}
-.nw-seam-open {
-  border: 1px solid var(--status-warning-border);
-  background: var(--status-warning-bg);
-  color: var(--status-warning-fg);
+  gap: var(--space-2);
 }

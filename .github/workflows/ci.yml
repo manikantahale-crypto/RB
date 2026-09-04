@@ -54,6 +54,14 @@ jobs:
       - name: admin UI
         run: npm run typecheck -w @tekisho/admin
 
+      # Both guards existed and neither ran anywhere but a laptop, which is the
+      # same as not existing the first time somebody is in a hurry.
+      - name: admin UI — raw colours outside tokens.css
+        run: npm run check:tokens -w @tekisho/admin
+
+      - name: admin UI — a screen's classes in another screen's stylesheet
+        run: npm run check:styles -w @tekisho/admin
+
       - name: admin API
         run: npm run typecheck -w @tekisho/admin-api
 
