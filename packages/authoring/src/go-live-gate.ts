@@ -53,6 +53,16 @@ export type GoLiveGateInput = {
    * safety, and the difference has to be visible.
    */
   inputs?: {
+    /**
+     * Whether the trigger event DECLARES a payload at all.
+     *
+     * Eight event schemas are empty today, several of them for events that
+     * run constantly — `syntra.match.requested` has been published 197 times.
+     * An empty schema means nobody wrote down what the event carries, not
+     * that it carries nothing, and treating those as the same accuses every
+     * step in the workflow of a fault that belongs to the catalogue.
+     */
+    triggerDeclared: boolean;
     /** Property names on the trigger event's payload schema. */
     triggerFields: readonly string[];
     /** Node key → field names its input schema marks required. */
@@ -65,8 +75,16 @@ export type GoLiveGateInput = {
    * "could not check" rather than a pass.
    */
   ownership?: {
-    /** The application this workflow belongs to, from its key. */
-    graphModule: string;
+    /**
+     * The application this workflow belongs to.
+     *
+     * NULL when it cannot be determined — a graph key whose first segment is
+     * not a known application, of which there are two live today
+     * (`duplicate.review`, `resume.intake`). Splitting the key on a dot and
+     * trusting the result gave "duplicate" as an application name and made
+     * every SYNTRA step in that workflow look foreign.
+     */
+    graphModule: string | null;
     /** Node key → its owning module. */
     moduleByImpl: Map<string, string>;
     /** Node keys their owning module marked shareable. */
@@ -336,6 +354,17 @@ function checkInputsAreAvailable(
     };
   }
 
+  if (!evidence.triggerDeclared) {
+    return {
+      id: "inputs_available",
+      ok: true,
+      message:
+        "Inputs not checked — the trigger event does not declare what its " +
+        "payload contains, so there is nothing to check the steps against. " +
+        "Declaring it in event_schemas is what makes this checkable.",
+    };
+  }
+
   const problems = checkInputsAvailable({
     def,
     triggerFields: evidence.triggerFields,
@@ -391,6 +420,25 @@ function checkImplsPermitted(
       ok: true,
       message:
         "Step ownership not checked — no node registry was supplied to the gate.",
+    };
+  }
+
+  if (evidence.graphModule === null) {
+    /**
+     * Failing, not passing quietly.
+     *
+     * Boundaries cannot be enforced for a workflow whose owner nobody can
+     * name, and the fix is small: call it `<application>.<something>`. Letting
+     * it through would mean the one convention this check depends on is the
+     * one thing it never insists on.
+     */
+    return {
+      id: "impls_permitted",
+      ok: false,
+      message:
+        `Can't go live: "${def.graphKey}" does not say which application it ` +
+        `belongs to, so its steps cannot be checked against that application's ` +
+        `boundaries. Name it "<application>.<something>".`,
     };
   }
 

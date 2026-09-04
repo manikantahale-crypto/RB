@@ -1,5 +1,6 @@
 import type { Pool, PoolClient, QueryResultRow } from "pg";
 import { createHash } from "node:crypto";
+import { MODULES } from "@tekisho/node-contract";
 import {
   baseFieldsFor,
   extFieldsFor,
@@ -2899,11 +2900,14 @@ async function collectGateEvidence(
   graphKey: string,
 ): Promise<{
   inputs?: {
+    /** False when the event schema declares no payload properties. */
+    triggerDeclared: boolean;
     triggerFields: readonly string[];
     requiredByImpl: Map<string, readonly string[]>;
   };
   ownership?: {
-    graphModule: string;
+    /** Null when the graph key does not name a known application. */
+    graphModule: string | null;
     moduleByImpl: Map<string, string>;
     shareableImpls: Set<string>;
   };
@@ -2936,25 +2940,54 @@ async function collectGateEvidence(
     }
 
     /**
-     * `syntra.authored` → `syntra`. The same derivation the editor and the
-     * materializer use; when the module registry is wired through to this
-     * layer it should come from there instead of a prefix.
+     * Which application owns this workflow.
+     *
+     * The first segment of the key IF it names a real application, and null
+     * otherwise. Splitting on a dot and trusting the result read
+     * `duplicate.review` as belonging to an application called "duplicate",
+     * which made every SYNTRA step inside it look like a boundary crossing — a
+     * check producing false findings is worse than no check.
+     *
+     * The known set comes from `node_registry`, which is materialized from the
+     * module registry in git. That is the same authority the editor's palette
+     * uses, reached the way this layer reaches everything else.
      */
-    const graphModule = graphKey.split(".")[0] ?? "platform";
+    /**
+     * FROM THE MODULE REGISTRY, NOT FROM `node_registry`.
+     *
+     * The obvious shortcut is `SELECT DISTINCT module FROM node_registry`, and
+     * it is wrong: that column names the module a NODE belongs to, so an
+     * application with no declared nodes never appears. RELAY has none — so
+     * relay would not have counted as an application, and the one real
+     * boundary crossing in production is `relay.intake.workflow` using a
+     * private ASTRA node. The check would have stopped seeing the very thing
+     * it was written for.
+     */
+    const head = graphKey.split(".")[0] ?? "";
+    const graphModule = (MODULES as readonly string[]).includes(head)
+      ? head
+      : null;
 
     let triggerFields: string[] = [];
+    let triggerDeclared = false;
     if (def.entryInput) {
       const ev = await client.query(
         `SELECT payload_schema FROM event_schemas WHERE event_type = $1 LIMIT 1`,
         [def.entryInput],
       );
-      triggerFields = Object.keys(ev.rows[0]?.payload_schema?.properties ?? {});
+      const props = ev.rows[0]?.payload_schema?.properties;
+      triggerFields = Object.keys(props ?? {});
+      // An empty schema is an event nobody described, not an event that
+      // carries nothing. Eight are like that today.
+      triggerDeclared = triggerFields.length > 0;
     }
 
     return {
       // Without a trigger there is nothing to check availability against, and
       // claiming every field is missing would be noise, not a finding.
-      ...(def.entryInput ? { inputs: { triggerFields, requiredByImpl } } : {}),
+      ...(def.entryInput
+        ? { inputs: { triggerDeclared, triggerFields, requiredByImpl } }
+        : {}),
       ownership: { graphModule, moduleByImpl, shareableImpls },
     };
   } catch {

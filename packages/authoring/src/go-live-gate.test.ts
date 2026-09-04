@@ -105,6 +105,21 @@ describe("check 8 — may this workflow use these steps", () => {
     expect(check?.ok).toBe(true);
     expect(check?.message).toContain("not checked");
   });
+
+  it("refuses a workflow whose key does not name an application", () => {
+    // `duplicate.review` and `resume.intake` are both live. Splitting the key
+    // on a dot read "duplicate" as an application and made every SYNTRA step
+    // inside look foreign — false findings, which teach people to ignore the
+    // check.
+    const check = checkFor(
+      gate({ ownership: ownership({ graphModule: null }) }),
+      "impls_permitted",
+    );
+    expect(check?.ok).toBe(false);
+    expect(check?.message).toContain("does not say which application");
+    // And it must not accuse the steps of anything.
+    expect(check?.message).not.toContain("keeps private");
+  });
 });
 
 describe("check 7 — can every step get what it needs", () => {
@@ -118,6 +133,7 @@ describe("check 7 — can every step get what it needs", () => {
         artifactSource: source,
         expectedGraphKey: "relay.authored",
         inputs: {
+          triggerDeclared: true,
           triggerFields: ["jobId"],
           requiredByImpl: new Map([["syntra.match.process", ["resumeId"]]]),
         },
@@ -137,6 +153,7 @@ describe("check 7 — can every step get what it needs", () => {
       gate({
         artifactSource: source,
         inputs: {
+          triggerDeclared: true,
           triggerFields: ["jobId", "resumeId"],
           requiredByImpl: new Map([["syntra.match.process", ["resumeId"]]]),
         },
@@ -150,5 +167,29 @@ describe("check 7 — can every step get what it needs", () => {
     const check = checkFor(gate(), "inputs_available");
     expect(check?.ok).toBe(true);
     expect(check?.message).toContain("not checked");
+  });
+
+  it("does not accuse the steps when the event declares no payload", () => {
+    // Eight event schemas are empty today, and `syntra.match.requested` — one
+    // of them — has been published 197 times. An empty schema means nobody
+    // wrote down what the event carries, not that it carries nothing.
+    const { source } = artifact(
+      [{ id: "match", impl: "syntra.match.process" }],
+      "syntra.match.requested",
+    );
+    const check = checkFor(
+      gate({
+        artifactSource: source,
+        inputs: {
+          triggerDeclared: false,
+          triggerFields: [],
+          requiredByImpl: new Map([["syntra.match.process", ["resumeId"]]]),
+        },
+      }),
+      "inputs_available",
+    );
+    expect(check?.ok).toBe(true);
+    expect(check?.message).toContain("does not declare");
+    expect(check?.message).not.toContain("resumeId");
   });
 });
