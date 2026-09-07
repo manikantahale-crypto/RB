@@ -1,4 +1,4 @@
-const platformEvents = require("./platformEvents.service");
+const platformEvents = require("../../../services/platformEvents.service");
 
 /** Shared match enqueue — writes platform event + optional internal worker. */
 async function enqueueMatchRequest({

@@ -1,9 +1,9 @@
-const { withTransaction } = require("../config/db");
-const matchRepo = require("../repositories/match.repository");
+const { withTransaction } = require("../../../config/db");
+const matchRepo = require("../../../repositories/match.repository");
 const { filterCandidatesForJob, filterJobsForResume } = require("./tier1Filter");
 const { rankCandidates, rankJobsForResume } = require("./tier2Rank");
-const env = require("../config/env");
-const log = require("../utils/logger");
+const env = require("../../../config/env");
+const log = require("../../../utils/logger");
 const { enqueueMatchRequest } = require("../services/matchEnqueue");
 
 async function shortlistFinalists(finalists) {

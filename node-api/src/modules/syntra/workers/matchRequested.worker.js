@@ -1,6 +1,6 @@
-const matchRepo = require("../repositories/match.repository");
+const matchRepo = require("../../../repositories/match.repository");
 const { matchSummaryToSummary, matchBatchSummariesToSummary } = require("../ai/matching");
-const log = require("../utils/logger");
+const log = require("../../../utils/logger");
 
 async function processBatchForJob(jobId, candidateRows) {
   if (!candidateRows || candidateRows.length === 0) return;

@@ -1,5 +1,5 @@
-const env = require("../config/env");
-const log = require("../utils/logger");
+const env = require("../../../config/env");
+const log = require("../../../utils/logger");
 const reviewRepo = require("../repositories/recruiterReview.repository");
 
 async function syncInbox(userId) {

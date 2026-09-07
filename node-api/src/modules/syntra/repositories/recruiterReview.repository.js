@@ -1,4 +1,4 @@
-const { pool } = require("../config/db");
+const { pool } = require("../../../config/db");
 const crypto = require("crypto");
 
 let schemaReady = null;

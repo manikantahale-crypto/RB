@@ -279,7 +279,7 @@ async function getMatch(req, res, next) {
 
 async function createDirectMatch(req, res, next) {
   try {
-    const matchService = require("../services/match.service");
+    const matchService = require("../modules/syntra/services/match.service");
     const { jobId, resumeId } = req.body || {};
     const result = await matchService.createDirectMatch({
       jobId,
@@ -295,7 +295,7 @@ async function createDirectMatch(req, res, next) {
 /** Run Tier-1/2 funnel for a JD → shortlist candidates → emit match.requested for Tier-3. */
 async function runJobMatch(req, res, next) {
   try {
-    const { runForJob } = require("../matching/funnel");
+    const { runForJob } = require("../modules/syntra/matching/funnel");
     const jobId = req.params.jobId;
     const job = await jobRepo.getJobById(jobId, req.userId);
     if (!job) throw notFound(`Job not found: ${jobId}`);
@@ -320,7 +320,7 @@ async function runJobMatch(req, res, next) {
 /** Run Tier-1/2 funnel for a resume → shortlist jobs → emit match.requested for Tier-3. */
 async function runResumeMatch(req, res, next) {
   try {
-    const { runForResume } = require("../matching/funnel");
+    const { runForResume } = require("../modules/syntra/matching/funnel");
     const resumeId = req.params.resumeId;
     const resume = await matchRepo.getResumeForMatching(resumeId);
     if (!resume) throw notFound(`Resume not found: ${resumeId}`);

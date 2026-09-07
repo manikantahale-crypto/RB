@@ -35,7 +35,7 @@ async function createJob({ title, file, userId }) {
 
 async function bulkSaveJobs(jobIds, userId) {
   const jobRepo = require("../repositories/job.repository");
-  const { runForJob } = require("../matching/funnel");
+  const { runForJob } = require("../modules/syntra/matching/funnel");
   const count = await jobRepo.saveJobsBulk(jobIds, userId);
   if (count > 0) {
     log.info(`[job.save] ${count} job(s) activated — re-running match funnel`);

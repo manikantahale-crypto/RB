@@ -1,12 +1,12 @@
 const crypto = require("crypto");
-const resumeRepo = require("../repositories/resume.repository");
-const candidateRepo = require("../repositories/candidate.repository");
+const resumeRepo = require("../../../repositories/resume.repository");
+const candidateRepo = require("../../../repositories/candidate.repository");
 const { runForResume } = require("../matching/funnel");
-const { parseResume } = require("../ai/resumeParsing");
-const { validateCandidateData } = require("../validation/candidateValidation");
-const { generateEmbedding } = require("../ai/embedding");
-const log = require("../utils/logger");
-const platformEvents = require("../services/platformEvents.service");
+const { parseResume } = require("../../../ai/resumeParsing");
+const { validateCandidateData } = require("../../../validation/candidateValidation");
+const { generateEmbedding } = require("../../../ai/embedding");
+const log = require("../../../utils/logger");
+const platformEvents = require("../../../services/platformEvents.service");
 
 function summaryHash(summary) {
   return crypto.createHash("sha256").update(summary || "", "utf8").digest("hex");

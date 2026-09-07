@@ -1,6 +1,6 @@
 const { parseJD } = require("../ai/jdParsing");
 const { parseResume } = require("../ai/resumeParsing");
-const { matchSummaryToSummary } = require("../ai/matching");
+const { matchSummaryToSummary } = require("../modules/syntra/ai/matching");
 
 async function summarizeJdEndpoint(req, res) {
   const text = (req.body.text || "").trim();

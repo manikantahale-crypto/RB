@@ -60,7 +60,7 @@ app.get("/dump-schema", async (req, res) => {
 const { requireAuth } = require("./middleware/auth");
 
 app.use("/auth", require("./routes/auth.routes"));
-app.use(require("./routes/internal.routes"));
+app.use(require("./modules/syntra/routes/internal.syntra.routes"));
 app.use(require("./routes/internal.orbit.routes"));
 app.use(require("./routes/internal.astra.routes"));
 app.use("/api/astra", require("./routes/astra.routes"));
@@ -75,7 +75,7 @@ app.use("/stats", requireAuth, require("./routes/stats.routes"));
 app.use("/dashboard", requireAuth, require("./routes/dashboard.routes"));
 app.use(requireAuth, require("./routes/matches.routes"));
 app.use(requireAuth, require("./routes/ai.routes"));
-app.use(requireAuth, require("./routes/recruiterReview.routes"));
+app.use(requireAuth, require("./modules/syntra/routes/recruiterReview.routes"));
 app.use("/orchestration", requireAuth, require("./routes/orchestrationActivity.routes"));
 
 app.use(errorHandler);

@@ -1,4 +1,4 @@
-const { complete } = require("../core/aiClient");
+const { complete } = require("../../../core/aiClient");
 
 const MATCH_SUMMARY_PROMPT = `You are an advanced AI Talent Matcher.
 Compare the Candidate Summary against the Job Description (JD) Summary.

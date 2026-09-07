@@ -1,5 +1,5 @@
-const matchRepo = require("../repositories/match.repository");
-const log = require("../utils/logger");
+const matchRepo = require("../../../repositories/match.repository");
+const log = require("../../../utils/logger");
 
 /**
  * Tier 1 — SQL role filter (0 LLM).

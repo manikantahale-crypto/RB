@@ -1,11 +1,11 @@
 const crypto = require("crypto");
-const jobRepo = require("../repositories/job.repository");
+const jobRepo = require("../../../repositories/job.repository");
 const { runForJob } = require("../matching/funnel");
-const { parseJD } = require("../ai/jdParsing");
-const { generateEmbedding } = require("../ai/embedding");
-const log = require("../utils/logger");
-const platformEvents = require("../services/platformEvents.service");
-const env = require("../config/env");
+const { parseJD } = require("../../../ai/jdParsing");
+const { generateEmbedding } = require("../../../ai/embedding");
+const log = require("../../../utils/logger");
+const platformEvents = require("../../../services/platformEvents.service");
+const env = require("../../../config/env");
 
 function summaryHash(summary) {
   return crypto.createHash("sha256").update(summary || "", "utf8").digest("hex");

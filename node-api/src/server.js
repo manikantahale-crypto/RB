@@ -5,14 +5,14 @@ const log = require("./utils/logger");
 const { withPgRetry } = require("./utils/pgRetry");
 const { startBoss, stopBoss } = require("./config/queue");
 const { seedEventSchemas } = require("./repositories/outbox.repository");
-const { ensureSchema: ensureRecruiterReviewSchema } = require("./repositories/recruiterReview.repository");
-const { registerJdUploadedWorker } = require("./workers/jdUploaded.worker");
+const { ensureSchema: ensureRecruiterReviewSchema } = require("./modules/syntra/repositories/recruiterReview.repository");
+const { registerJdUploadedWorker } = require("./modules/syntra/workers/jdUploaded.worker");
 const {
   registerResumeUploadedWorker,
-} = require("./workers/resumeUploaded.worker");
+} = require("./modules/syntra/workers/resumeUploaded.worker");
 const {
   registerMatchRequestedWorker,
-} = require("./workers/matchRequested.worker");
+} = require("./modules/syntra/workers/matchRequested.worker");
 const {
   registerAstraRequirementReceivedWorker,
 } = require("./workers/astraRequirementReceived.worker");

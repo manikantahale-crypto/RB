@@ -2,7 +2,7 @@ const { withTransaction } = require("../config/db");
 const candidateRepo = require("../repositories/candidate.repository");
 const resumeRepo = require("../repositories/resume.repository");
 const { extractText } = require("./extraction/fileExtractor");
-const { checkDuplicateResume } = require("../validation/duplicateValidation");
+const { checkDuplicateResume } = require("../modules/syntra/duplicateValidation");
 const { getBoss } = require("../config/queue");
 const log = require("../utils/logger");
 const platformEvents = require("./platformEvents.service");
@@ -93,7 +93,7 @@ async function createResume({ fullName, email, phone, file, userId }) {
 
 async function bulkSaveCandidates(candidateIds, userId) {
   const candidateRepo = require("../repositories/candidate.repository");
-  const { runForResume } = require("../matching/funnel");
+  const { runForResume } = require("../modules/syntra/matching/funnel");
   const count = await candidateRepo.saveCandidatesBulk(candidateIds, userId);
   if (count > 0) {
     log.info(`[resume.save] ${count} candidate(s) activated — re-running match funnel`);

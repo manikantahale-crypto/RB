@@ -1,14 +1,14 @@
 const express = require("express");
 const crypto = require("crypto");
-const { pool } = require("../config/db");
+const { pool } = require("../../../config/db");
 const { handleJdUploaded } = require("../workers/jdUploaded.worker");
 const { handleResumeUploaded } = require("../workers/resumeUploaded.worker");
 const { handleMatchRequested } = require("../workers/matchRequested.worker");
 const { runForJob } = require("../matching/funnel");
-const env = require("../config/env");
+const env = require("../../../config/env");
 const reviewService = require("../services/recruiterReview.service");
-const platformEvents = require("../services/platformEvents.service");
-const log = require("../utils/logger");
+const platformEvents = require("../../../services/platformEvents.service");
+const log = require("../../../utils/logger");
 
 const router = express.Router();
 

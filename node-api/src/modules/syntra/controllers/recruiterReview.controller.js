@@ -1,5 +1,5 @@
 const reviewService = require("../services/recruiterReview.service");
-const log = require("../utils/logger");
+const log = require("../../../utils/logger");
 
 async function listPending(req, res, next) {
   try {

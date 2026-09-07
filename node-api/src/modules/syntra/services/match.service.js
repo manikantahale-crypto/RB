@@ -1,10 +1,10 @@
-const { withTransaction } = require("../config/db");
-const matchRepo = require("../repositories/match.repository");
-const jobRepo = require("../repositories/job.repository");
+const { withTransaction } = require("../../../config/db");
+const matchRepo = require("../../../repositories/match.repository");
+const jobRepo = require("../../../repositories/job.repository");
 const { skillMatchScore } = require("../matching/tier2Rank");
 const { enqueueMatchRequest } = require("./matchEnqueue");
 
-const candidateRepo = require("../repositories/candidate.repository");
+const candidateRepo = require("../../../repositories/candidate.repository");
 
 function httpError(statusCode, message) {
   const err = new Error(message);
