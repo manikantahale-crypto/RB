@@ -90,6 +90,19 @@ jobs:
       - name: unit tests
         run: npm test --workspaces --if-present
 
+      # node-api is NOT a workspace — `workspaces` is apps/* and packages/*
+      # only — so the step above never reaches it, and a test written there is
+      # invisible to CI while this job stays green. That is the same failure
+      # the note above describes, one level further out.
+      #
+      # This runs the module-boundary check explicitly: every file resolves,
+      # no application imports another, and nothing imports the composition
+      # root. Adding node-api to `workspaces` would do it too, and would also
+      # change how npm installs and hoists for another team's service, so it is
+      # named here instead.
+      - name: node-api — module boundaries
+        run: npx vitest run node-api/structure.test.js
+
   secrets:
     name: no committed credentials
     runs-on: ubuntu-latest
