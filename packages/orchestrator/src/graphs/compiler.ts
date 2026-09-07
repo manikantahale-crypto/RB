@@ -13,7 +13,7 @@ import {
   defineGraph,
 } from './recipe.js';
 import { ROUTER_REGISTRY } from './routers.js';
-import { graphSeedCatalog } from './catalog.js';
+
 import { enrichError, type ErrorClass } from '../workflow/errors.js';
 import {
   PolicyEngine,
@@ -166,43 +166,30 @@ export class GraphCompiler {
         WHERE status = 'active';
     `);
 
-    for (const s of graphSeedCatalog) {
-      const key = s.definition.graphKey;
-      const defJson = JSON.stringify(s.definition);
-
-      const updated = await this.pool.query(
-        `UPDATE graph_definitions
-         SET definition = $1::jsonb,
-             checksum = $2,
-             status = $3,
-             activated_at = CASE
-               WHEN $3 = 'active' THEN COALESCE(activated_at, now())
-               ELSE activated_at
-             END
-         WHERE graph_key = $4 AND version = $5 AND org_id IS NULL`,
-        [defJson, s.checksum, s.status, key, s.version]
-      );
-
-      if ((updated.rowCount ?? 0) === 0) {
-        await this.pool.query(
-          `INSERT INTO graph_definitions (
-             id, org_id, graph_key, version, definition, checksum, status, created_by, activated_at
-           ) VALUES ($1, NULL, $2, $3, $4::jsonb, $5, $6, 'catalog.ts', $7)`,
-          [
-            s.id,
-            key,
-            s.version,
-            defJson,
-            s.checksum,
-            s.status,
-            s.status === 'active' ? new Date() : null,
-          ]
-        );
-      }
-    }
-
+    /**
+     * NO SEEDING HERE ANY MORE.
+     *
+     * This loop wrote the git catalog into `graph_definitions` on every boot,
+     * forcing its own idea of which version is active. That was right when git
+     * was the only author of a workflow and the database started empty.
+     *
+     * It stopped being right some time ago. The admin app has written hundreds
+     * of versions, migrations have advanced several workflows past the
+     * catalog, and this loop had no way to know: it tried to re-activate
+     * `duplicate.review` v1 while v2 held the pointer, the one-active index
+     * refused, and the worker would not start at all. A disagreement about one
+     * row took down every workflow.
+     *
+     * Seeding belongs in a migration, which is applied deliberately, in order,
+     * and is still tracked in git — `R__seed_syntra_graphs.sql` is generated
+     * from the same catalog and now creates only what is absent. Boot makes
+     * sure the table and its indexes exist, and reads.
+     *
+     * `graphSeedCatalog` stays exported: the generator reads it, and it is the
+     * source those migrations come from.
+     */
     console.log(
-      `[GraphCompiler] graph_definitions ready (${graphSeedCatalog.length} recipe(s) from catalog.ts)`
+      `[GraphCompiler] graph_definitions ready (seeded by migration, not at boot)`,
     );
   }
 

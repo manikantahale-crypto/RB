@@ -22,8 +22,8 @@ function sqlString(value: string): string {
   return `'${value.replace(/'/g, "''")}'`;
 }
 
-const keys = graphSeedCatalog.map((s) => s.definition.graphKey);
-const keysSql = keys.map(sqlString).join(', ');
+
+
 
 const valueBlocks = graphSeedCatalog.map((s) => {
   const defJson = JSON.stringify(s.definition, null, 2);
@@ -45,15 +45,28 @@ const sql = `-- AUTO-GENERATED from packages/orchestrator/src/graphs/catalog.ts
 --   npm run generate:graph-seeds -w @tekisho/orchestrator
 --
 -- Repeatable Flyway seed: graph recipes (global scope).
-
-DELETE FROM graph_definitions
-WHERE org_id IS NULL
-  AND graph_key IN (${keysSql});
+--
+-- CREATE IF ABSENT. NEVER OVERWRITE.
+--
+-- This used to DELETE every key it seeds and reinsert them, on every migration
+-- run. That was defensible when git was the only author of a workflow. It is
+-- not any more: the admin app has written hundreds of versions, and migrations
+-- have advanced several workflows past what this file believes.
+--
+-- Against the live database that DELETE would have removed twelve rows, four
+-- of which nothing here could put back — including the version of
+-- duplicate.review that actually works, and two workflows a person authored
+-- through the app.
+--
+-- So it seeds what is missing and leaves everything else alone. ON CONFLICT DO
+-- NOTHING covers all three ways a row can already be there: the same id, the
+-- same key and version, or another version of that key already active.
 
 INSERT INTO graph_definitions (
   id, org_id, graph_key, version, definition, checksum, status, created_by, activated_at
 ) VALUES
-${valueBlocks.join(',\n')};
+${valueBlocks.join(',\n')}
+ON CONFLICT DO NOTHING;
 `;
 
 writeFileSync(outPath, sql, 'utf8');

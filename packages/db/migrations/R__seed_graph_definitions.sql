@@ -1,4 +1,16 @@
-DELETE FROM graph_definitions WHERE graph_key IN ('syntra.jd.workflow', 'syntra.resume.workflow', 'syntra.match.workflow') AND org_id IS NULL;
+-- Repeatable seed: three single-step workflows the router needs to exist.
+--
+-- CREATE IF ABSENT. NEVER OVERWRITE.
+--
+-- This began with a DELETE of the three keys below, on every migration run.
+-- That was safe while nothing else wrote them and unsafe the moment something
+-- did: against the live database it would have removed a workflow version a
+-- later migration had put in place, and a draft somebody was working on.
+--
+-- `created_by` used to be gen_random_uuid(), which made these rows look as
+-- though a person had authored them. Two of them were reported as
+-- user-authored on that basis. It now says what actually made them.
+
 
 WITH definitions(graph_key, definition) AS (
   VALUES
@@ -56,6 +68,7 @@ SELECT
   d.definition,
   md5(d.definition::text) as checksum,
   'active' as status,
-  gen_random_uuid() as created_by,
+  'R__seed_graph_definitions' as created_by,
   now() as activated_at
-FROM definitions d;
+FROM definitions d
+ON CONFLICT DO NOTHING;
