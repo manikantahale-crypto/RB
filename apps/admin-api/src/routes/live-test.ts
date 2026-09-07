@@ -132,6 +132,82 @@ export function registerLiveTestRoutes(app: FastifyLike, pool: Pool): void {
   });
 
   /**
+   * The organisations a run can belong to.
+   *
+   * Every fire needs one, and it used to be a box you typed a UUID into.
+   * Nobody knows their organisation id by heart, so in practice that meant
+   * going and looking it up, or pasting the same one out of habit without
+   * checking it was still the right one.
+   */
+  app.get("/live-test/organisations", async (_req: any, reply: any) => {
+    try {
+      const { rows } = await pool.query(
+        `SELECT id::text, name FROM organizations
+          WHERE deleted_at IS NULL
+          ORDER BY name`,
+      );
+      return { organisations: rows };
+    } catch (err: any) {
+      return reply
+        .code(500)
+        .send({ error: "organisations_unavailable", message: String(err) });
+    }
+  });
+
+  /**
+   * Recent real events of this type, so a test can replay one.
+   *
+   * INVENTING AN EVENT IS THE WRONG SHAPE OF WORK.
+   *
+   * The form was generated from the event's schema and filled with samples,
+   * which sounds helpful and is not: a string field samples to "", so you type
+   * the title and the channel by hand, and every uuid field samples to the
+   * same constant `00000000-…-000000000000`. Firing that at a live database
+   * writes a run against an id that means nothing, and firing it twice writes
+   * two runs against the same nothing.
+   *
+   * Meanwhile the outbox holds thousands of real ones. Picking a real payload
+   * is less work than typing a fake one AND it exercises the shapes production
+   * actually produces — the odd null, the field nobody documented, the title
+   * with a quote in it.
+   */
+  app.get("/live-test/recent/:eventType", async (req: any, reply: any) => {
+    const eventType = String(req.params.eventType ?? "");
+    try {
+      const { rows } = await pool.query(
+        `SELECT event_id::text,
+                organization_id::text,
+                aggregate_type,
+                aggregate_id::text,
+                producer,
+                occurred_at,
+                payload_ref
+           FROM event_outbox
+          WHERE event_type = $1
+          ORDER BY id DESC
+          LIMIT 10`,
+        [eventType],
+      );
+      return {
+        eventType,
+        recent: rows.map((r: any) => ({
+          eventId: r.event_id,
+          organisationId: r.organization_id,
+          aggregateType: r.aggregate_type,
+          aggregateId: r.aggregate_id,
+          producer: r.producer,
+          occurredAt: r.occurred_at,
+          payload: r.payload_ref ?? {},
+        })),
+      };
+    } catch (err: any) {
+      return reply
+        .code(500)
+        .send({ error: "recent_unavailable", message: String(err) });
+    }
+  });
+
+  /**
    * Fire it.
    *
    * The envelope is built here rather than by the caller: event ids and

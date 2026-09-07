@@ -16,6 +16,29 @@ export type TriggerEventCatalogEntry = {
 
 export const TRIGGER_EVENT_CATALOG: readonly TriggerEventCatalogEntry[] = [
   {
+    /**
+     * The only SYNTRA door nobody is standing in.
+     *
+     * Every other SYNTRA trigger already starts a live workflow, and the one
+     * exception — `syntra.jd.normalized` — is published by
+     * `astra.requirement.workflow`, so binding it would put a new workflow in
+     * the path of every real job description.
+     *
+     * This event has a schema, has no binding, and is emitted by nothing: no
+     * node declares it and no active graph carries it. That makes it the one
+     * trigger a workflow can be bound to and only ever fire when somebody
+     * fires it deliberately — which is exactly what testing a whole workflow
+     * end to end needs, and what the catalogue could not offer before.
+     */
+    eventType: "syntra.approval.requested",
+    label: "Approval requested",
+    description:
+      "A step asked a person to decide. Nothing publishes this today, so a " +
+      "workflow bound to it runs only when one is fired by hand.",
+    moduleQueue: "module.syntra.jd",
+    defaultGraphKey: "syntra.authored",
+  },
+  {
     eventType: "syntra.jd.received",
     label: "Job description received",
     description: "Fired when Syntra accepts a new JD upload (ASTRA front door).",

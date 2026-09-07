@@ -11,7 +11,55 @@
   display: flex;
   flex-direction: column;
   gap: var(--panel-gap);
-  max-width: 780px;
+}
+
+/* ── the page, not a column down one side ─────────────────────────────────
+   This was capped at 780px, which on any normal monitor left two thirds of
+   the screen empty while the payload form — the thing you actually came here
+   to fill in — was squeezed into a strip.
+
+   Same shape as the editor's split: the work on the left, a narrow panel on
+   the right that stays put. `Fire it` lives in that panel deliberately. It
+   used to sit below a form long enough to scroll it out of sight, so the
+   button and the fields it depends on were never visible together. */
+.lt-split {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 380px;
+  gap: var(--panel-gap);
+  align-items: start;
+}
+.lt-main,
+.lt-side {
+  display: flex;
+  flex-direction: column;
+  gap: var(--panel-gap);
+  min-width: 0;
+}
+.lt-side {
+  position: sticky;
+  top: var(--space-4);
+}
+
+/* Below the editor's own breakpoint the two columns stop being two columns.
+   Order still reads correctly: what will run, the event, then fire it. */
+@media (max-width: 1150px) {
+  .lt-split {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .lt-side {
+    position: static;
+  }
+}
+
+/* Payload fields go as wide as there is room for, rather than one per row
+   with an input stretched across the whole column. */
+.lt-fields {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+  gap: var(--space-4);
+}
+.lt-fields .lt-field {
+  margin-bottom: 0;
 }
 .lt-head {
   display: flex;
@@ -169,3 +217,16 @@
   border-bottom: 1px dotted var(--border-strong);
 }
 .lt-entry:hover { color: var(--status-danger-fg); }
+
+/* ── replay ───────────────────────────────────────────────────────────────
+   Sits with the fields rather than above them: choosing a real event to copy
+   is part of describing the event, not a separate mode. */
+.lt-replay {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  margin-bottom: var(--space-4);
+  padding: var(--space-3);
+  border: 1px dashed var(--border-subtle);
+  border-radius: var(--radius-md);
+}

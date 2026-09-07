@@ -16,8 +16,12 @@ import {
   checkStarted,
   fireTestEvent,
   loadLiveTestPlan,
+  loadOrganisations,
+  loadRecentEvents,
   type LiveTestField,
   type LiveTestPlan,
+  type Organisation,
+  type RecentEvent,
 } from "../api/live-test";
 
 /** Same shape the payload will take, kept as text so a person can edit it. */
@@ -70,6 +74,10 @@ export function LiveTestPage() {
   const [waiting, setWaiting] = useState<string>("");
   /** Typed confirmation. A button alone is too easy to press by accident. */
   const [confirm, setConfirm] = useState("");
+  const [orgs, setOrgs] = useState<Organisation[]>([]);
+  const [recent, setRecent] = useState<RecentEvent[]>([]);
+  /** Which real event was copied in, so the screen can say the form is not invented. */
+  const [replayed, setReplayed] = useState<RecentEvent | null>(null);
 
   useEffect(() => {
     let live = true;
@@ -79,6 +87,15 @@ export function LiveTestPage() {
       if (res.ok) {
         setPlan(res.data);
         setDraft(initialDraft(res.data.fields));
+        /**
+         * Real events of this type, for replaying instead of inventing one.
+         * Failing to load them is not an error worth showing — the form still
+         * works, it is just back to being typed by hand.
+         */
+        if (res.data.eventType) {
+          const r = await loadRecentEvents(res.data.eventType);
+          if (live && r.ok) setRecent(r.data.recent);
+        }
       } else {
         setError(res.body.message ?? res.body.error ?? "Could not load");
       }
@@ -87,6 +104,40 @@ export function LiveTestPage() {
       live = false;
     };
   }, [graphKey]);
+
+  useEffect(() => {
+    let live = true;
+    void (async () => {
+      const res = await loadOrganisations();
+      if (live && res.ok) setOrgs(res.data.organisations);
+    })();
+    return () => {
+      live = false;
+    };
+  }, []);
+
+  /**
+   * Copy a real event into the form.
+   *
+   * Its organisation comes too. An event's payload belongs to the
+   * organisation it happened in, and replaying it against a different one
+   * would write a run whose data refers to rows in somebody else's.
+   */
+  const replay = useCallback(
+    (ev: RecentEvent) => {
+      setOrgId(ev.organisationId);
+      setDraft(
+        Object.fromEntries(
+          Object.entries(ev.payload).map(([k, v]) => [
+            k,
+            typeof v === "object" && v !== null ? JSON.stringify(v) : String(v ?? ""),
+          ]),
+        ),
+      );
+      setReplayed(ev);
+    },
+    [],
+  );
 
   const missing = useMemo(
     () =>
@@ -227,135 +278,190 @@ export function LiveTestPage() {
             ) : null}
           </section>
 
-          <section className="lt-block">
-            <h2 className="lt-block-title">What will run</h2>
-            <p className="lt-steps">
-              {plan.steps.map((s) => s.id).join(" → ") || "no steps"}
-            </p>
-            <p className="ge-muted">
-              started by <code>{plan.eventType}</code>
-              {plan.triggerSource === "binding" ? " · bound" : " · draft"}
-            </p>
-          </section>
+          <div className="lt-split">
+            <div className="lt-main">
+              <section className="lt-block">
+                <h2 className="lt-block-title">What will run</h2>
+                <p className="lt-steps">
+                  {plan.steps.map((s) => s.id).join(" → ") || "no steps"}
+                </p>
+                <p className="ge-muted">
+                  started by <code>{plan.eventType}</code>
+                  {plan.triggerSource === "binding" ? " · bound" : " · draft"}
+                </p>
+              </section>
 
-          <section className="lt-block">
-            <h2 className="lt-block-title">The event</h2>
+              <section className="lt-block">
+                <h2 className="lt-block-title">The event</h2>
 
-            <label className="lt-field">
-              <span className="lt-field-name">
-                organisation <span className="lt-req">required</span>
-              </span>
-              <input
-                className="ge-input"
-                value={orgId}
-                onChange={(e) => setOrgId(e.target.value)}
-                placeholder="organisation id this run belongs to"
-              />
-              <span className="lt-field-why">
-                Every run belongs to one organisation, and its data is written
-                against that one.
-              </span>
-            </label>
-
-            {!plan.payloadDeclared ? (
-              /*
-                Eight event schemas hold a permissive placeholder written at
-                boot so ingress can accept an event nobody has described. There
-                is no form to generate from one, and pretending otherwise would
-                show an empty box with no explanation.
-              */
-              <p className="lt-undeclared">
-                <code>{plan.eventType}</code> does not describe what it carries,
-                so there is no form to fill in. It will be fired with an empty
-                payload. Describing it in the event catalogue is what would make
-                this useful.
-              </p>
-            ) : (
-              plan.fields.map((f) => (
-                <label className="lt-field" key={f.name}>
+{/* ── pick, do not type ────────────────────────────────────────
+                    This was a free-text box for a uuid. Nobody knows their
+                    organisation id by heart, so in practice it meant looking
+                    it up, or pasting the same one out of habit without
+                    checking it was still right — on the one field that decides
+                    whose data the run writes against. */}
+                <label className="lt-field">
                   <span className="lt-field-name">
-                    {f.name}
-                    {f.required ? <span className="lt-req">required</span> : null}
-                    <span className="lt-type">
-                      {f.type}
-                      {f.format ? ` · ${f.format}` : ""}
-                    </span>
+                    organisation <span className="lt-req">required</span>
                   </span>
-                  {f.enum?.length ? (
+                  <select
+                    className="wf-select"
+                    value={orgId}
+                    onChange={(e) => setOrgId(e.target.value)}
+                  >
+                    <option value="">choose an organisation…</option>
+                    {orgs.map((o) => (
+                      <option key={o.id} value={o.id}>
+                        {o.name}
+                      </option>
+                    ))}
+                  </select>
+                  <span className="lt-field-why">
+                    Every run belongs to one organisation, and its data is written
+                    against that one.
+                  </span>
+                </label>
+
+                {/* ── replay something real ──────────────────────────────
+                    The generated form fills a string field with "" and every
+                    uuid field with the same constant, so inventing an event is
+                    both more typing and less realistic than copying one
+                    production already produced. */}
+                {recent.length > 0 ? (
+                  <div className="lt-replay">
+                    <span className="lt-field-name">
+                      replay a real one
+                      <span className="lt-type">{recent.length} recent</span>
+                    </span>
                     <select
-                      className="ge-input"
-                      value={draft[f.name] ?? ""}
-                      onChange={(e) =>
-                        setDraft({ ...draft, [f.name]: e.target.value })
-                      }
+                      className="wf-select"
+                      value={replayed?.eventId ?? ""}
+                      onChange={(e) => {
+                        const ev = recent.find((r) => r.eventId === e.target.value);
+                        if (ev) replay(ev);
+                      }}
                     >
-                      {f.enum.map((v) => (
-                        <option key={String(v)} value={String(v)}>
-                          {String(v)}
+                      <option value="">start from a blank form…</option>
+                      {recent.map((r) => (
+                        <option key={r.eventId} value={r.eventId}>
+                          {new Date(r.occurredAt).toLocaleString()} · {r.producer} ·{" "}
+                          {r.aggregateId.slice(0, 8)}
                         </option>
                       ))}
                     </select>
-                  ) : (
-                    <input
-                      className="ge-input"
-                      value={draft[f.name] ?? ""}
-                      onChange={(e) =>
-                        setDraft({ ...draft, [f.name]: e.target.value })
-                      }
-                    />
-                  )}
-                  {f.description ? (
-                    <span className="lt-field-why">{f.description}</span>
-                  ) : null}
-                </label>
-              ))
-            )}
-          </section>
+                    <span className="lt-field-why">
+                      {replayed
+                        ? `Copied from a real event fired by ${replayed.producer}. Every field below came from it — change what you want before firing.`
+                        : "Copies a real payload from the outbox, and the organisation it belonged to. Better data than anything a blank form would suggest."}
+                    </span>
+                  </div>
+                ) : null}
 
-          <section className="lt-block">
-            <h2 className="lt-block-title">Fire it</h2>
-            {missing.length > 0 ? (
-              <p className="lt-missing">
-                Still needed: {missing.join(", ")}
-              </p>
-            ) : null}
-            <label className="lt-field">
-              <span className="lt-field-name">
-                type <code>RUN IT</code> to confirm
-              </span>
-              <input
-                className="ge-input"
-                value={confirm}
-                onChange={(e) => setConfirm(e.target.value)}
-                placeholder="RUN IT"
-                aria-label="Type RUN IT to confirm"
-              />
-              <span className="lt-field-why">
-                Typing it is the point — a button on its own is too easy to
-                press while reading something else.
-              </span>
-            </label>
-
-            <div className="lt-actions">
-              <button
-                type="button"
-                className="wf-btn wf-btn--primary"
-                disabled={!ready}
-                onClick={() => void fire()}
-                data-testid="lt-fire"
-              >
-                {firing ? "Firing…" : "Fire the event"}
-              </button>
-              {waiting ? <span className="lt-waiting">{waiting}</span> : null}
+                {!plan.payloadDeclared ? (
+                  /*
+                    Eight event schemas hold a permissive placeholder written at
+                    boot so ingress can accept an event nobody has described. There
+                    is no form to generate from one, and pretending otherwise would
+                    show an empty box with no explanation.
+                  */
+                  <p className="lt-undeclared">
+                    <code>{plan.eventType}</code> does not describe what it carries,
+                    so there is no form to fill in. It will be fired with an empty
+                    payload. Describing it in the event catalogue is what would make
+                    this useful.
+                  </p>
+                ) : (
+                  <div className="lt-fields">
+                  {plan.fields.map((f) => (
+                    <label className="lt-field" key={f.name}>
+                      <span className="lt-field-name">
+                        {f.name}
+                        {f.required ? <span className="lt-req">required</span> : null}
+                        <span className="lt-type">
+                          {f.type}
+                          {f.format ? ` · ${f.format}` : ""}
+                        </span>
+                      </span>
+                      {f.enum?.length ? (
+                        <select
+                          className="ge-input"
+                          value={draft[f.name] ?? ""}
+                          onChange={(e) =>
+                            setDraft({ ...draft, [f.name]: e.target.value })
+                          }
+                        >
+                          {f.enum.map((v) => (
+                            <option key={String(v)} value={String(v)}>
+                              {String(v)}
+                            </option>
+                          ))}
+                        </select>
+                      ) : (
+                        <input
+                          className="ge-input"
+                          value={draft[f.name] ?? ""}
+                          onChange={(e) =>
+                            setDraft({ ...draft, [f.name]: e.target.value })
+                          }
+                        />
+                      )}
+                      {f.description ? (
+                        <span className="lt-field-why">{f.description}</span>
+                      ) : null}
+                    </label>
+                  ))}
+                  </div>
+                )}
+              </section>
             </div>
 
-            {firedEventId ? (
-              <p className="ge-muted lt-fired">
-                event <code>{firedEventId}</code> ·{" "}
-                <Link to={`/runs?event=${firedEventId}`}>find it later</Link>
-              </p>
-            ) : null}
-          </section>
+            <div className="lt-side">
+              <section className="lt-block">
+                <h2 className="lt-block-title">Fire it</h2>
+                {missing.length > 0 ? (
+                  <p className="lt-missing">
+                    Still needed: {missing.join(", ")}
+                  </p>
+                ) : null}
+                <label className="lt-field">
+                  <span className="lt-field-name">
+                    type <code>RUN IT</code> to confirm
+                  </span>
+                  <input
+                    className="ge-input"
+                    value={confirm}
+                    onChange={(e) => setConfirm(e.target.value)}
+                    placeholder="RUN IT"
+                    aria-label="Type RUN IT to confirm"
+                  />
+                  <span className="lt-field-why">
+                    Typing it is the point — a button on its own is too easy to
+                    press while reading something else.
+                  </span>
+                </label>
+
+                <div className="lt-actions">
+                  <button
+                    type="button"
+                    className="wf-btn wf-btn--primary"
+                    disabled={!ready}
+                    onClick={() => void fire()}
+                    data-testid="lt-fire"
+                  >
+                    {firing ? "Firing…" : "Fire the event"}
+                  </button>
+                  {waiting ? <span className="lt-waiting">{waiting}</span> : null}
+                </div>
+
+                {firedEventId ? (
+                  <p className="ge-muted lt-fired">
+                    event <code>{firedEventId}</code> ·{" "}
+                    <Link to={`/runs?event=${firedEventId}`}>find it later</Link>
+                  </p>
+                ) : null}
+              </section>
+            </div>
+          </div>
         </>
       )}
     </div>

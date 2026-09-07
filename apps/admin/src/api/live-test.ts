@@ -69,3 +69,34 @@ export function checkStarted(eventId: string) {
     `/live-test/started/${encodeURIComponent(eventId)}`,
   );
 }
+
+export type Organisation = { id: string; name: string };
+
+/** The organisations a run can belong to — a required field on every fire. */
+export function loadOrganisations() {
+  return request<{ organisations: Organisation[] }>("/live-test/organisations");
+}
+
+export type RecentEvent = {
+  eventId: string;
+  organisationId: string;
+  aggregateType: string;
+  aggregateId: string;
+  producer: string;
+  occurredAt: string;
+  payload: Record<string, unknown>;
+};
+
+/**
+ * Real events of this type that already happened, newest first.
+ *
+ * Replaying one beats filling in a generated form: the sample for a string
+ * field is `""` and the sample for every uuid is the same constant, so a
+ * hand-filled event is both more work and less realistic than one production
+ * actually produced.
+ */
+export function loadRecentEvents(eventType: string) {
+  return request<{ eventType: string; recent: RecentEvent[] }>(
+    `/live-test/recent/${encodeURIComponent(eventType)}`,
+  );
+}
