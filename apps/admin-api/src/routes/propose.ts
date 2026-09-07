@@ -61,8 +61,14 @@
  */
 import type { Pool } from "pg";
 import { withOrgScope } from "../with-org-scope.js";
-import { MODULE_REGISTRY } from "@tekisho/node-contract";
 import {
+  MODULE_REGISTRY,
+  type EmitDeclaration,
+} from "@tekisho/node-contract";
+import {
+  decideChain,
+  detectTriggeredWorkflows,
+  emitsEvent,
   resolveHandoff,
   splitByModule,
   type ModuleFacts,
@@ -502,6 +508,40 @@ function stampExtractedConfig(
     }
     return touched ? { ...n, config } : n;
   });
+}
+
+/**
+ * Put the steps in the order they actually run.
+ *
+ * `compileLlmProposal` sorts nodes alphabetically by id so the same proposal
+ * always produces byte-identical output. That is right for a checksum and
+ * wrong for everything else, because ACCEPT THROWS THE MODEL'S EDGES AWAY and
+ * re-chains the flow from this array — so the array order silently becomes the
+ * order the workflow runs in.
+ *
+ * The damage that did: a model returning `intake → process_jd →
+ * match_candidates`, which is correct, got stored as `intake →
+ * match_candidates → process_jd`, which matches a job description before
+ * anything has parsed it. It was diagnosed twice as the model ordering steps
+ * badly, and twice the model had been right.
+ *
+ * So the edges decide, since they have been correct all along. An unreachable
+ * step keeps its place at the end rather than being dropped: an orphan is
+ * still somebody's step, and losing it here would be worse than showing it
+ * out of place.
+ */
+export function nodesInRunOrder<T extends { id: string }>(
+  nodes: readonly T[],
+  edges: ReadonlyArray<readonly [string, string]>,
+): T[] {
+  if (edges.length === 0) return [...nodes];
+  const order = orderedStepIds([...nodes], edges as Array<[string, string]>);
+  const rank = new Map(order.map((id, i) => [id, i]));
+  return [...nodes].sort(
+    (a, b) =>
+      (rank.get(a.id) ?? Number.MAX_SAFE_INTEGER) -
+      (rank.get(b.id) ?? Number.MAX_SAFE_INTEGER),
+  );
 }
 
 /** Step ids in edge order, so the ledger reads like the canvas rather than the row order. */
@@ -990,7 +1030,21 @@ export function registerProposeRoutes(
          * what the screen shows.
          */
         const { rows: ownerRows } = await client.query(
-          `SELECT key, module, shareable FROM node_registry`,
+          `SELECT key, module, shareable, emits FROM node_registry`,
+        );
+        /**
+         * What each node declared it may publish.
+         *
+         * NULL and `[]` are kept apart all the way through: a node that has
+         * not declared maps to null, a node declared silent maps to an empty
+         * array. Flattening them here would undo the whole point of the
+         * column — "we cannot tell" would start reading as "it does not".
+         */
+        const emitsOf = new Map<string, EmitDeclaration[] | null>(
+          ownerRows.map((r: any) => [
+            String(r.key),
+            Array.isArray(r.emits) ? (r.emits as EmitDeclaration[]) : null,
+          ]),
         );
         const moduleOf = new Map<string, string>(
           ownerRows.map((r: any) => [String(r.key), String(r.module)]),
@@ -1015,6 +1069,27 @@ export function registerProposeRoutes(
           ]),
         );
 
+        /**
+         * What each live workflow actually runs.
+         *
+         * Needed to answer the question that matters about a step publishing
+         * an event: not just "does something else start", but "does it redo
+         * work this flow is already doing". Only the active version is read —
+         * a retired one runs for nobody.
+         */
+        const { rows: activeDefs } = await client.query(
+          `SELECT graph_key, definition FROM graph_definitions
+            WHERE status = 'active'`,
+        );
+        const implsOf = new Map<string, readonly string[]>(
+          activeDefs.map((d: any) => [
+            String(d.graph_key),
+            ((d.definition?.nodes ?? []) as Array<{ impl?: string }>)
+              .map((n) => String(n?.impl ?? ""))
+              .filter(Boolean),
+          ]),
+        );
+
         const factsFor = (key: string): ModuleFacts => {
           const m = MODULE_REGISTRY.find((x) => x.key === key);
           return {
@@ -1035,16 +1110,17 @@ export function registerProposeRoutes(
             : null;
 
         /**
-         * The chain: a workflow per application, and the event between each
-         * pair. Where an event already starts a live workflow, that half needs
-         * building by nobody — which is the best possible answer to half a
-         * request, and the reason this is worth computing rather than assuming.
+         * The events that WOULD join the segments, worked out before deciding
+         * whether to split at all — because the decision depends on them.
+         * A handoff that already starts a live workflow is the one good reason
+         * to split; anything else is a join with nobody at the other end.
          */
-        const chain =
-          split && !split.singleModule
+        const spansModules = Boolean(split && !split.singleModule);
+        const handoffs =
+          split && spansModules
             ? split.segments.map((seg, i) => {
                 const prev = split.segments[i - 1];
-                const startsWith = prev
+                return prev
                   ? resolveHandoff(
                       factsFor(prev.module),
                       factsFor(seg.module),
@@ -1052,6 +1128,71 @@ export function registerProposeRoutes(
                       boundTo,
                     )
                   : null;
+              })
+            : [];
+
+        const chainDecision = spansModules ? decideChain(handoffs) : null;
+
+        /**
+         * Steps this workflow borrows from another application without
+         * permission.
+         *
+         * Go-live check 8 refuses a workflow that uses another module's step
+         * unless that step is marked shareable. That rule is right — borrowing
+         * a step means running it under its owner's database role, and an
+         * owner who has not marked it shareable has not agreed to that.
+         *
+         * What was wrong is WHEN it was found out. Now that a flow crossing
+         * applications stays one workflow by default, borrowing is the normal
+         * outcome rather than a rare mistake, and discovering it at the very
+         * last gate means building the whole thing first. So it is worked out
+         * here and shown next to the proposal — nothing is blocked, the author
+         * simply knows what they will need before they spend the afternoon.
+         */
+        /**
+         * Workflows this flow sets running by publishing, and whether any of
+         * them redoes work the flow already does.
+         *
+         * The live one: `syntra.jd.process` publishes `syntra.jd.parsed`,
+         * bound to `syntra.continuous.match`. A flow holding both steps
+         * therefore matches the same job twice — and before nodes declared
+         * what they publish, nothing could see that.
+         */
+        const triggeredWorkflows = detectTriggeredWorkflows({
+          nodes: graph.nodes,
+          emitsOf,
+          boundTo,
+          implsOf,
+          // No self key at proposal time: the workflow does not exist yet, so
+          // it cannot be the thing its own steps re-enter.
+        });
+
+        const borrowedSteps = graph.nodes
+          .filter((n) => {
+            const owner = moduleOf.get(n.impl);
+            return (
+              owner !== undefined &&
+              owner !== module &&
+              !shareableKeys.has(n.impl)
+            );
+          })
+          .map((n) => ({ step: n.impl, ownedBy: moduleOf.get(n.impl)! }));
+
+        /**
+         * The chain: a workflow per application, and the event between each
+         * pair. Where an event already starts a live workflow, that half needs
+         * building by nobody — which is the best possible answer to half a
+         * request, and the reason this is worth computing rather than assuming.
+         *
+         * Built only when splitting earns its cost. A flow that crosses
+         * applications with nothing to reuse downstream stays ONE workflow:
+         * the edges carry it, it runs the whole way through, and there is no
+         * event that can quietly fail to be published.
+         */
+        const chain =
+          split && chainDecision?.chain
+            ? split.segments.map((seg, i) => {
+                const startsWith = handoffs[i] ?? null;
                 return {
                   module: seg.module,
                   /** Yours when it is the module you were authoring in. */
@@ -1077,6 +1218,22 @@ export function registerProposeRoutes(
                    * that would start this half.
                    */
                   alreadyBuilt: startsWith?.handledBy ?? null,
+                  /**
+                   * Whether the PREVIOUS half can be seen to publish the event
+                   * that starts this one. "unknown" is not a failure — most
+                   * nodes emit from inside `run`, which nothing declares — but
+                   * it is the difference between a join we verified and one we
+                   * assumed, and the author is the one who can tell.
+                   */
+                  handoffEmitted: startsWith
+                    ? emitsEvent({
+                        nodes: split.segments[i - 1]!.stepIds
+                          .map((id) => graph.nodes.find((n) => n.id === id))
+                          .filter((n): n is NonNullable<typeof n> => Boolean(n)),
+                        eventType: startsWith.eventType,
+                        emitsOf,
+                      })
+                    : null,
                 };
               })
             : null;
@@ -1089,7 +1246,7 @@ export function registerProposeRoutes(
          * "the workflow", and quietly widening that to mean several would
          * break both. The chain is the new thing and says so separately.
          */
-        if (split && !split.singleModule && split.segments[0]) {
+        if (split && chain && split.segments[0]) {
           const first = split.segments[0];
           const keep = new Set(first.stepIds);
           graph = {
@@ -1098,6 +1255,13 @@ export function registerProposeRoutes(
             edges: first.edges,
           };
         }
+
+        /**
+         * The array order becomes the run order at accept, so the edges — not
+         * the alphabetical sort that made the array — decide it. See
+         * `nodesInRunOrder`.
+         */
+        graph = { ...graph, nodes: nodesInRunOrder(graph.nodes, graph.edges) };
 
         // ── the ledger: every line points at something checkable ────────
         /**
@@ -1210,9 +1374,11 @@ export function registerProposeRoutes(
             ledger.push({
               kind: "SPLIT",
               text: `this becomes ${chain.length} workflows, one per application`,
-              citation: chain
-                .map((c) => `${c.module.toUpperCase()}: ${c.steps.join(" → ")}`)
-                .join("  ·  "),
+              citation:
+                `${chainDecision?.reason ?? ""} ` +
+                chain
+                  .map((c) => `${c.module.toUpperCase()}: ${c.steps.join(" → ")}`)
+                  .join("  ·  "),
               source: "system",
             });
 
@@ -1232,6 +1398,39 @@ export function registerProposeRoutes(
                 continue;
               }
 
+              /**
+               * A join nobody publishes is the one failure this design can
+               * produce silently: the first workflow succeeds, the second is
+               * never triggered, and no error is raised anywhere. Worth saying
+               * out loud even when it turns out to be fine.
+               */
+              if (link.handoffEmitted === "no") {
+                ledger.push({
+                  kind: "SKIPPED",
+                  text: `${h.fromModule.toUpperCase()} does not publish ${h.eventType}`,
+                  citation:
+                    `Every step in ${h.fromModule.toUpperCase()}'s half has declared ` +
+                    `what it publishes, and none of them publish ${h.eventType}. So ` +
+                    `${h.toModule.toUpperCase()}'s half would never be triggered — ` +
+                    `the first workflow would succeed and the work would simply stop. ` +
+                    `Add a step that publishes it, or join these two on an event ` +
+                    `${h.fromModule.toUpperCase()} does publish.`,
+                  source: "system",
+                });
+              } else if (link.handoffEmitted === "unknown") {
+                ledger.push({
+                  kind: "SKIPPED",
+                  text: `cannot tell whether ${h.eventType} is published`,
+                  citation:
+                    `Some steps in ${h.fromModule.toUpperCase()}'s half have not ` +
+                    `declared what they publish, so this cannot be checked here. If ` +
+                    `none of them publish ${h.eventType}, ` +
+                    `${h.toModule.toUpperCase()}'s half never starts and nothing ` +
+                    `reports a failure. Worth confirming before this goes live.`,
+                  source: "system",
+                });
+              }
+
               ledger.push({
                 kind: h.exists ? "CHOSE" : "SKIPPED",
                 text: h.exists
@@ -1246,6 +1445,89 @@ export function registerProposeRoutes(
                 source: "system",
               });
             }
+          }
+
+          /**
+           * Crossing applications without splitting is a decision too, and one
+           * an author will want to see — it is why there is one workflow on
+           * screen and not two.
+           */
+          if (spansModules && !chain) {
+            const apps = [
+              ...new Set((split?.segments ?? []).map((seg) => seg.module)),
+            ];
+            ledger.push({
+              kind: "CHOSE",
+              text: `one workflow spanning ${apps.map((a) => a.toUpperCase()).join(" and ")}`,
+              citation:
+                `${chainDecision?.reason ?? ""} Its steps run in order in a single ` +
+                `run, so each one can read what the steps before it produced.`,
+              source: "system",
+            });
+          }
+
+          /**
+           * Said plainly, and as a SKIPPED rather than a failure: the workflow
+           * is fine, it is the permission that is missing, and the person who
+           * can give it is somebody else.
+           */
+          /**
+           * Duplicates first, because they are wrong rather than merely worth
+           * knowing: the same input processed twice, two sets of results, and
+           * nothing in any log to say so.
+           */
+          for (const t of triggeredWorkflows.filter(
+            (x) => x.alsoRunsHere.length > 0,
+          )) {
+            ledger.push({
+              kind: "SKIPPED",
+              text: `${t.impl} already starts ${t.graphKey} — ${t.alsoRunsHere.join(", ")} would run twice`,
+              citation:
+                `${t.impl} publishes ${t.eventType} when it finishes, and that ` +
+                `event starts ${t.graphKey}, which runs ` +
+                `${t.alsoRunsHere.join(", ")}. This flow runs ` +
+                `${t.alsoRunsHere.length === 1 ? "that step" : "those steps"} ` +
+                `too, so one input would be processed twice — once here, once ` +
+                `in ${t.graphKey}. Remove ` +
+                `${t.alsoRunsHere.length === 1 ? "it" : "them"} and let ` +
+                `${t.graphKey} do that part, or keep ` +
+                `${t.alsoRunsHere.length === 1 ? "it" : "them"} and retire that ` +
+                `binding.`,
+              source: "system",
+            });
+          }
+
+          for (const t of triggeredWorkflows.filter(
+            (x) => x.alsoRunsHere.length === 0,
+          )) {
+            ledger.push({
+              kind: "CHOSE",
+              text: `${t.impl} also starts ${t.graphKey}`,
+              citation:
+                `Publishing ${t.eventType} starts ${t.graphKey} as a separate ` +
+                `run. Often exactly the intention — that is what a handoff is — ` +
+                `but it happens whether or not it was meant, so it is worth ` +
+                `knowing it does.`,
+              source: "system",
+            });
+          }
+
+          if (borrowedSteps.length > 0) {
+            const owners = [...new Set(borrowedSteps.map((b) => b.ownedBy))];
+            ledger.push({
+              kind: "SKIPPED",
+              text: `${borrowedSteps.length} step${borrowedSteps.length === 1 ? "" : "s"} belong${borrowedSteps.length === 1 ? "s" : ""} to ${owners.map((o) => o.toUpperCase()).join(" and ")}`,
+              citation:
+                `${borrowedSteps.map((b) => b.step).join(", ")} ` +
+                `${borrowedSteps.length === 1 ? "is" : "are"} owned by ` +
+                `${owners.map((o) => o.toUpperCase()).join(" and ")} and not marked ` +
+                `shareable. You can build and test this now, but going live needs ` +
+                `${owners.length === 1 ? "that team" : "those teams"} to mark ` +
+                `${borrowedSteps.length === 1 ? "it" : "them"} shareable first — ` +
+                `a borrowed step runs under its owner's database role, so it is ` +
+                `their call to make.`,
+              source: "system",
+            });
           }
 
           for (const gap of graph.unsupported) {
@@ -1302,6 +1584,10 @@ export function registerProposeRoutes(
            * case — a concept nobody needs today should cost them no attention.
            */
           chain,
+          spansModules,
+          chainDecision,
+          borrowedSteps,
+          triggeredWorkflows,
           suggestedTrigger: best?.eventType ?? null,
           availableNodes: nodeRows.map((n: any) => ({
             key: n.key,

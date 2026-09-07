@@ -23,6 +23,11 @@
  * canvas; the platform gets workflows it can actually route.
  */
 
+import {
+  resolveEmits,
+  type EmitDeclaration,
+} from "@tekisho/node-contract";
+
 export type SplitStep = {
   id: string;
   impl: string;
@@ -216,4 +221,183 @@ export function resolveHandoff(
     exists: false,
     handledBy: null,
   };
+}
+
+/* ──────────────────── whether to split at all ─────────────────────────── */
+
+export type ChainDecision = {
+  /** True to store one workflow per application, joined by events. */
+  chain: boolean;
+  /** Plain English, shown to the author. */
+  reason: string;
+};
+
+/**
+ * Splitting is a choice, not a law — so make it deliberately.
+ *
+ * The module boundary in this system is LOGICAL. One worker process serves
+ * every module queue and one registry holds every module's nodes, so a single
+ * graph containing two applications' steps compiles and runs today, driven by
+ * its edges, in one job. Nothing has to be emitted for it to finish.
+ *
+ * That matters because a chain is not free. The two halves are separate runs
+ * with separate state — only the handoff event's payload crosses — so the join
+ * has to be published by somebody. When it is not, the second half never
+ * starts, and nothing anywhere reports a failure: the first workflow succeeds
+ * and the work simply stops.
+ *
+ * So the split has to earn that risk, and there is exactly one case where it
+ * does: the downstream work ALREADY EXISTS. Handing off to a live workflow
+ * reuses something a team built and maintains, instead of growing a second
+ * copy of it that drifts. That is worth an event boundary.
+ *
+ * Authoring genuinely new work across two applications is not. One graph runs
+ * it correctly, start to finish, with no join to go missing.
+ */
+export function decideChain(
+  handoffs: ReadonlyArray<Handoff | null>,
+): ChainDecision {
+  const reuse = handoffs.filter((h) => h?.handledBy);
+  if (reuse.length > 0) {
+    const names = [...new Set(reuse.map((h) => h!.handledBy!))];
+    return {
+      chain: true,
+      reason: `${names.join(" and ")} already does part of this, so this hands off to it rather than repeating it.`,
+    };
+  }
+  return {
+    chain: false,
+    reason:
+      "Nothing downstream exists to reuse, so this stays one workflow that runs " +
+      "the whole way through rather than two halves joined by an event.",
+  };
+}
+
+/**
+ * Can this stretch of the flow actually publish the event that carries work on?
+ *
+ * Three answers, and the third one is the honest part.
+ *
+ *   "yes"      a step declares this event, or carries it in its settings
+ *   "no"       EVERY step here has declared what it publishes, and none of
+ *              them publish this. A real negative, safe to block on.
+ *   "unknown"  at least one step has not declared. It might publish this from
+ *              inside its own code; nothing here can tell.
+ *
+ * Before nodes declared `emits`, only "yes" and "unknown" were available and
+ * "unknown" covered almost everything — the check could see a handoff carried
+ * in config and nothing else. Every ASTRA and ORBIT node is still undeclared,
+ * so "unknown" remains the common answer there; it shrinks as they convert.
+ *
+ * The config fallback stays for exactly those undeclared nodes:
+ * `astra.route.decision` publishes whatever `onActionable` names, and that is
+ * visible in the definition even though the node has declared nothing.
+ */
+export function emitsEvent(args: {
+  nodes: readonly SplitStep[];
+  eventType: string;
+  /**
+   * Node key → what it declared. `null` for a node that has not declared,
+   * which is NOT the same as a node that declared an empty list.
+   */
+  emitsOf: ReadonlyMap<string, EmitDeclaration[] | null>;
+}): "yes" | "no" | "unknown" {
+  let allDeclared = true;
+
+  for (const n of args.nodes) {
+    const declared = args.emitsOf.get(n.impl) ?? null;
+
+    if (declared) {
+      if (resolveEmits(declared, n.config).includes(args.eventType)) return "yes";
+      continue;
+    }
+
+    allDeclared = false;
+    // Undeclared, so fall back to what the definition shows: a handoff the
+    // author wired as a setting is still a handoff.
+    for (const v of Object.values(n.config ?? {})) {
+      if (typeof v === "string" && v === args.eventType) return "yes";
+    }
+  }
+
+  return allDeclared ? "no" : "unknown";
+}
+
+/* ─────────────── what else a flow sets running, unasked ───────────────── */
+
+export type TriggeredWorkflow = {
+  /** The step in this flow that publishes. */
+  stepId: string;
+  impl: string;
+  eventType: string;
+  /** The workflow that event starts. */
+  graphKey: string;
+  /**
+   * Steps this flow runs that the triggered workflow ALSO runs.
+   *
+   * Non-empty is the bad case: the same work happens twice for one input,
+   * once here and once in the workflow this flow set going.
+   */
+  alsoRunsHere: string[];
+};
+
+/**
+ * Workflows this flow starts by publishing, whether the author meant to or not.
+ *
+ * THE THING NOBODY CAN SEE.
+ *
+ * A step that emits is not just recording something. Six of the nine SYNTRA
+ * nodes publish an event from inside `run`, several of those events are bound
+ * to a workflow, and a bound event starts that workflow as a separate run. So
+ * putting a step on a canvas can set a whole other workflow going, and until
+ * `emits` was declared there was no way to know from the definition.
+ *
+ * The live example, and the reason this exists: `syntra.jd.process` publishes
+ * `syntra.jd.parsed`, which is bound to `syntra.continuous.match`. A flow with
+ * BOTH `jd.process` and `continuous.match` in it therefore matches twice for
+ * one job — once as its own next step, once in the workflow the first step
+ * started. Two sets of results for one requirement, no error, nothing in a log
+ * saying anything happened at all.
+ *
+ * Reported rather than blocked. Triggering another workflow is often exactly
+ * the intention — that is what a handoff IS — and only the author knows which
+ * of the two they meant.
+ */
+export function detectTriggeredWorkflows(args: {
+  nodes: readonly SplitStep[];
+  /** Node key → what it declared. `null` for a node that has not declared. */
+  emitsOf: ReadonlyMap<string, EmitDeclaration[] | null>;
+  /** Active event → the graph it starts. */
+  boundTo: ReadonlyMap<string, string>;
+  /** Graph key → the node keys that workflow runs. */
+  implsOf: ReadonlyMap<string, readonly string[]>;
+  /** This flow's own key, so re-entering itself is not reported as a stranger. */
+  selfGraphKey?: string;
+}): TriggeredWorkflow[] {
+  const here = new Set(args.nodes.map((n) => n.impl));
+  const out: TriggeredWorkflow[] = [];
+
+  for (const node of args.nodes) {
+    const declared = args.emitsOf.get(node.impl);
+    // Undeclared is not silent — it is unknown, and guessing "publishes
+    // nothing" is exactly the error this whole field was added to stop.
+    if (!declared) continue;
+
+    for (const eventType of resolveEmits(declared, node.config)) {
+      const graphKey = args.boundTo.get(eventType);
+      if (!graphKey || graphKey === args.selfGraphKey) continue;
+
+      out.push({
+        stepId: node.id,
+        impl: node.impl,
+        eventType,
+        graphKey,
+        alsoRunsHere: (args.implsOf.get(graphKey) ?? []).filter((impl) =>
+          here.has(impl),
+        ),
+      });
+    }
+  }
+
+  return out;
 }

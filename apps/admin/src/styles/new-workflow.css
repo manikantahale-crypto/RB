@@ -326,6 +326,7 @@
   color: var(--status-info-fg);
 }
 .nw-seam-done,
+.nw-seam-broken,
 .nw-seam-open {
   margin: var(--space-3) 0 0;
   padding: var(--space-3);
@@ -342,6 +343,15 @@
   border: 1px solid var(--status-warning-border);
   background: var(--status-warning-bg);
   color: var(--status-warning-fg);
+}
+/* Louder than the warning beside it, and deliberately so. This one is not a
+   "check that" — every step has declared, none publishes the joining event,
+   and the second half provably never runs. The failure it describes leaves no
+   trace at all in production, so the only place it can be seen is here. */
+.nw-seam-broken {
+  border: 1px solid var(--status-danger-border);
+  background: var(--status-danger-bg);
+  color: var(--status-danger-fg);
 }
 
 /* The one warning worth stopping for: a trigger nothing has ever published.

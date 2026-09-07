@@ -335,8 +335,40 @@ export type Proposal = {
         } | null;
         /** A live workflow already answers this link's trigger. */
         alreadyBuilt: string | null;
+        /**
+         * Whether the previous half publishes the joining event.
+         *
+         * "no" is only ever returned when EVERY step in that half has declared
+         * what it publishes — a fact, not an absence of evidence. "unknown"
+         * means at least one step has not declared and may publish it from
+         * inside its own code.
+         */
+        handoffEmitted: "yes" | "no" | "unknown" | null;
       }>
     | null;
+  /** True when the flow crosses applications, split into a chain or not. */
+  spansModules: boolean;
+  /**
+   * Steps owned by another application and not marked shareable. Buildable and
+   * testable now; go-live needs the owner to share them first.
+   */
+  borrowedSteps: Array<{ step: string; ownedBy: string }>;
+  /**
+   * Workflows this flow sets running by publishing an event. `alsoRunsHere`
+   * non-empty means the same work happens twice — once here, once there.
+   */
+  triggeredWorkflows: Array<{
+    stepId: string;
+    impl: string;
+    eventType: string;
+    graphKey: string;
+    alsoRunsHere: string[];
+  }>;
+  /**
+   * Why it was stored as one workflow or as several. Null when the flow never
+   * left one application and there was nothing to decide.
+   */
+  chainDecision: { chain: boolean; reason: string } | null;
   suggestedTrigger: string | null;
   availableNodes: Array<{
     key: string;

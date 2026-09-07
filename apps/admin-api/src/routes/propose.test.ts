@@ -10,6 +10,7 @@
 import { describe, expect, it } from "vitest";
 import {
   compareCandidates,
+  nodesInRunOrder,
   detectHandoff,
   keepYourHalf,
   idfOver,
@@ -450,6 +451,74 @@ describe("an event that does not describe itself", () => {
     };
     expect([unrelated, vague].sort(compareCandidates)[0]!.eventType).toBe(
       "ASTRA_JOB_MATCH_DISCOVERED",
+    );
+  });
+});
+
+describe("nodesInRunOrder", () => {
+  /**
+   * The live regression. `compileLlmProposal` sorts nodes alphabetically for
+   * a stable checksum, and accept rebuilds the edges by chaining that array —
+   * so alphabetical order silently became execution order.
+   *
+   * These are the real step ids from the flow that kept going wrong.
+   */
+  const nodes = [
+    { id: "intake", impl: "astra.requirement.intake" },
+    { id: "match_candidates", impl: "syntra.continuous.match" },
+    { id: "process_jd", impl: "syntra.jd.process" },
+  ];
+  const edges: Array<[string, string]> = [
+    ["__start__", "intake"],
+    ["intake", "process_jd"],
+    ["process_jd", "match_candidates"],
+    ["match_candidates", "__end__"],
+  ];
+
+  it("puts parsing before matching, whatever the ids sort to", () => {
+    // Alphabetically `match_candidates` precedes `process_jd`, which is how a
+    // correct proposal became a workflow that matched a job description
+    // before anything had parsed it.
+    expect(nodesInRunOrder(nodes, edges).map((n) => n.id)).toEqual([
+      "intake",
+      "process_jd",
+      "match_candidates",
+    ]);
+  });
+
+  it("leaves a flow alone when the array already agrees with the edges", () => {
+    const already = [nodes[0]!, nodes[2]!, nodes[1]!];
+    expect(nodesInRunOrder(already, edges).map((n) => n.id)).toEqual([
+      "intake",
+      "process_jd",
+      "match_candidates",
+    ]);
+  });
+
+  it("keeps an unreachable step rather than dropping it", () => {
+    // An orphan is still somebody's step. Losing it here would be worse than
+    // showing it out of place, and it is how a step vanishes between the
+    // proposal and the stored workflow.
+    const orphaned = [...nodes, { id: "stray", impl: "syntra.bench.alert" }];
+    const out = nodesInRunOrder(orphaned, edges).map((n) => n.id);
+    expect(out).toEqual(["intake", "process_jd", "match_candidates", "stray"]);
+  });
+
+  it("returns the nodes untouched when there are no edges", () => {
+    // A placeholder proposal has no edges at all. Ordering by nothing must
+    // not reorder anything.
+    expect(nodesInRunOrder(nodes, []).map((n) => n.id)).toEqual([
+      "intake",
+      "match_candidates",
+      "process_jd",
+    ]);
+  });
+
+  it("does not lose steps or invent them", () => {
+    const out = nodesInRunOrder(nodes, edges);
+    expect(out).toHaveLength(nodes.length);
+    expect(new Set(out.map((n) => n.impl))).toEqual(
+      new Set(nodes.map((n) => n.impl)),
     );
   });
 });

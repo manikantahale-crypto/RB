@@ -299,10 +299,10 @@ export function NewWorkflowPage() {
                   </h2>
                   <div className="nw-card nw-seam">
                     <p className="nw-seam-lead">
-                      Applications hand work to each other by publishing an
-                      event — separate runs, separate versions, either side can
-                      change without breaking the other. That is why this is a
-                      chain rather than one workflow.
+                      {proposal.chainDecision?.reason ??
+                        "Applications hand work to each other by publishing an event."}{" "}
+                      Each half is its own run with its own version, so either
+                      side can change without breaking the other.
                     </p>
 
                     {proposal.chain.map((link, i) => (
@@ -361,6 +361,56 @@ export function NewWorkflowPage() {
                       </p>
                     ) : null}
 
+                    {/* ── THE ONE FAILURE NOBODY WOULD SEE ─────────────
+
+                        If the first half never publishes the joining event,
+                        the second half is never triggered: no error, no failed
+                        run, the work just stops.
+
+                        Two strengths of warning, because the evidence differs.
+                        When every step in that half has declared what it
+                        publishes, "it does not" is a fact and this is broken.
+                        When some step has not declared, it might publish from
+                        inside its own code and only the author can say.
+                    */}
+                    {proposal.chain.some((l) => l.handoffEmitted === "no") ? (
+                      <p className="nw-seam-broken" role="alert">
+                        <strong>This handoff will not happen.</strong> Every
+                        step in{" "}
+                        {proposal.chain
+                          .filter((l) => l.handoffEmitted === "no")
+                          .map((l) => l.startsWith!.fromModule.toUpperCase())
+                          .join(", ")}
+                        's half has declared what it publishes, and none of them
+                        publish{" "}
+                        {proposal.chain
+                          .filter((l) => l.handoffEmitted === "no")
+                          .map((l) => l.startsWith!.eventType)
+                          .join(", ")}
+                        . The next half would never run, and nothing would
+                        report a failure. Add a step that publishes it before
+                        this goes live.
+                      </p>
+                    ) : null}
+
+                    {proposal.chain.some((l) => l.handoffEmitted === "unknown") ? (
+                      <p className="nw-seam-open" role="status">
+                        <strong>Check the handoff is actually published.</strong>{" "}
+                        Some steps in{" "}
+                        {proposal.chain
+                          .filter((l) => l.handoffEmitted === "unknown")
+                          .map((l) => l.startsWith!.fromModule.toUpperCase())
+                          .join(", ")}
+                        's half have not declared what they publish, so whether{" "}
+                        {proposal.chain
+                          .filter((l) => l.handoffEmitted === "unknown")
+                          .map((l) => l.startsWith!.eventType)
+                          .join(", ")}{" "}
+                        is published cannot be checked here. If it is not, the
+                        next half never starts and nothing reports a failure.
+                      </p>
+                    ) : null}
+
                     {proposal.chain.some((l) => l.startsWith && !l.startsWith.exists) ? (
                       <p className="nw-seam-open" role="status">
                         <strong>One event does not exist yet.</strong> Every
@@ -371,6 +421,97 @@ export function NewWorkflowPage() {
                           .join(", ")}{" "}
                         is a change others live with. It is created when you
                         accept.
+                      </p>
+                    ) : null}
+                  </div>
+                </section>
+              ) : null}
+
+              {/* ── THE SAME WORK RUNNING TWICE ──────────────────────
+
+                  A step that publishes does not just record something: if the
+                  event it publishes is bound, it starts a whole other
+                  workflow. `syntra.jd.process` publishes `syntra.jd.parsed`,
+                  which starts `syntra.continuous.match` — so a flow holding
+                  both steps matches the same job twice, with no error and
+                  nothing in a log to say so.
+
+                  Above everything else on the screen because it is wrong,
+                  not merely worth knowing.
+              */}
+              {proposal.triggeredWorkflows.some((t) => t.alsoRunsHere.length) ? (
+                <section className="nw-block">
+                  <h2 className="nw-block-title">
+                    <span>⚠ Some of this would run twice</span>
+                    <span className="ge-muted">worth fixing before you build</span>
+                  </h2>
+                  <div className="nw-card nw-seam">
+                    {proposal.triggeredWorkflows
+                      .filter((t) => t.alsoRunsHere.length)
+                      .map((t) => (
+                        <p key={`${t.stepId}-${t.eventType}`} className="nw-seam-open">
+                          <strong>{t.impl}</strong> publishes{" "}
+                          <code>{t.eventType}</code> when it finishes, which
+                          starts <strong>{t.graphKey}</strong>. That workflow
+                          runs {t.alsoRunsHere.join(", ")} — and so does this
+                          one, so a single input gets processed twice.
+                          <br />
+                          Either drop {t.alsoRunsHere.length === 1 ? "that step" : "those steps"}{" "}
+                          here and let {t.graphKey} do that part, or keep{" "}
+                          {t.alsoRunsHere.length === 1 ? "it" : "them"} and retire
+                          that binding.
+                        </p>
+                      ))}
+                  </div>
+                </section>
+              ) : null}
+
+              {/* ── CROSSES APPLICATIONS, STILL ONE WORKFLOW ─────────
+
+                  Splitting is not free: two halves joined by an event can fail
+                  silently, because a join nobody publishes stops the work with
+                  no error anywhere. It is worth that risk only to reuse a
+                  workflow somebody already built. With nothing to reuse, one
+                  workflow runs the whole way through — and an author who sees
+                  two applications on the canvas should be told that is
+                  deliberate rather than left wondering.
+              */}
+              {proposal.spansModules && !proposal.chain ? (
+                <section className="nw-block">
+                  <h2 className="nw-block-title">
+                    <span>⛓ One workflow across applications</span>
+                    <span className="ge-muted">runs start to finish in one go</span>
+                  </h2>
+                  <div className="nw-card nw-seam">
+                    <p className="nw-seam-lead">
+                      {proposal.chainDecision?.reason} Its steps run in order in
+                      a single run, so each one can read what the steps before
+                      it produced.
+                    </p>
+
+                    {/* ── SAID NOW, NOT AT THE LAST GATE ───────────────
+
+                        Borrowing another application's step is the normal
+                        outcome of a flow that stays one workflow, and go-live
+                        refuses it unless the owner has marked it shareable.
+                        Finding that out after building the whole thing is the
+                        avoidable part, so it is said here. Nothing is blocked:
+                        this builds, tests and runs on screen 5 today.
+                    */}
+                    {proposal.borrowedSteps.length > 0 ? (
+                      <p className="nw-seam-open" role="status">
+                        <strong>
+                          Going live will need{" "}
+                          {[...new Set(proposal.borrowedSteps.map((b) => b.ownedBy))]
+                            .map((o) => o.toUpperCase())
+                            .join(" and ")}
+                          's agreement.
+                        </strong>{" "}
+                        {proposal.borrowedSteps.map((b) => b.step).join(", ")}{" "}
+                        {proposal.borrowedSteps.length === 1 ? "is" : "are"} theirs
+                        and not marked shareable — a borrowed step runs under its
+                        owner's database role, so it is their call. You can build
+                        and test this now either way.
                       </p>
                     ) : null}
                   </div>
