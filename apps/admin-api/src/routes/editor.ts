@@ -20,6 +20,7 @@ import {
   checksumOf,
 } from "@tekisho/graph-contract";
 import { withOrgScope } from "../with-org-scope.js";
+import { deriveChain } from "../lib/derive-chain.js";
 
 type FastifyLike = {
   get: (path: string, handler: any) => void;
@@ -282,6 +283,36 @@ export function registerEditorRoutes(app: FastifyLike, pool: Pool): void {
               ? [String(row.definition.entryInput)]
               : [];
 
+          /**
+           * WHAT THE TRIGGER CARRIES, so the canvas can say whether each step
+           * can actually get what it needs.
+           *
+           * Every step's input is built from the trigger payload, so this is
+           * the other half of that answer — the registry says what a step
+           * requires, this says what will be there. Without it the editor can
+           * only check the shape of a workflow, which is how a step needing a
+           * field its trigger never carries reaches production.
+           *
+           * `declared` is not the same as "empty". Eight event schemas carry a
+           * permissive placeholder, written at boot so ingress can accept an
+           * event nobody has described yet. Reading those as "carries nothing"
+           * would blame the workflow for a gap in the catalogue.
+           */
+          const chosen = (bound.length > 0 ? bound : pending)[0];
+          let triggerFields: string[] = [];
+          let triggerDeclared = false;
+          if (chosen) {
+            const ev = await client.query(
+              `SELECT payload_schema FROM event_schemas
+                WHERE event_type = $1 LIMIT 1`,
+              [chosen],
+            );
+            triggerFields = Object.keys(
+              (ev.rows[0] as any)?.payload_schema?.properties ?? {},
+            );
+            triggerDeclared = triggerFields.length > 0;
+          }
+
           return {
             graphKey,
             version: row.version,
@@ -295,6 +326,10 @@ export function registerEditorRoutes(app: FastifyLike, pool: Pool): void {
             triggers: bound.length > 0 ? bound : pending,
             triggerSource:
               bound.length > 0 ? "binding" : pending.length > 0 ? "draft" : "none",
+            /** Field names the trigger's payload schema declares. */
+            triggerFields,
+            /** False when that schema is a placeholder rather than a description. */
+            triggerDeclared,
             editable: row.status === "draft",
           };
         });
@@ -306,6 +341,67 @@ export function registerEditorRoutes(app: FastifyLike, pool: Pool): void {
       }
     },
   );
+
+  /**
+   * The workflows on either side of this one.
+   *
+   * A cross-application flow is stored as a chain: a workflow per application,
+   * joined by published events. The editor edits one link, and without this it
+   * would show no sign the others exist — an author who described one flow
+   * would open it and find half their work missing.
+   *
+   * DERIVED, NOT STORED. Nothing records that two workflows are one authored
+   * flow, and adding a column for it is a schema decision nobody has taken. It
+   * does not need one: a workflow's last step carries the handoff event in its
+   * config (`astra.route.decision` has `onActionable: syntra.jd.normalized`),
+   * and that event is bound to the workflow downstream. So the chain is
+   * recoverable from what is already there.
+   *
+   * The honest limit: this finds a neighbour only where the handoff event
+   * appears in a node's config. A node that emits from inside its own code
+   * says so nowhere a query can reach, so that link stays invisible until the
+   * node contract can declare what it emits.
+   */
+  /**
+   * The workflows on either side of this one.
+   *
+   * Derived rather than stored — see `lib/derive-chain.ts` for how, and for
+   * the one kind of link it cannot see.
+   */
+  app.get("/workflows/:graphKey/chain", async (req: any, reply: any) => {
+    const graphKey = String(req.params.graphKey ?? "");
+    try {
+      const { rows: bindings } = await pool.query(
+        `SELECT event_type, graph_key FROM graph_event_bindings
+          WHERE status = 'active'`,
+      );
+      // Drafts too: a chain accepted a minute ago has no bindings yet, and a
+      // strip that appeared only after go-live would be missing exactly when
+      // somebody is checking their work.
+      const { rows: graphs } = await pool.query(
+        `SELECT DISTINCT ON (graph_key) graph_key, definition
+           FROM graph_definitions
+          WHERE status IN ('active', 'draft')
+          ORDER BY graph_key, (status = 'active') DESC, version DESC`,
+      );
+      return deriveChain({
+        graphKey,
+        graphs: graphs.map((g: any) => ({
+          graphKey: String(g.graph_key),
+          definition: g.definition,
+        })),
+        bindings: bindings.map((b: any) => ({
+          eventType: String(b.event_type),
+          graphKey: String(b.graph_key),
+        })),
+      });
+    } catch (err) {
+      req.log?.error?.(err);
+      return reply
+        .code(500)
+        .send({ error: "chain_load_failed", message: String(err) });
+    }
+  });
 
   /**
    * PUT a draft's topology.

@@ -187,6 +187,9 @@ describe("compareCandidates", () => {
     description: "",
     producedWhen: "",
     matchedOn: ["requirement"],
+    // Most events describe themselves; the ones that do not are the exception
+    // and each test below says so explicitly.
+    declaresPayload: true,
   };
 
   it("puts a live event above a dead one on an equal score", () => {
@@ -392,5 +395,61 @@ describe("keepYourHalf", () => {
       ["__start__", "match"],
       ["match", "__end__"],
     ]);
+  });
+});
+
+describe("an event that does not describe itself", () => {
+  const base = {
+    description: "",
+    producedWhen: "",
+    matchedOn: ["job", "match"],
+    declaresPayload: true,
+  };
+
+  it("loses to one that does, on an equal score", () => {
+    // The real case: for "when a job requirement arrives and finishes intake,
+    // match it against our candidates", ASTRA_JOB_MATCH_DISCOVERED wins on the
+    // words JOB and MATCH — a legacy event with an empty schema, so the
+    // workflow it starts can never have its inputs checked.
+    const vague = {
+      ...base,
+      eventType: "ASTRA_JOB_MATCH_DISCOVERED",
+      score: 1,
+      publishCount: 253,
+      everPublished: true,
+      declaresPayload: false,
+    };
+    const described = {
+      ...base,
+      eventType: "astra.requirement.received",
+      score: 1,
+      publishCount: 1500,
+      everPublished: true,
+    };
+    expect([vague, described].sort(compareCandidates)[0]!.eventType).toBe(
+      "astra.requirement.received",
+    );
+  });
+
+  it("is still offered when it is the only thing that matches", () => {
+    // Halved, never excluded — sometimes it genuinely is the only door.
+    const vague = {
+      ...base,
+      eventType: "ASTRA_JOB_MATCH_DISCOVERED",
+      score: 1,
+      publishCount: 253,
+      everPublished: true,
+      declaresPayload: false,
+    };
+    const unrelated = {
+      ...base,
+      eventType: "orbit.placement.confirmed",
+      score: 0.1,
+      publishCount: 10,
+      everPublished: true,
+    };
+    expect([unrelated, vague].sort(compareCandidates)[0]!.eventType).toBe(
+      "ASTRA_JOB_MATCH_DISCOVERED",
+    );
   });
 });

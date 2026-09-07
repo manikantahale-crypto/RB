@@ -61,6 +61,12 @@
  */
 import type { Pool } from "pg";
 import { withOrgScope } from "../with-org-scope.js";
+import { MODULE_REGISTRY } from "@tekisho/node-contract";
+import {
+  resolveHandoff,
+  splitByModule,
+  type ModuleFacts,
+} from "../lib/split-cross-module.js";
 import { checksumOf } from "@tekisho/graph-contract";
 import {
   GenerationFailedError,
@@ -287,6 +293,16 @@ type Scored = {
   /** How many times this event has actually been published. */
   publishCount: number;
   everPublished: boolean;
+  /**
+   * Whether the event says what it carries.
+   *
+   * Eight schemas are placeholders written at boot so ingress could accept
+   * something nobody had described. A workflow triggered by one of those
+   * cannot have its inputs checked, in the editor or at go-live — so it is a
+   * worse choice than any event that describes itself, however well the words
+   * happen to line up.
+   */
+  declaresPayload: boolean;
 };
 
 /**
@@ -311,12 +327,23 @@ type Scored = {
  */
 export function compareCandidates(a: Scored, b: Scored): number {
   /**
-   * Never-published events are halved rather than excluded. Excluding them
-   * would bury an event registered thirty seconds ago in the drawer, which is
-   * a legitimate thing to trigger on; leaving them at full weight is how a
-   * dead event with a coincidental word overlap wins a tie against a live one.
+   * Two penalties, neither of them an exclusion.
+   *
+   * Never-published events are halved. Excluding them would bury an event
+   * registered thirty seconds ago in the drawer, which is a legitimate thing
+   * to trigger on; leaving them at full weight is how a dead event with a
+   * coincidental word overlap wins a tie against a live one.
+   *
+   * Events that declare no payload are halved for a different reason. Word
+   * overlap has no sense of quality: for "when a job requirement arrives and
+   * finishes intake, match it against our candidates",
+   * `ASTRA_JOB_MATCH_DISCOVERED` wins on the words JOB and MATCH — a legacy
+   * event with an empty schema, so the workflow it starts can never have its
+   * inputs checked. It is still offered, because sometimes it is genuinely the
+   * only door; it just should not beat an event that describes itself.
    */
-  const weight = (c: Scored) => c.score * (c.everPublished ? 1 : 0.5);
+  const weight = (c: Scored) =>
+    c.score * (c.everPublished ? 1 : 0.5) * (c.declaresPayload ? 1 : 0.5);
   const byWeight = weight(b) - weight(a);
   if (byWeight !== 0) return byWeight;
   const byLiveness = b.publishCount - a.publishCount;
@@ -675,6 +702,7 @@ export function registerProposeRoutes(
           `SELECT s.event_type,
                   s.description,
                   s.produced_when,
+                  s.payload_schema,
                   coalesce(p.n, 0)::int AS publish_count
              FROM event_schemas s
              LEFT JOIN (
@@ -710,6 +738,8 @@ export function registerProposeRoutes(
               corpus.length,
             );
             const publishCount = Number(e.publish_count ?? 0);
+            const declaresPayload =
+              Object.keys(e.payload_schema?.properties ?? {}).length > 0;
             return {
               eventType: e.event_type,
               description,
@@ -718,6 +748,7 @@ export function registerProposeRoutes(
               matchedOn,
               publishCount,
               everPublished: publishCount > 0,
+              declaresPayload,
             };
           }),
           { adminId: readAdminId(req.headers), orgId: readOrgId(req.headers) },
@@ -741,8 +772,7 @@ export function registerProposeRoutes(
           `SELECT key, title, description, side_effect, source, input_schema,
                   output_schema, config_schema, module, shareable
              FROM node_registry
-            WHERE module = $1 OR shareable = true
-            ORDER BY (module = $1) DESC, key`,
+            ORDER BY (module = $1) DESC, module, key`,
           [module],
         );
 
@@ -793,14 +823,45 @@ export function registerProposeRoutes(
           fallbackReason: string | null;
         };
 
+        /**
+         * One step to start from when the model could not answer.
+         *
+         * It used to be "the first contract node in the list", which is
+         * alphabetical — a request about matching job descriptions came back
+         * with `syntra.bench.alert` and a `matchThreshold` stamped on a node
+         * that may not even take one. Arbitrary AND wrong is worse than
+         * arbitrary.
+         *
+         * So: prefer a step whose settings actually accept what was read out
+         * of the description. "Accept at 92" gives `matchThreshold`, and the
+         * node that declares it is the one the request was about. Falling back
+         * to the old behaviour when nothing was extracted, because then there
+         * is genuinely nothing to go on.
+         */
         const placeholder = () => {
-          const first = nodeRows.find((n: any) => n.source === "contract") ?? nodeRows[0];
           const config: Record<string, unknown> = {};
           for (const c of extracted) config[c.field] = c.value;
+
+          const wanted = extracted.map((c) => c.field);
+          const takesConfig = (n: any) =>
+            wanted.length > 0 &&
+            wanted.every((f) =>
+              Boolean(n.config_schema?.properties?.[f]),
+            );
+
+          const first =
+            nodeRows.find((n: any) => n.source === "contract" && takesConfig(n)) ??
+            nodeRows.find((n: any) => n.source === "contract") ??
+            nodeRows[0];
+
           const id = String(first?.key ?? "step").split(".").pop() ?? "step";
-          return first
-            ? [{ id, impl: String(first.key), config }]
-            : [];
+          // Only settings the chosen step actually declares. Stamping a field
+          // it does not take would fail its own input check at run time.
+          const kept: Record<string, unknown> = {};
+          for (const [k, v] of Object.entries(config)) {
+            if (first?.config_schema?.properties?.[k]) kept[k] = v;
+          }
+          return first ? [{ id, impl: String(first.key), config: kept }] : [];
         };
 
         if (!opts.llm) {
@@ -823,26 +884,24 @@ export function registerProposeRoutes(
               events,
               graphKey: provisionalKey,
               /**
-               * THE SAME PALETTE THE EDITOR USES, AND THE SAME SCHEMAS THE
+               * EVERY APPLICATION'S STEPS, DESCRIBED FROM THE SCHEMAS THE
                * RUNTIME ENFORCES.
                *
-               * `nodeRows` is already `WHERE module = $1 OR shareable = true`,
-               * so this applies the module rule to generation rather than only
-               * to the picker — the model cannot reach a node it was never
-               * shown, which is how one sentence used to produce one graph
-               * spanning two applications.
+               * Unrestricted on purpose. An author should be able to describe
+               * work that crosses applications in one sentence, so the model
+               * has to be able to answer in one graph — and that graph is
+               * split into a chain of per-application workflows on the way to
+               * storage, which is where the boundary actually matters.
                *
-               * Passing the ROWS rather than their keys is the second half.
-               * The prompt used to describe each node from a hand-written
-               * catalogue that has drifted from the contracts: it calls
-               * `syntra.match.process`'s `jobId` required when it is optional,
-               * and never mentions `requirement_id`, which is the field the
-               * live ASTRA handoff carries. A model given the wrong field
-               * names writes a graph that passes every check and still cannot
-               * move data through itself.
+               * Scoping this to one module (as it briefly was) made a mixed
+               * graph impossible, which fixed the routing problem by removing
+               * the feature. The split fixes it while keeping the feature.
                *
-               * The seam detection below still runs. It is the check, not the
-               * mechanism.
+               * The schemas come from `node_registry` rather than the prose
+               * catalogue: that has drifted, calling `syntra.match.process`'s
+               * `jobId` required when it is optional and never mentioning
+               * `requirement_id`, which is the field the live ASTRA handoff
+               * carries.
                */
               nodes: nodeRows.map((n: any) => ({
                 key: String(n.key),
@@ -880,9 +939,24 @@ export function registerProposeRoutes(
              * unreachable. Both are reported; neither is hidden behind a
              * placeholder that looks like a considered suggestion.
              */
-            const why =
-              err instanceof GenerationFailedError
-                ? `The model's answer was rejected: ${err.message}`
+            /**
+             * THREE DIFFERENT FAILURES, THREE DIFFERENT SENTENCES.
+             *
+             * These used to collapse into "the model's answer was rejected"
+             * plus whatever the provider said, verbatim. For a rate limit that
+             * is wrong twice over: there was no answer to reject, and the
+             * reader gets a quota URL in the middle of a sentence about their
+             * workflow. Somebody reads that and starts rewriting a description
+             * that was never the problem.
+             */
+            const transient =
+              err instanceof GenerationFailedError && err.transient;
+            const why = transient
+              ? "The AI provider is busy or over its rate limit right now. " +
+                "Nothing is wrong with your description — press Generate again " +
+                "in a moment."
+              : err instanceof GenerationFailedError
+                ? `The model answered and the answer was refused: ${err.message}`
                 : `The model could not be reached: ${
                     err instanceof Error ? err.message : String(err)
                   }`;
@@ -899,12 +973,21 @@ export function registerProposeRoutes(
           }
         }
 
-        /* ── does this one sentence describe TWO workflows? ────────────
+        /* ── one flow in, the workflows that will run out ──────────────
          *
-         * Ownership comes from the WHOLE registry, not the palette above. The
-         * palette is already narrowed to `module = $1 OR shareable`, so asking
-         * it who owns a foreign step would answer "nobody" for exactly the
-         * steps that matter.
+         * An author may cross applications freely: "when a requirement
+         * arrives and finishes intake, match it against our candidates" is one
+         * sentence and one intention, and making somebody author it twice in
+         * two places is the tool failing them.
+         *
+         * What cannot cross is the STORED graph. One version pin covering two
+         * teams' releases, a retry that re-runs another application's writes,
+         * a borrowed step running under its owner's database role — each is a
+         * real consequence, and the live system already avoids all three by
+         * running this exact shape as a chain.
+         *
+         * So the flow is split here, on the way to storage, and the chain is
+         * what the screen shows.
          */
         const { rows: ownerRows } = await client.query(
           `SELECT key, module, shareable FROM node_registry`,
@@ -917,53 +1000,103 @@ export function registerProposeRoutes(
             .filter((r: any) => r.shareable === true)
             .map((r: any) => String(r.key)),
         );
-        const eventTypes = new Set<string>(
+        const knownEvents = new Set<string>(
           eventRows.map((e: any) => String(e.event_type)),
         );
 
-        const handoff =
+        const { rows: activeBindings } = await client.query(
+          `SELECT event_type, graph_key FROM graph_event_bindings
+            WHERE status = 'active'`,
+        );
+        const boundTo = new Map<string, string>(
+          activeBindings.map((b: any) => [
+            String(b.event_type),
+            String(b.graph_key),
+          ]),
+        );
+
+        const factsFor = (key: string): ModuleFacts => {
+          const m = MODULE_REGISTRY.find((x) => x.key === key);
+          return {
+            key,
+            handsOff: m?.handsOff ?? [],
+            frontDoor: m?.frontDoor ?? [],
+          };
+        };
+
+        const split =
           graph.source === "model"
-            ? detectHandoff({
-                module,
+            ? splitByModule({
                 nodes: graph.nodes,
                 edges: graph.edges,
                 moduleOf,
                 shareable: shareableKeys,
-                eventTypes,
               })
             : null;
 
         /**
-         * Who already answers the handoff event.
-         *
-         * This is the whole payoff. For the live ASTRA → SYNTRA case the answer
-         * is "somebody already built that half", which is a better result than
-         * anything that could have been generated — and it is the same query
-         * the trigger check above already runs, pointed at a different event.
+         * The chain: a workflow per application, and the event between each
+         * pair. Where an event already starts a live workflow, that half needs
+         * building by nobody — which is the best possible answer to half a
+         * request, and the reason this is worth computing rather than assuming.
          */
-        const handoffHandledBy = handoff?.viaEvent
-          ? (
-              await client.query(
-                `SELECT graph_key, module_queue FROM graph_event_bindings
-                  WHERE event_type = $1 AND status = 'active'`,
-                [handoff.viaEvent],
-              )
-            ).rows.map((r: any) => ({
-              graphKey: String(r.graph_key),
-              moduleQueue: r.module_queue ?? null,
-            }))
-          : [];
+        const chain =
+          split && !split.singleModule
+            ? split.segments.map((seg, i) => {
+                const prev = split.segments[i - 1];
+                const startsWith = prev
+                  ? resolveHandoff(
+                      factsFor(prev.module),
+                      factsFor(seg.module),
+                      knownEvents,
+                      boundTo,
+                    )
+                  : null;
+                return {
+                  module: seg.module,
+                  /** Yours when it is the module you were authoring in. */
+                  yours: seg.module === module,
+                  steps: seg.stepIds,
+                  /**
+                   * The steps themselves, not just their ids.
+                   *
+                   * `graph` below keeps only the FIRST segment, so a caller
+                   * reconstructing a later link from `graph.nodes` finds
+                   * nothing and has to invent something. It did, briefly:
+                   * accepting a chain created the second workflow with `impl`
+                   * set to the step id, which is not a runnable node at all.
+                   */
+                  nodes: seg.stepIds
+                    .map((id) => graph.nodes.find((n) => n.id === id))
+                    .filter((n): n is NonNullable<typeof n> => Boolean(n)),
+                  edges: seg.edges,
+                  /** The handoff that starts this link, null for the first. */
+                  startsWith,
+                  /**
+                   * Nothing to build: a live workflow already answers the event
+                   * that would start this half.
+                   */
+                  alreadyBuilt: startsWith?.handledBy ?? null,
+                };
+              })
+            : null;
 
         /**
-         * Their half is REMOVED, not left in as a suggestion.
+         * The single-graph view keeps ONLY the first segment.
          *
-         * A graph that silently contains another application's steps is the
-         * defect; leaving it on screen with a warning beside it invites
-         * somebody to accept it anyway.
+         * Not because the rest is unwanted — the chain above carries it — but
+         * because `graph` is what the editor and Accept have always meant by
+         * "the workflow", and quietly widening that to mean several would
+         * break both. The chain is the new thing and says so separately.
          */
-        if (handoff) {
-          const trimmed = keepYourHalf(graph.nodes, handoff.yourSteps);
-          graph = { ...graph, nodes: trimmed.nodes, edges: trimmed.edges };
+        if (split && !split.singleModule && split.segments[0]) {
+          const first = split.segments[0];
+          const keep = new Set(first.stepIds);
+          graph = {
+            ...graph,
+            nodes: graph.nodes.filter((n) => keep.has(n.id)),
+            edges: first.edges,
+          };
         }
 
         // ── the ledger: every line points at something checkable ────────
@@ -1069,48 +1202,47 @@ export function registerProposeRoutes(
            * as its own line per item rather than folded into a footnote.
            */
           /**
-           * THE SPLIT. Said in the author's own terms: which half is theirs,
-           * which application owns the rest, and the event that joins them.
+           * THE CHAIN. Said in the author's own terms: one description turned
+           * out to describe work in more than one application, so here is
+           * every workflow it becomes and the event joining each pair.
            */
-          if (handoff) {
-            const theirs = handoff.theirSteps.join(" → ");
+          if (chain && chain.length > 1) {
             ledger.push({
               kind: "SPLIT",
-              text:
-                `this describes two workflows — ${handoff.otherModule.toUpperCase()} owns ` +
-                `${handoff.theirSteps.length} of the steps`,
-              citation:
-                `${theirs} belong${handoff.theirSteps.length === 1 ? "s" : ""} to ` +
-                `${handoff.otherModule.toUpperCase()}, so ${
-                  handoff.theirSteps.length === 1 ? "it was" : "they were"
-                } removed. ` +
-                (handoff.viaEvent
-                  ? `The two halves join at ${handoff.viaEvent} — two runs, two versions, ` +
-                    "either side can change without the other."
-                  : "No published event joining the two halves was named, so the " +
-                    "handoff has to be chosen by hand."),
+              text: `this becomes ${chain.length} workflows, one per application`,
+              citation: chain
+                .map((c) => `${c.module.toUpperCase()}: ${c.steps.join(" → ")}`)
+                .join("  ·  "),
               source: "system",
             });
 
-            if (handoffHandledBy.length > 0) {
+            for (const link of chain) {
+              if (!link.startsWith) continue;
+              const h = link.startsWith;
+
+              if (link.alreadyBuilt) {
+                ledger.push({
+                  kind: "MATCHED",
+                  text: `${link.module.toUpperCase()}'s half already exists — ${link.alreadyBuilt}`,
+                  citation:
+                    `${h.eventType} is already bound and running, so nothing needs ` +
+                    `building on that side.`,
+                  source: "system",
+                });
+                continue;
+              }
+
               ledger.push({
-                kind: "MATCHED",
-                text: `that half already exists — ${handoffHandledBy
-                  .map((h) => h.graphKey)
-                  .join(", ")}`,
-                citation:
-                  `${handoff.viaEvent} is already bound and running, so there is nothing ` +
-                  "to build on that side. Your workflow is the other half.",
-                source: "system",
-              });
-            } else if (handoff.viaEvent) {
-              ledger.push({
-                kind: "SKIPPED",
-                text: `nothing answers ${handoff.viaEvent} yet`,
-                citation:
-                  "The handoff event exists in the catalogue but no active workflow is " +
-                  "bound to it, so the other half still has to be built — as its own " +
-                  "workflow, by whoever owns that application.",
+                kind: h.exists ? "CHOSE" : "SKIPPED",
+                text: h.exists
+                  ? `handoff ${h.fromModule.toUpperCase()} → ${h.toModule.toUpperCase()} via ${h.eventType}`
+                  : `no event joins ${h.fromModule.toUpperCase()} to ${h.toModule.toUpperCase()} yet`,
+                citation: h.exists
+                  ? `${h.eventType} already exists in the catalogue, so both halves ` +
+                    `keep their own version and either can change without the other.`
+                  : `Nothing in the catalogue joins these two, so ${h.eventType} would ` +
+                    `have to be registered before this chain can run. Adding to a ` +
+                    `shared catalogue is something every application lives with.`,
                 source: "system",
               });
             }
@@ -1163,20 +1295,13 @@ export function registerProposeRoutes(
            */
           graph,
           /**
-           * Null in the ordinary single-owner case, and the screen shows
-           * nothing — a concept nobody needs today should cost them no
-           * attention.
+           * The workflows this description becomes, in the order the work
+           * flows through them.
+           *
+           * Null when it stayed inside one application, which is the ordinary
+           * case — a concept nobody needs today should cost them no attention.
            */
-          handoff: handoff
-            ? {
-                viaEvent: handoff.viaEvent,
-                otherModule: handoff.otherModule,
-                yourHalf: handoff.yourHalf,
-                theirSteps: handoff.theirSteps,
-                yourSteps: handoff.yourSteps,
-                handledBy: handoffHandledBy,
-              }
-            : null,
+          chain,
           suggestedTrigger: best?.eventType ?? null,
           availableNodes: nodeRows.map((n: any) => ({
             key: n.key,
@@ -1217,6 +1342,193 @@ export function registerProposeRoutes(
    * Creates the DRAFT. It cannot run — the router reads active only — and the
    * trigger travels inside the definition until go-live creates the binding.
    */
+  /**
+   * POST /workflows/accept-chain
+   * { links: [{ graphKey, module, triggerEventType, registerTrigger?, nodes }],
+   *   description }
+   *
+   * Accepts a flow that crosses applications: one DRAFT per application, and
+   * any handoff event that does not exist yet registered on the way.
+   *
+   * WHY THIS IS SEPARATE FROM /accept RATHER THAN A FLAG ON IT.
+   *
+   * Accepting several workflows is a different promise from accepting one. It
+   * writes to the shared event catalogue, it creates workflows in applications
+   * the author does not own, and it either all happens or none of it does. A
+   * boolean on the single-workflow endpoint would hide all three behind a
+   * parameter somebody could set by accident.
+   *
+   * NOTHING GOES LIVE. Every workflow is a draft, and a draft cannot run — the
+   * router reads active bindings only. The chain becomes real one go-live at a
+   * time, which is also the point at which each application's gate runs.
+   */
+  app.post("/workflows/accept-chain", async (req: any, reply: any) => {
+    const body = req.body ?? {};
+    const links = Array.isArray(body.links) ? body.links : [];
+
+    if (links.length < 2) {
+      return reply.code(400).send({
+        error: "not_a_chain",
+        message:
+          "A chain is two or more workflows. Use /workflows/accept for one.",
+      });
+    }
+    for (const link of links) {
+      const key = String(link.graphKey ?? "").trim();
+      if (!/^[a-z0-9]+(\.[a-z0-9-]+)+$/.test(key)) {
+        return reply.code(400).send({
+          error: "graph_key_convention",
+          message: `"${key}" should look like module.thing.workflow — lowercase, dotted.`,
+        });
+      }
+      if (!String(link.triggerEventType ?? "").trim()) {
+        return reply.code(400).send({
+          error: "trigger_required",
+          message: `${key} has no trigger, so nothing could ever start it.`,
+        });
+      }
+      if (!Array.isArray(link.nodes) || link.nodes.length === 0) {
+        return reply.code(400).send({
+          error: "no_steps",
+          message: `${key} has no steps.`,
+        });
+      }
+    }
+
+    try {
+      return await withOrgScope(pool, readOrgId(req.headers), async (client) => {
+        /**
+         * ALL OR NOTHING.
+         *
+         * Half a chain is worse than none: workflows that hand off to
+         * something that was never created, and a new event in the shared
+         * catalogue that nothing publishes. One transaction, so a failure on
+         * the third link leaves no trace of the first two.
+         */
+        await client.query("BEGIN");
+        try {
+          const taken: string[] = [];
+          for (const link of links) {
+            const exists = await client.query(
+              `SELECT 1 FROM graph_definitions WHERE graph_key = $1 LIMIT 1`,
+              [String(link.graphKey)],
+            );
+            if (exists.rowCount) taken.push(String(link.graphKey));
+          }
+          if (taken.length > 0) {
+            await client.query("ROLLBACK");
+            return reply.code(409).send({
+              error: "graph_key_taken",
+              message: `${taken.join(", ")} already exist${taken.length === 1 ? "s" : ""}. Rename before accepting the chain.`,
+            });
+          }
+
+          const createdEvents: string[] = [];
+          const created: Array<{ graphKey: string; module: string }> = [];
+
+          for (const link of links) {
+            const graphKey = String(link.graphKey).trim();
+            const trigger = String(link.triggerEventType).trim();
+
+            /**
+             * A handoff nobody has declared yet.
+             *
+             * Registered permissively — `additionalProperties: true` — because
+             * what it carries is decided by whoever emits it, and guessing a
+             * strict shape now would start rejecting the very events this
+             * chain is meant to produce. The same reason the bootstrap
+             * registers placeholder schemas rather than inventing fields.
+             */
+            if (link.registerTrigger === true) {
+              const already = await client.query(
+                `SELECT 1 FROM event_schemas WHERE event_type = $1 LIMIT 1`,
+                [trigger],
+              );
+              if (!already.rowCount) {
+                await client.query(
+                  `INSERT INTO event_schemas (
+                     event_type, schema_version, description, payload_schema,
+                     envelope_fields, produced_when, primary_consumer, status
+                   )
+                   SELECT $1, '1.0', $2,
+                     '{"type":"object","additionalProperties":true}'::jsonb,
+                     e.envelope_fields, $3, $4, 'ACTIVE'
+                   FROM event_schemas e WHERE e.schema_version = '1.0' LIMIT 1`,
+                  [
+                    trigger,
+                    `Handoff from ${String(link.fromModule ?? "one application")} to ${String(link.module ?? "another")}, created with a workflow chain.`,
+                    String(link.fromModule ?? "another application"),
+                    graphKey,
+                  ],
+                );
+                createdEvents.push(trigger);
+              }
+            }
+
+            const nodes = link.nodes as Array<any>;
+            const edges: Array<[string, string]> = [
+              ["__start__", String(nodes[0].id)],
+            ];
+            for (let i = 0; i < nodes.length - 1; i += 1) {
+              edges.push([String(nodes[i].id), String(nodes[i + 1].id)]);
+            }
+            edges.push([String(nodes[nodes.length - 1].id), "__end__"]);
+
+            const definition = {
+              graphKey,
+              // The trigger lives in the definition because a draft binding
+              // cannot be stored. For links after the first this IS the
+              // handoff, which is what makes the chain recoverable later.
+              entryInput: trigger,
+              nodes: nodes.map((n) => ({
+                id: String(n.id),
+                impl: String(n.impl),
+                config: n.config ?? {},
+              })),
+              edges,
+            };
+
+            await client.query(
+              `INSERT INTO graph_definitions
+                 (id, org_id, graph_key, version, definition, checksum, status, created_by)
+               VALUES ($1, NULL, $2, 1, $3::jsonb, $4, 'draft', $5)`,
+              [
+                `${graphKey}@1`,
+                graphKey,
+                JSON.stringify(definition),
+                checksumOf(definition),
+                req.headers["x-admin-id"] ?? "admin-local",
+              ],
+            );
+            created.push({ graphKey, module: String(link.module ?? "") });
+          }
+
+          await client.query("COMMIT");
+          return {
+            created,
+            createdEvents,
+            status: "draft",
+            /**
+             * Said plainly because it is the thing people assume otherwise:
+             * accepting a chain changes nothing about what runs today.
+             */
+            note:
+              "Every workflow is a draft. Nothing runs until each one goes " +
+              "live, and each go-live is checked on its own.",
+          };
+        } catch (err) {
+          await client.query("ROLLBACK");
+          throw err;
+        }
+      });
+    } catch (err: any) {
+      req.log?.error?.(err);
+      return reply
+        .code(500)
+        .send({ error: "accept_chain_failed", message: String(err) });
+    }
+  });
+
   app.post("/workflows/accept", async (req: any, reply: any) => {
     const body = req.body ?? {};
     const graphKey = String(body.graphKey ?? "").trim();

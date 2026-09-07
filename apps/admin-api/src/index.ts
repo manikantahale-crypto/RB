@@ -27,6 +27,7 @@ import { registerAgentRoutes } from "./routes/agents.js";
 import { registerCatalogAndCreateRoutes } from "./routes/catalog.js";
 import { registerBuilderOverviewRoutes } from "./routes/builder-overview.js";
 import { registerRuntimeRoutes } from "./routes/runtime.js";
+import { registerLiveTestRoutes } from "./routes/live-test.js";
 import { registerWorkflowRoutes } from "./routes/workflows.js";
 import { registerEditorRoutes } from "./routes/editor.js";
 import { registerNodeTestRoutes } from "./routes/node-test.js";
@@ -103,6 +104,7 @@ async function main(): Promise<void> {
   registerRuntimeRoutes(app, migratorPool);
   registerWorkflowRoutes(app, pool);
   registerEditorRoutes(app, pool);
+  registerLiveTestRoutes(app, pool);
   registerNodeTestRoutes(app, migratorPool);
   registerEventCatalogRoutes(app, pool);
   registerProposeRoutes(app, pool, { llm });
