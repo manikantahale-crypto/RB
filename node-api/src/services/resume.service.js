@@ -2,7 +2,7 @@ const { withTransaction } = require("../config/db");
 const candidateRepo = require("../repositories/candidate.repository");
 const resumeRepo = require("../repositories/resume.repository");
 const { extractText } = require("./extraction/fileExtractor");
-const { checkDuplicateResume } = require("../modules/syntra/duplicateValidation");
+const { checkDuplicateResume } = require("../validation/duplicateValidation");
 const { getBoss } = require("../config/queue");
 const log = require("../utils/logger");
 const platformEvents = require("./platformEvents.service");
@@ -93,22 +93,14 @@ async function createResume({ fullName, email, phone, file, userId }) {
 
 async function bulkSaveCandidates(candidateIds, userId) {
   const candidateRepo = require("../repositories/candidate.repository");
-  const { runForResume } = require("../modules/syntra/matching/funnel");
   const count = await candidateRepo.saveCandidatesBulk(candidateIds, userId);
   if (count > 0) {
-    log.info(`[resume.save] ${count} candidate(s) activated — re-running match funnel`);
+    log.info(`[resume.save] ${count} candidate(s) activated — announcing`);
+    // The resume lookup moved into the worker with the funnel run it feeds:
+    // both are SYNTRA's business, and neither should decide whether saving a
+    // candidate succeeds.
     for (const candidateId of candidateIds) {
-      candidateRepo
-        .getCurrentResumeId(candidateId, userId)
-        .then((resumeId) => {
-          if (!resumeId) return null;
-          return runForResume(resumeId);
-        })
-        .catch((err) => {
-          log.error(
-            `[resume.save] funnel failed candidate=${candidateId}: ${err.message}`
-          );
-        });
+      await getBoss().send("candidate.activated", { candidateId, userId });
     }
   }
   return count;

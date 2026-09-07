@@ -10,6 +10,7 @@ const { registerJdUploadedWorker } = require("./modules/syntra/workers/jdUploade
 const {
   registerResumeUploadedWorker,
 } = require("./modules/syntra/workers/resumeUploaded.worker");
+const { registerActivationWorkers } = require("./modules/syntra/workers/activation.worker");
 const {
   registerMatchRequestedWorker,
 } = require("./modules/syntra/workers/matchRequested.worker");
@@ -32,6 +33,7 @@ async function bootstrapPgBossWorkers() {
     await registerJdUploadedWorker(boss);
     await registerResumeUploadedWorker(boss);
     await registerMatchRequestedWorker(boss);
+    await registerActivationWorkers(boss);
     await registerAstraRequirementReceivedWorker(boss);
     await registerAstraEmailPollerWorker(boss);
   });

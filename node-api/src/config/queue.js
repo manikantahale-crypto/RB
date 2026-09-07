@@ -7,6 +7,10 @@ const QUEUES = [
   "jd.uploaded",
   "resume.uploaded",
   "match.requested",
+  // Facts, published when entities are activated in bulk. SYNTRA answers them
+  // by re-running its funnel; see modules/syntra/workers/activation.worker.
+  "job.activated",
+  "candidate.activated",
   "module.astra.requirement",
   "astra.requirement.normalized",
   "astra.email.poll",

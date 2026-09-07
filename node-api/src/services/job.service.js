@@ -35,14 +35,14 @@ async function createJob({ title, file, userId }) {
 
 async function bulkSaveJobs(jobIds, userId) {
   const jobRepo = require("../repositories/job.repository");
-  const { runForJob } = require("../modules/syntra/matching/funnel");
   const count = await jobRepo.saveJobsBulk(jobIds, userId);
   if (count > 0) {
-    log.info(`[job.save] ${count} job(s) activated — re-running match funnel`);
+    log.info(`[job.save] ${count} job(s) activated — announcing`);
+    // Announce the fact; SYNTRA re-runs its funnel. This used to call
+    // runForJob directly, fire-and-forget, so a failure vanished into a log
+    // line. Queued, it retries — and saving a job no longer depends on SYNTRA.
     for (const jobId of jobIds) {
-      runForJob(jobId).catch((err) => {
-        log.error(`[job.save] funnel failed job=${jobId}: ${err.message}`);
-      });
+      await getBoss().send("job.activated", { jobId });
     }
   }
   return count;

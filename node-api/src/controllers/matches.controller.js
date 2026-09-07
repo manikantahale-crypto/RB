@@ -2,6 +2,13 @@ const jobRepo = require("../repositories/job.repository");
 const candidateRepo = require("../repositories/candidate.repository");
 const matchRepo = require("../repositories/match.repository");
 
+/**
+ * Reading matches only. `createDirectMatch`, `runJobMatch` and
+ * `runResumeMatch` moved to modules/syntra/controllers/matchActions —
+ * they RUN SYNTRA's funnel, and a core entity must not import an
+ * application to be readable.
+ */
+
 const DEFAULT_SCORE_THRESHOLD = 60;
 
 function notFound(message) {
@@ -277,80 +284,6 @@ async function getMatch(req, res, next) {
   }
 }
 
-async function createDirectMatch(req, res, next) {
-  try {
-    const matchService = require("../modules/syntra/services/match.service");
-    const { jobId, resumeId } = req.body || {};
-    const result = await matchService.createDirectMatch({
-      jobId,
-      resumeId,
-      userId: req.userId,
-    });
-    res.status(result.created ? 201 : 200).json(result);
-  } catch (err) {
-    next(err);
-  }
-}
-
-/** Run Tier-1/2 funnel for a JD → shortlist candidates → emit match.requested for Tier-3. */
-async function runJobMatch(req, res, next) {
-  try {
-    const { runForJob } = require("../modules/syntra/matching/funnel");
-    const jobId = req.params.jobId;
-    const job = await jobRepo.getJobById(jobId, req.userId);
-    if (!job) throw notFound(`Job not found: ${jobId}`);
-    if (!job.processed_at) {
-      const err = new Error("Job is still processing — wait for AI parsing to finish");
-      err.statusCode = 409;
-      throw err;
-    }
-    const result = await runForJob(jobId);
-    res.status(202).json({
-      jobId,
-      created: (result.created || []).length,
-      poolSize: result.poolSize || 0,
-      finalists: result.finalists || 0,
-      matchIds: (result.created || []).map((m) => m.matchId),
-    });
-  } catch (err) {
-    next(err);
-  }
-}
-
-/** Run Tier-1/2 funnel for a resume → shortlist jobs → emit match.requested for Tier-3. */
-async function runResumeMatch(req, res, next) {
-  try {
-    const { runForResume } = require("../modules/syntra/matching/funnel");
-    const resumeId = req.params.resumeId;
-    const resume = await matchRepo.getResumeForMatching(resumeId);
-    if (!resume) throw notFound(`Resume not found: ${resumeId}`);
-    
-    // Verify candidate ownership
-    const candidate = await candidateRepo.getCandidateWithCurrentResume(
-      resume.candidate_id,
-      req.userId
-    );
-    if (!candidate) throw notFound(`Resume not found: ${resumeId}`);
-
-    if (!resume.processed_at) {
-      const err = new Error("Resume is still processing — wait for AI parsing to finish");
-      err.statusCode = 409;
-      throw err;
-    }
-    const result = await runForResume(resumeId);
-    res.status(202).json({
-      resumeId,
-      candidateId: resume.candidate_id,
-      created: (result.created || []).length,
-      poolSize: result.poolSize || 0,
-      finalists: result.finalists || 0,
-      matchIds: (result.created || []).map((m) => m.matchId),
-    });
-  } catch (err) {
-    next(err);
-  }
-}
-
 async function getClosestResumesCount(req, res, next) {
   try {
     const { jobId } = req.params;
@@ -420,9 +353,6 @@ module.exports = {
   listJobMatches,
   listCandidateMatches,
   listTopMatches,
-  createDirectMatch,
-  runJobMatch,
-  runResumeMatch,
   getMatch,
   getJob,
   getCandidate,

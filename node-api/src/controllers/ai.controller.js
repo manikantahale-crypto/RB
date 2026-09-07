@@ -1,6 +1,14 @@
+/**
+ * Parsing endpoints — text in, structured entity out.
+ *
+ * `scoreMatchEndpoint` used to live here too and moved to
+ * modules/syntra/controllers/score.controller. Parsing produces an entity and
+ * ASTRA parses as well, so it is core; scoring is SYNTRA's alone. Keeping all
+ * three together meant one file importing from two core areas and an
+ * application at once.
+ */
 const { parseJD } = require("../ai/jdParsing");
 const { parseResume } = require("../ai/resumeParsing");
-const { matchSummaryToSummary } = require("../modules/syntra/ai/matching");
 
 async function summarizeJdEndpoint(req, res) {
   const text = (req.body.text || "").trim();
@@ -57,42 +65,7 @@ async function summarizeResumeEndpoint(req, res) {
   }
 }
 
-async function scoreMatchEndpoint(req, res) {
-  const { jdSummary, resumeSummary, threshold = 60 } = req.body;
-  
-  if (!jdSummary || typeof jdSummary !== 'string' || !jdSummary.trim()) {
-    return res.status(400).json({ detail: "jdSummary is required" });
-  }
-  
-  if (!resumeSummary || typeof resumeSummary !== 'string' || !resumeSummary.trim()) {
-    return res.status(400).json({ detail: "resumeSummary is required" });
-  }
-
-  try {
-    const result = await matchSummaryToSummary(resumeSummary, jdSummary);
-    return res.json({
-      score: result.match_score || 0,
-      tier: result.match_status || "weak",
-      reasoning: result.consultant_response || "",
-      strengths: result.strengths || [],
-      gaps: result.gaps || [],
-      greenFlags: result.green_flags || [],
-      redFlags: result.red_flags || [],
-      eligibleForInvite: (result.match_score || 0) >= threshold,
-      confidenceScore: result.confidence_score || 0,
-      breakdown: result.breakdown || {},
-      evidence: [],
-    });
-  } catch (e) {
-    if (e.message.includes("is required") || e.message.includes("malformed")) {
-      return res.status(400).json({ detail: e.message });
-    }
-    return res.status(502).json({ detail: `score-match failed: ${e.message}` });
-  }
-}
-
 module.exports = {
   summarizeJdEndpoint,
   summarizeResumeEndpoint,
-  scoreMatchEndpoint,
 };

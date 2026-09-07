@@ -1,4 +1,4 @@
-const { pool } = require("../../config/db");
+const { pool } = require("../config/db");
 
 /**
  * Checks if a resume with the exact same raw_text already exists for the given user.

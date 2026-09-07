@@ -3,9 +3,6 @@ const {
   listJobMatches,
   listCandidateMatches,
   listTopMatches,
-  createDirectMatch,
-  runJobMatch,
-  runResumeMatch,
   getMatch,
   getJob,
   getCandidate,
@@ -16,10 +13,9 @@ const {
 
 const router = express.Router();
 
-router.post("/matches/direct", createDirectMatch);
+// Reads, plus a retry that only enqueues. Running the funnel lives in
+// modules/syntra/routes/matchActions.routes.
 router.post("/matches/:matchId/retry", retryCandidateMatch);
-router.post("/jobs/:jobId/run-match", runJobMatch);
-router.post("/resumes/:resumeId/run-match", runResumeMatch);
 router.get("/matches/top", listTopMatches);
 router.get("/matches/:matchId", getMatch);
 router.get("/jobs/:jobId/matches", listJobMatches);
