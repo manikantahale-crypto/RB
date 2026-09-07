@@ -13,6 +13,7 @@ import { describe, expect, it } from "vitest";
 import { buildGraphSystemPrompt } from "./build-graph-prompt.js";
 import { getToolCatalog } from "./tool-registry.js";
 import { buildLlmGraphJsonSchema } from "./llm-graph-proposal-schema.js";
+import { isTransientProviderError } from "./parse-llm-graph.js";
 
 const catalog = getToolCatalog();
 const syntraPalette = catalog.filter(
@@ -78,9 +79,15 @@ describe("the rules agree with the catalogue", () => {
     }
   });
 
-  it("tells the model where a workflow stops", () => {
+  it("lets a request span applications, and asks for the right order", () => {
+    // This rule once said a workflow belongs to ONE application and to stop at
+    // the handoff — right about storage, wrong about authoring. A description
+    // spanning two applications got half an answer. The graph is split into a
+    // chain after generation, so the model's job is the ORDER.
     const p = prompt(syntraPalette);
-    expect(p).toContain("A workflow belongs to ONE application");
+    expect(p).toContain("A request may span applications");
+    expect(p).toContain("the order the work actually flows");
+    expect(p).not.toContain("belongs to ONE application");
   });
 });
 
@@ -178,5 +185,32 @@ describe("the schema the provider enforces", () => {
     expect(
       schema.properties.nodes.items.properties.toolKey.enum.length,
     ).toBeGreaterThan(2);
+  });
+});
+
+describe("telling a busy provider from a bad request", () => {
+  it("treats a rate limit as worth waiting for", () => {
+    // The real one: Gemini answers 429 with a quota message and a docs URL.
+    // Retrying works; rewriting the description does not.
+    for (const msg of [
+      "LLM gemini HTTP 429: You exceeded your current quota",
+      "RESOURCE_EXHAUSTED",
+      "the model is overloaded",
+      "HTTP 503 Service Unavailable",
+      "fetch failed",
+      "ETIMEDOUT",
+    ]) {
+      expect(isTransientProviderError(new Error(msg))).toBe(true);
+    }
+  });
+
+  it("does not retry a request that will fail the same way again", () => {
+    for (const msg of [
+      "UNSUPPORTED_REQUEST: nothing could be built",
+      "LLM returned malformed JSON",
+      'unknown toolKey "syntra.magic.match" on node "match"',
+    ]) {
+      expect(isTransientProviderError(new Error(msg))).toBe(false);
+    }
   });
 });

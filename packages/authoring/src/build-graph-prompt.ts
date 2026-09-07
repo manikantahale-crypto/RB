@@ -135,10 +135,37 @@ const DEFAULT_RULES: Rule[] = [
    * spanning two applications. The catalogue is scoped now, so the rule is not
    * merely wrong, it is unnecessary.
    */
-  "A workflow belongs to ONE application. Every tool in the catalogue above is either " +
-    "this application's own or shared platform capability; if the request needs another " +
-    "application's work, end at the event that hands off to it and name the rest in " +
-    '"unsupported".',
+  /**
+   * A request may cross applications, and the answer may too.
+   *
+   * This rule once said a workflow belongs to ONE application and to stop at
+   * the handoff. That was right about STORAGE and wrong about authoring: it
+   * meant an author describing work spanning two applications got half an
+   * answer and a gap report. The graph is now split into a chain of
+   * per-application workflows after generation, so the model's job is to get
+   * the ORDER right, not to stop early.
+   */
+  "A request may span applications. Use whichever tools it needs, and put them in " +
+    "the order the work actually flows: the application that receives and validates " +
+    "something comes before the one that acts on the result. Do not jump back to an " +
+    "application you have already finished with.",
+  /**
+   * Ordering WITHIN an application, which the rule above says nothing about.
+   *
+   * Observed failure: for "when a requirement arrives and finishes intake,
+   * match it against our candidates", the model put matching BEFORE parsing
+   * the job description — so it matched against something not yet read. Each
+   * step was real and the graph validated; the order was simply wrong.
+   *
+   * Stated as a principle rather than as pairs of tool names, because a list
+   * of pairs is the drift problem again: it would be right on the day it was
+   * written and wrong by the time somebody adds a node.
+   */
+  "Inside an application, a step that reads, parses or prepares something must come " +
+    "BEFORE any step that uses the result. Read each tool's Takes and Returns above: " +
+    "if one step returns what another takes, the one that returns it goes first. " +
+    "Matching, scoring or notifying always comes after whatever produced the thing " +
+    "being matched, scored or sent.",
   {
     needs: ["human.gate"],
     text:

@@ -11,10 +11,49 @@ export const GENERATION_FAILED = "GENERATION_FAILED" as const;
 export class GenerationFailedError extends Error {
   readonly code = GENERATION_FAILED;
 
-  constructor(message: string, options?: { cause?: unknown }) {
+  /**
+   * Whether waiting would have helped.
+   *
+   * A rate limit or a provider outage is nothing to do with the request, and
+   * telling somebody their description was rejected when the provider was
+   * merely busy sends them off rewriting a sentence that was fine.
+   */
+  readonly transient: boolean;
+
+  constructor(
+    message: string,
+    options?: { cause?: unknown; transient?: boolean },
+  ) {
     super(`${GENERATION_FAILED}: ${message}`, options);
     this.name = "GenerationFailedError";
+    this.transient = options?.transient === true;
   }
+}
+
+/**
+ * Is this the provider being busy or broken, rather than the request being
+ * wrong?
+ *
+ * Matched on the message because providers disagree about everything else —
+ * one throws a typed error, one an HTTP status inside a string, one a bare
+ * fetch failure. The message is the only thing all three have.
+ */
+export function isTransientProviderError(err: unknown): boolean {
+  const text = (err instanceof Error ? err.message : String(err)).toLowerCase();
+  return (
+    text.includes("429") ||
+    text.includes("rate limit") ||
+    text.includes("quota") ||
+    text.includes("resource_exhausted") ||
+    text.includes("overloaded") ||
+    text.includes("503") ||
+    text.includes("502") ||
+    text.includes("504") ||
+    text.includes("timeout") ||
+    text.includes("etimedout") ||
+    text.includes("econnreset") ||
+    text.includes("fetch failed")
+  );
 }
 
 /**
