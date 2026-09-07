@@ -350,6 +350,20 @@ export function WorkflowsRegistryPage() {
                     >
                       {opening === row.graphKey ? "Opening…" : "Edit"}
                     </button>
+                    {/*
+                      Screen 5. Deliberately a quiet link rather than a second
+                      button: firing runs the workflow for real, and a control
+                      that sits level with "Edit" invites being clicked with
+                      the same expectations. The warning lives on that screen,
+                      where there is room to say it properly.
+                    */}
+                    <Link
+                      className="lt-entry"
+                      to={`/workflows/${encodeURIComponent(row.graphKey)}/test`}
+                      title={`Fire a real ${row.graphKey} event`}
+                    >
+                      Test…
+                    </Link>
                   </td>
                 </tr>
               ))}

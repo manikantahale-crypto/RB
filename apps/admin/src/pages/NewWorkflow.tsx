@@ -22,6 +22,7 @@
 import { useCallback, useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import {
+  acceptChain,
   acceptProposal,
   proposeWorkflow,
   type CatalogEvent,
@@ -124,10 +125,60 @@ export function NewWorkflowPage() {
    */
   const chosenNodes = useMemo(() => proposal?.graph.nodes ?? [], [proposal]);
 
+  /**
+   * Links that still need building.
+   *
+   * A link whose event already starts a live workflow is skipped: creating a
+   * second workflow for work somebody already did is the opposite of the
+   * answer. Nothing is created for it and the screen says so.
+   */
+  const toBuild = useMemo(
+    () => (proposal?.chain ?? []).filter((l) => !l.alreadyBuilt),
+    [proposal],
+  );
+  const isChain = toBuild.length > 1;
+
   const accept = async () => {
     if (!proposal || !trigger) return;
     setBusy(true);
     setError(null);
+
+    if (isChain) {
+      /**
+       * Each link is named for its own application, from the workflow name
+       * the author typed. `syntra.match.workflow` authored as a chain becomes
+       * `astra.match.workflow` and `syntra.match.workflow` — the same
+       * intention, once per owner.
+       */
+      const suffix = graphKey.split(".").slice(1).join(".") || "authored";
+      const res = await acceptChain({
+        links: toBuild.map((link, i) => ({
+          graphKey: `${link.module}.${suffix}`,
+          module: link.module,
+          fromModule: link.startsWith?.fromModule,
+          // The first link keeps the trigger the author chose; every later one
+          // starts at the handoff, which is what joins them.
+          triggerEventType: i === 0 ? trigger : (link.startsWith?.eventType ?? trigger),
+          registerTrigger: i > 0 && link.startsWith?.exists === false,
+          // From the link itself. Reading these out of `graph.nodes` used to
+          // work only for the first link, because that is all `graph` keeps.
+          nodes: link.nodes,
+        })),
+      });
+      setBusy(false);
+      if (res.ok) {
+        const first = res.data.created[0];
+        if (first) {
+          navigate(
+            `/workflows/${encodeURIComponent(first.graphKey)}/edit?version=1`,
+          );
+        }
+      } else {
+        setError(res.body.message ?? res.body.error ?? "Could not create the chain");
+      }
+      return;
+    }
+
     const res = await acceptProposal({
       graphKey,
       module,
@@ -225,92 +276,103 @@ export function NewWorkflowPage() {
 
           {proposal ? (
             <>
-              {/* THE SEAM.
+              {/* THE CHAIN.
 
-                  Shown only when one sentence turned out to describe two
-                  workflows. Drawn top to bottom, in the order the work actually
-                  happens, because the most useful thing here is seeing WHERE
-                  your half starts — and, very often, that the other half
-                  already exists and there is nothing to build.
+                  Shown when one description turned out to describe work in
+                  more than one application. An author may write that in one
+                  sentence — what cannot cross is the stored graph, so it
+                  becomes a workflow per application joined by events.
+
+                  Drawn top to bottom in the order the work flows, because the
+                  most useful thing here is seeing WHERE your part sits and,
+                  very often, that a neighbouring half already exists.
               */}
-              {proposal.handoff ? (
+              {proposal.chain && proposal.chain.length > 1 ? (
                 <section className="nw-block">
                   <h2 className="nw-block-title">
-                    <span>✂ This describes two workflows</span>
+                    <span>
+                      ⛓ This becomes {proposal.chain.length} workflows
+                    </span>
+                    <span className="ge-muted">
+                      one per application, joined by events
+                    </span>
                   </h2>
                   <div className="nw-card nw-seam">
                     <p className="nw-seam-lead">
-                      {proposal.handoff.theirSteps.length === 1
-                        ? "One step you asked for belongs"
-                        : `${proposal.handoff.theirSteps.length} of the steps you asked for belong`}{" "}
-                      to{" "}
-                      <strong>{proposal.handoff.otherModule.toUpperCase()}</strong>
-                      , not to {proposal.module.toUpperCase()}. Applications hand
-                      work to each other by publishing an event — two runs, two
-                      versions, either side can change without breaking the other.
+                      Applications hand work to each other by publishing an
+                      event — separate runs, separate versions, either side can
+                      change without breaking the other. That is why this is a
+                      chain rather than one workflow.
                     </p>
 
-                    {(
-                      [
-                        proposal.handoff.yourHalf === "before"
-                          ? { mine: true, steps: proposal.handoff.yourSteps }
-                          : { mine: false, steps: proposal.handoff.theirSteps },
-                        proposal.handoff.yourHalf === "after"
-                          ? { mine: true, steps: proposal.handoff.yourSteps }
-                          : { mine: false, steps: proposal.handoff.theirSteps },
-                      ] as const
-                    ).map((half, i) => (
-                      <div key={i}>
-                        {i === 1 && proposal.handoff?.viaEvent ? (
+                    {proposal.chain.map((link, i) => (
+                      <div key={`${link.module}-${i}`}>
+                        {link.startsWith ? (
                           <div className="nw-seam-join">
                             <span className="nw-seam-rail" aria-hidden="true" />
-                            <span className="nw-seam-event">
-                              ⚡ {proposal.handoff.viaEvent}
+                            <span
+                              className={`nw-seam-event${link.startsWith.exists ? "" : " nw-seam-event--new"}`}
+                              title={
+                                link.startsWith.exists
+                                  ? "Already in the event catalogue"
+                                  : "Would have to be registered before this can run"
+                              }
+                            >
+                              ⚡ {link.startsWith.eventType}
+                              {link.startsWith.exists ? "" : " · new"}
                             </span>
                             <span className="nw-seam-rail" aria-hidden="true" />
                           </div>
                         ) : null}
+
                         <div
-                          className={`nw-seam-half${half.mine ? " nw-seam-half--mine" : ""}`}
+                          className={`nw-seam-half${link.yours ? " nw-seam-half--mine" : ""}${
+                            link.alreadyBuilt ? " nw-seam-half--done" : ""
+                          }`}
                         >
                           <span className="nw-seam-owner">
-                            {half.mine
-                              ? `${proposal.module.toUpperCase()} · yours`
-                              : `${proposal.handoff?.otherModule.toUpperCase()} · theirs`}
+                            {link.module.toUpperCase()}
+                            {link.yours ? " · yours" : ""}
+                            {link.alreadyBuilt ? " · already built" : ""}
                           </span>
                           <span className="nw-seam-steps">
-                            {half.steps.join(" → ")}
+                            {link.alreadyBuilt
+                              ? link.alreadyBuilt
+                              : link.steps.join(" → ")}
                           </span>
                         </div>
                       </div>
                     ))}
 
                     {/*
-                      The payoff. When something is already bound to the handoff
-                      event, the correct answer to half the request is "somebody
-                      already built that" — better than anything that could have
-                      been generated for it.
+                      The payoff. Where a live workflow already answers the
+                      event that would start a link, the correct answer to that
+                      part of the request is "somebody already built it" — which
+                      is better than anything that could have been generated.
                     */}
-                    {proposal.handoff.handledBy.length > 0 ? (
+                    {proposal.chain.some((l) => l.alreadyBuilt) ? (
                       <p className="nw-seam-done" role="status">
-                        <strong>That half already exists.</strong>{" "}
-                        {proposal.handoff.handledBy.map((h) => h.graphKey).join(", ")}{" "}
-                        {proposal.handoff.handledBy.length === 1 ? "is" : "are"} already
-                        live and bound to {proposal.handoff.viaEvent}. Nothing to build
-                        there — the proposal below is only your half.
+                        <strong>Some of this already exists.</strong>{" "}
+                        {proposal.chain
+                          .filter((l) => l.alreadyBuilt)
+                          .map((l) => `${l.module.toUpperCase()} → ${l.alreadyBuilt}`)
+                          .join(", ")}
+                        . Nothing needs building there.
                       </p>
-                    ) : proposal.handoff.viaEvent ? (
+                    ) : null}
+
+                    {proposal.chain.some((l) => l.startsWith && !l.startsWith.exists) ? (
                       <p className="nw-seam-open" role="status">
-                        Nothing is bound to {proposal.handoff.viaEvent} yet, so that half
-                        still has to be built — as its own workflow, by whoever owns{" "}
-                        {proposal.handoff.otherModule.toUpperCase()}.
+                        <strong>One event does not exist yet.</strong> Every
+                        application shares the event catalogue, so registering{" "}
+                        {proposal.chain
+                          .filter((l) => l.startsWith && !l.startsWith.exists)
+                          .map((l) => l.startsWith!.eventType)
+                          .join(", ")}{" "}
+                        is a change others live with. It is created when you
+                        accept.
                       </p>
-                    ) : (
-                      <p className="nw-seam-open" role="status">
-                        No published event joining the two halves was named, so the
-                        handoff has to be chosen by hand before either side can run.
-                      </p>
-                    )}
+                    ) : null}
                   </div>
                 </section>
               ) : null}
@@ -557,13 +619,54 @@ export function NewWorkflowPage() {
                           </>
                         ) : (
                           <>
-                            one placeholder step · {proposal.graph.fallbackReason}{" "}
-                            · build it out in the editor after you accept
+                            one placeholder step · build it out in the editor
+                            after you accept
                           </>
                         )}
                       </span>
                     </span>
                   </div>
+
+                  {/*
+                    WHY THERE IS ONLY A PLACEHOLDER, ON ITS OWN LINE.
+
+                    This used to sit inside the sentence above, which meant a
+                    provider quota message — several lines of it, with a URL —
+                    landed in the middle of a description of the workflow. It
+                    read as though the workflow were the problem, and somebody
+                    would go and rewrite a sentence that was fine.
+                  */}
+                  {proposal.graph.source === "placeholder" &&
+                  proposal.graph.fallbackReason ? (
+                    <div className="nw-gaps" role="status">
+                      <strong>The shape was not generated.</strong>
+                      <p className="nw-fallback-why">
+                        {proposal.graph.fallbackReason}
+                      </p>
+                      <span className="ge-muted">
+                        Everything else on this screen — the trigger, the
+                        settings read from your words, the routing check — was
+                        worked out without the model and is still correct.
+                      </span>
+                      {/*
+                        A retry, here, rather than "go back to the other tab and
+                        press Generate". A rate limit clears on its own and the
+                        description has not changed, so making somebody navigate
+                        to repeat themselves is the wrong shape for the one
+                        failure that fixes itself.
+                      */}
+                      <div className="nw-fallback-actions">
+                        <button
+                          type="button"
+                          className="wf-btn wf-btn--primary"
+                          disabled={busy}
+                          onClick={() => void generate()}
+                        >
+                          {busy ? "Trying…" : "Try again"}
+                        </button>
+                      </div>
+                    </div>
+                  ) : null}
 
                   {/* ── settings lifted out of the description ─────── */}
                   {proposal.extractedConfig.length ? (
@@ -688,11 +791,14 @@ export function NewWorkflowPage() {
                       : undefined
                   }
                 >
-                  Accept → editor
+                  {isChain
+                    ? `Accept → ${toBuild.length} drafts`
+                    : "Accept → editor"}
                 </button>
                 <span className="ge-muted">
-                  creates a draft that cannot run · the binding is created at
-                  go-live
+                  {isChain
+                    ? `creates ${toBuild.length} drafts, one per application · none of them run until each goes live`
+                    : "creates a draft that cannot run · the binding is created at go-live"}
                 </span>
               </div>
               {triggerNeverFired ? (

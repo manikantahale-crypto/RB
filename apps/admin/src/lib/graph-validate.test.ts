@@ -141,3 +141,57 @@ describe("validate", () => {
     expect(found.some((f) => f.text.includes("no outcomes"))).toBe(true);
   });
 });
+
+describe("can every step get what it needs", () => {
+  /** node_registry says match.process requires resumeId. */
+  const withRequired = [
+    ...registry,
+    { ...node("syntra.match.process"), inputSchema: { required: ["resumeId"] } },
+  ];
+  const oneStep = (inputs?: Record<string, string>): GraphDefinition => ({
+    graphKey: "syntra.authored",
+    nodes: [{ id: "match", impl: "syntra.match.process", ...(inputs ? { inputs } : {}) }],
+    edges: [
+      ["__start__", "match"],
+      ["match", "__end__"],
+    ],
+  });
+  const run = (
+    def: GraphDefinition,
+    trigger?: { fields: string[]; declared: boolean },
+  ) => validate(def, withRequired, trigger);
+
+  it("says it could not check when nothing was supplied", () => {
+    const f = run(oneStep());
+    expect(f.some((x) => x.text === "Inputs not checked")).toBe(true);
+  });
+
+  it("says it could not check when the trigger describes nothing", () => {
+    // Eight event schemas hold a placeholder written at boot. Reading those as
+    // "carries nothing" would blame the workflow for a catalogue gap.
+    const f = run(oneStep(), { fields: [], declared: false });
+    expect(f.some((x) => x.text.includes("does not describe itself"))).toBe(true);
+    expect(f.some((x) => x.level === "error")).toBe(false);
+  });
+
+  it("blocks a step whose required field nothing provides", () => {
+    const f = run(oneStep(), { fields: ["jobId"], declared: true });
+    const err = f.find((x) => x.level === "error");
+    expect(err?.text).toContain("cannot get what they need");
+    expect(err?.detail).toContain("match needs resumeId");
+  });
+
+  it("passes when the trigger carries it", () => {
+    const f = run(oneStep(), { fields: ["jobId", "resumeId"], declared: true });
+    expect(f.some((x) => x.text === "Every step can get what it needs")).toBe(true);
+  });
+
+  it("passes when the step maps it from somewhere", () => {
+    // A step receives the trigger payload with its map merged on top.
+    const f = run(oneStep({ resumeId: "trigger.cvId" }), {
+      fields: ["cvId"],
+      declared: true,
+    });
+    expect(f.some((x) => x.level === "error")).toBe(false);
+  });
+});

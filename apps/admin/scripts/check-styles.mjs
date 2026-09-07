@@ -35,6 +35,7 @@ const OWNS = {
   "graph-editor.css": ["ge", "nt"],
   "event-catalog.css": ["ec"],
   "new-workflow.css": ["nw"],
+  "live-test.css": ["lt"],
 };
 
 /**

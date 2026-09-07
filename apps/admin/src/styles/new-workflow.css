@@ -408,3 +408,35 @@
   .nw-row { grid-template-columns: 1fr auto; }
   .nw-row-kind { grid-column: 1 / -1; }
 }
+
+/* A link whose work already exists — nothing to build there. Quieter than the
+   author's own half and unmistakably finished, so the eye skips it. */
+.nw-seam-half--done {
+  border-style: dashed;
+  background: var(--status-success-bg);
+  border-color: var(--status-success-border);
+}
+/* An event that would have to be registered. The catalogue is shared, so a new
+   one is a change every application lives with — it should not look like the
+   ones that already exist. */
+.nw-seam-event--new {
+  border-style: dashed;
+  border-color: var(--status-warning-border);
+  background: var(--status-warning-bg);
+  color: var(--status-warning-fg);
+}
+
+/* A provider's own words, which can run to several lines and contain a URL.
+   Given room rather than squeezed into a sentence about the workflow, because
+   read inline it looks like the workflow is what went wrong. */
+.nw-fallback-why {
+  margin: var(--space-2) 0;
+  font-family: var(--font-family-mono);
+  font-size: var(--font-size-xs);
+  line-height: var(--line-height-normal);
+  overflow-wrap: anywhere;
+}
+
+/* A retry beside the reason it failed. The one failure that fixes itself
+   should not require navigating away to repeat a description unchanged. */
+.nw-fallback-actions { margin-top: var(--space-3); }

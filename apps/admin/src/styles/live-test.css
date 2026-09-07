@@ -1,0 +1,171 @@
+/* ═══════════════ Screen 5 · Live test ═══════════════
+   ONE STYLESHEET PER SCREEN.
+
+   `npm run check:styles -w @tekisho/admin` keeps the split honest: a class
+   whose prefix does not belong to this screen fails the build.
+
+   Every value here comes from tokens.css.
+   ═══════════════════════════════════════════════════════════════════════ */
+
+.lt-page {
+  display: flex;
+  flex-direction: column;
+  gap: var(--panel-gap);
+  max-width: 780px;
+}
+.lt-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--space-3);
+}
+.lt-crumb {
+  font-family: var(--font-family-mono);
+  font-size: var(--font-size-xs);
+  color: var(--text-muted);
+  margin: 0 0 var(--space-2);
+}
+.lt-title {
+  font-family: var(--font-family-display);
+  font-size: var(--font-size-xl);
+  margin: 0;
+}
+.lt-version {
+  font-family: var(--font-family-mono);
+  font-size: var(--font-size-xs);
+  color: var(--text-secondary);
+}
+
+/* ── the warning ──────────────────────────────────────────────────────────
+   Loud on purpose, and first. Every other screen in this admin edits drafts;
+   this is the only one that reaches production, and it has to READ
+   differently — a person skimming should not be able to mistake it for the
+   editor. Danger colours rather than warning: this is not "be careful", it is
+   "this happens for real". */
+.lt-warn {
+  padding: var(--space-4);
+  border: 2px solid var(--status-danger-border);
+  border-radius: var(--radius-lg);
+  background: var(--status-danger-bg);
+  color: var(--status-danger-fg);
+}
+.lt-warn-title {
+  font-family: var(--font-family-display);
+  font-size: var(--font-size-lg);
+  margin: 0 0 var(--space-2);
+}
+.lt-warn-list {
+  margin: 0;
+  padding-left: var(--space-5);
+  font-size: var(--font-size-sm);
+  line-height: var(--line-height-normal);
+}
+.lt-warn-list li { margin-bottom: var(--space-1); }
+.lt-warn-draft {
+  margin: var(--space-3) 0 0;
+  padding-top: var(--space-3);
+  border-top: 1px solid var(--status-danger-border);
+  font-size: var(--font-size-sm);
+  line-height: var(--line-height-normal);
+}
+
+/* ── ordinary blocks ── */
+.lt-block {
+  padding: var(--space-4);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-lg);
+  background: var(--surface-raised);
+}
+.lt-block-title {
+  font-family: var(--font-family-display);
+  font-size: var(--font-size-md);
+  margin: 0 0 var(--space-3);
+}
+.lt-steps {
+  font-family: var(--font-family-mono);
+  font-size: var(--font-size-sm);
+  margin: 0 0 var(--space-1);
+  overflow-wrap: anywhere;
+}
+
+/* ── the form, generated from the event's payload schema ── */
+.lt-field {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  margin-bottom: var(--space-4);
+}
+.lt-field:last-child { margin-bottom: 0; }
+.lt-field-name {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-2);
+  font-size: var(--font-size-sm);
+  font-weight: var(--font-weight-semibold);
+}
+.lt-field-why {
+  font-size: var(--font-size-xs);
+  color: var(--text-secondary);
+  line-height: var(--line-height-normal);
+}
+.lt-type {
+  font-family: var(--font-family-mono);
+  font-size: var(--font-size-xs);
+  color: var(--text-muted);
+  font-weight: var(--font-weight-regular);
+}
+.lt-req {
+  font-size: var(--font-size-xs);
+  font-weight: var(--font-weight-semibold);
+  padding: 0 var(--space-1);
+  border-radius: var(--radius-sm);
+  background: var(--status-warning-bg);
+  color: var(--status-warning-fg);
+}
+.lt-undeclared {
+  padding: var(--space-3);
+  border: 1px dashed var(--border-strong);
+  border-radius: var(--control-radius);
+  font-size: var(--font-size-sm);
+  color: var(--text-secondary);
+  line-height: var(--line-height-normal);
+}
+.lt-missing {
+  font-size: var(--font-size-sm);
+  color: var(--status-warning-fg);
+  margin: 0 0 var(--space-3);
+}
+
+.lt-actions {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  margin-top: var(--space-3);
+}
+.lt-waiting { font-size: var(--font-size-sm); color: var(--text-secondary); }
+.lt-fired { margin: var(--space-3) 0 0; font-size: var(--font-size-xs); }
+.lt-error {
+  padding: var(--space-3);
+  border: 1px solid var(--status-danger-border);
+  border-radius: var(--control-radius);
+  background: var(--status-danger-bg);
+  color: var(--status-danger-fg);
+  font-size: var(--font-size-sm);
+}
+
+/* The way in, rendered on the workflow registry.
+   It lives in THIS file rather than styles.css because the class belongs to
+   this screen — styles.css is 4,500 lines shared by everyone, and the rule
+   is that a screen's styles go in its own file even when the control that
+   opens it sits somewhere else.
+
+   Quiet on purpose. A second button level with "Edit" would invite being
+   clicked with the same expectations, and this one runs a workflow for real. */
+.lt-entry {
+  margin-left: var(--space-3);
+  font-size: var(--font-size-xs);
+  color: var(--text-secondary);
+  text-decoration: none;
+  border-bottom: 1px dotted var(--border-strong);
+}
+.lt-entry:hover { color: var(--status-danger-fg); }

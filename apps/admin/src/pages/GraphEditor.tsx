@@ -58,10 +58,12 @@ import {
 } from "../lib/graph-edit";
 import {
   listRegistryNodes,
+  loadChain,
   loadVersion,
   saveDraft,
   type GraphDefinition,
   type JsonSchema,
+  type ChainNeighbours,
   type LoadedVersion,
   type RegistryNode,
 } from "../api/editor";
@@ -356,6 +358,15 @@ export function GraphEditorPage() {
   const version = Number(searchParams.get("version") ?? "0");
 
   const [loaded, setLoaded] = useState<LoadedVersion | null>(null);
+  /**
+   * The workflows either side of this one.
+   *
+   * A flow that crosses applications is stored as a chain — a workflow per
+   * application, joined by published events — and this canvas edits one link.
+   * Without saying so, somebody who authored one flow opens it and finds half
+   * their work apparently gone.
+   */
+  const [chain, setChain] = useState<ChainNeighbours | null>(null);
   const [draft, setDraft] = useState<GraphDefinition | null>(null);
   const [registry, setRegistry] = useState<RegistryNode[]>([]);
   const [selected, setSelected] = useState<string | null>(null);
@@ -375,6 +386,9 @@ export function GraphEditorPage() {
   const load = useCallback(async () => {
     if (!graphKey || !version) return;
     setError(null);
+    // Best effort: a workflow with no neighbours is the ordinary case, and a
+    // failure here must not stop the editor loading.
+    void loadChain(graphKey).then((r) => setChain(r.ok ? r.data : null));
     /**
      * The FULL registry, not the module-scoped one.
      *
@@ -602,21 +616,37 @@ export function GraphEditorPage() {
     });
   };
 
-  /** Fields produced by everything upstream of an edge — feeds the picker. */
+  /**
+   * What a step inserted here would actually receive.
+   *
+   * THIS USED TO BE A PROMISE THE RUNTIME DID NOT KEEP. It collected the
+   * declared OUTPUTS of every step upstream and told you a candidate "takes
+   * jobId from an earlier step" — but a step's input is built from the trigger
+   * payload, so an earlier step's output reached it only by coincidence of
+   * naming, and usually not at all. The picker was describing the system we
+   * wanted.
+   *
+   * What is true: a step receives the trigger payload, plus anything its own
+   * input map pulls in. So availability at this point is the trigger's fields
+   * plus everything upstream steps have MAPPED — mapping being the thing that
+   * makes an earlier step's output reachable at all.
+   *
+   * Upstream outputs still count, but only as what COULD be mapped: they are
+   * offered further down as sources, not counted as arriving on their own.
+   */
   const upstreamOutputs = useMemo(() => {
     if (!draft || !insertAt) return [] as string[];
-    const source = insertAt.from;
-    const out = new Set<string>();
-    // Walk backwards from the insertion point, collecting declared outputs.
+    // Always there: every step is handed the trigger payload.
+    const out = new Set<string>(loaded?.triggerFields ?? []);
+
     const seen = new Set<string>();
     const walk = (id: string) => {
       if (seen.has(id)) return;
       seen.add(id);
       const node = draft.nodes.find((n) => n.id === id);
-      if (node) {
-        const c = contractFor(node.impl);
-        for (const f of Object.keys(c?.outputSchema?.properties ?? {})) out.add(f);
-      }
+      // What an upstream step MAPPED is available downstream, because mapping
+      // merges it into the payload every later step reads.
+      for (const field of Object.keys(node?.inputs ?? {})) out.add(field);
       for (const [a, b] of draft.edges) if (b === id) walk(a);
       // A step reached only through a branch arm has upstream too — without
       // this the picker reports nothing usable anywhere after a decision.
@@ -624,9 +654,9 @@ export function GraphEditorPage() {
         if (Object.values(ce.map).includes(id)) walk(ce.from);
       }
     };
-    walk(source);
+    walk(insertAt.from);
     return [...out];
-  }, [draft, insertAt, contractFor]);
+  }, [draft, insertAt, loaded]);
 
   /** Insert a step on an edge — see `lib/graph-edit.ts` for both cases. */
   const insertNode = (chosen: RegistryNode) => {
@@ -661,8 +691,22 @@ export function GraphEditorPage() {
   }, [registry, graphKey]);
 
   const findings = useMemo(
-    () => (draft ? validate(draft, registry) : []),
-    [draft, registry],
+    () =>
+      draft
+        ? validate(
+            draft,
+            registry,
+            // Only when the API told us; an older response leaves the rail
+            // saying it could not check rather than inventing an answer.
+            loaded?.triggerDeclared === undefined
+              ? undefined
+              : {
+                  fields: loaded.triggerFields ?? [],
+                  declared: loaded.triggerDeclared,
+                },
+          )
+        : [],
+    [draft, registry, loaded],
   );
   const blocking = findings.some((f) => f.level === "error");
 
@@ -759,10 +803,31 @@ export function GraphEditorPage() {
           </h1>
         </div>
         <div className="ge-actions">
-          <button type="button" className="wf-btn" disabled title="Screen 5">
-            Test
-          </button>
-          <button type="button" className="wf-btn" disabled title="Screen 6">
+          {/*
+            Screen 5. A link rather than a button, and deliberately not the
+            primary one: firing runs the workflow for real, and a control level
+            with "Save draft" would invite being pressed with the same
+            expectations. The warning lives on that screen, where there is room
+            to say it properly.
+
+            Enabled for a draft too. A draft has no binding, so firing its
+            trigger runs whatever IS bound to that event — which may be a
+            different workflow. That is worth seeing rather than being
+            prevented from finding out; screen 5 says so before the button.
+          */}
+          <Link
+            className="wf-btn"
+            to={`/workflows/${encodeURIComponent(graphKey)}/test`}
+            title={`Fire a real ${graphKey} event`}
+          >
+            Test…
+          </Link>
+          <button
+            type="button"
+            className="wf-btn"
+            disabled
+            title="Screen 6 is not built — it needs a decision on how the platform talks to GitHub."
+          >
             Review →
           </button>
           <button
@@ -796,6 +861,34 @@ export function GraphEditorPage() {
       {loaded && draft ? (
         <div className="ge-split">
           <section className="ge-canvas" aria-label="Workflow topology">
+            {/* ── where this workflow sits ──────────────────────────────
+                Only when it has neighbours. Read-only on purpose: each link
+                is a separate workflow with its own version and its own
+                go-live, and letting one canvas edit several would put two
+                applications' release cycles behind one Save button. */}
+            {chain && (chain.upstream.length > 0 || chain.downstream.length > 0) ? (
+              <div className="ge-chain" aria-label="Chain">
+                {chain.upstream.map((u) => (
+                  <span className="ge-chain-link" key={`u-${u.graphKey}`}>
+                    <Link to={`/workflows/${encodeURIComponent(u.graphKey)}/runs`}>
+                      {u.graphKey}
+                    </Link>
+                    <span className="ge-chain-via">⚡ {u.via}</span>
+                    <span className="ge-chain-arrow" aria-hidden="true">→</span>
+                  </span>
+                ))}
+                <span className="ge-chain-here">{graphKey}</span>
+                {chain.downstream.map((d) => (
+                  <span className="ge-chain-link" key={`d-${d.graphKey}`}>
+                    <span className="ge-chain-arrow" aria-hidden="true">→</span>
+                    <span className="ge-chain-via">⚡ {d.via}</span>
+                    <Link to={`/workflows/${encodeURIComponent(d.graphKey)}/runs`}>
+                      {d.graphKey}
+                    </Link>
+                  </span>
+                ))}
+              </div>
+            ) : null}
             <div className="ge-canvas-head">
               <span className="ge-canvas-title">
                 {draft.nodes.length} step{draft.nodes.length === 1 ? "" : "s"}

@@ -794,3 +794,41 @@
   align-items: center;
   gap: var(--space-2);
 }
+
+/* ── where this workflow sits in a chain ──────────────────────────────────
+   A flow that crosses applications is stored as several workflows joined by
+   events, and this canvas edits one of them. The strip says so.
+
+   Deliberately quiet and read-only: each link has its own version and its own
+   go-live, and a control here would suggest one Save could move two
+   applications' release cycles at once. */
+.ge-chain {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+  padding: var(--space-2) var(--space-4);
+  border-bottom: 1px solid var(--border-subtle);
+  background: var(--status-info-bg);
+  font-size: var(--font-size-xs);
+}
+.ge-chain-link {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  color: var(--text-secondary);
+}
+.ge-chain-link a { color: var(--text-link); }
+.ge-chain-here {
+  font-family: var(--font-family-mono);
+  font-weight: var(--font-weight-semibold);
+  color: var(--text-primary);
+  padding: 0 var(--space-2);
+  border-radius: var(--radius-sm);
+  background: var(--surface-raised);
+}
+.ge-chain-via {
+  font-family: var(--font-family-mono);
+  color: var(--status-info-fg);
+}
+.ge-chain-arrow { color: var(--text-muted); }

@@ -6,6 +6,7 @@ import { WorkflowTestPage } from "./pages/WorkflowTestPage";
 import { WorkflowsRegistryPage } from "./pages/WorkflowsRegistry";
 import { WorkflowRunsPage } from "./pages/WorkflowRuns";
 import { RunDetailPage } from "./pages/RunDetail";
+import { LiveTestPage } from "./pages/LiveTest";
 import { GraphEditorPage } from "./pages/GraphEditor";
 import { NewWorkflowPage } from "./pages/NewWorkflow";
 
@@ -48,6 +49,7 @@ function AppShell() {
         <Route path="/workflows/:graphKey/runs" element={<WorkflowRunsPage />} />
         {/* Screen 13 — one run and the path it took. */}
         <Route path="/runs/:runId" element={<RunDetailPage />} />
+        <Route path="/workflows/:graphKey/test" element={<LiveTestPage />} />
         {/* Screen 4 — the graph editor. */}
         {/* Screen 2 — describe or clone, then one proposal. */}
         <Route path="/workflows/new" element={<NewWorkflowPage />} />

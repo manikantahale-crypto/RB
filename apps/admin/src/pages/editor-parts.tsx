@@ -218,6 +218,12 @@ export function NodePicker({
     );
   }, [candidates, query]);
 
+  /*
+    "Fits here" used to mean "an earlier step declares an output with this
+    name", which the runtime never honoured — a step reads the trigger
+    payload, not the step before it. It now means the field will genuinely be
+    present: carried by the trigger, or mapped in by a step along the way.
+  */
   const fits = shown.filter((c) => c.checkable && c.satisfied.length > 0);
   const possible = shown.filter(
     (c) => c.checkable && c.satisfied.length === 0 && c.missing.length === 0,
@@ -262,12 +268,12 @@ export function NodePicker({
             <span className="ge-pick-desc">{c.node.description}</span>
             {c.satisfied.length > 0 ? (
               <span className="ge-pick-match">
-                takes {c.satisfied.join(", ")} from an earlier step
+                {c.satisfied.join(", ")} will be there
               </span>
             ) : null}
             {c.missing.length > 0 ? (
               <span className="ge-pick-missing">
-                needs {c.missing.join(", ")} — nothing here produces that
+                needs {c.missing.join(", ")} — nothing provides that here
               </span>
             ) : null}
           </button>
@@ -345,9 +351,9 @@ export function NodePicker({
               );
             })}
           </div>
-          {group("Fits here", "takes what an earlier step produces", fits)}
+          {group("Fits here", "everything it needs will be there", fits)}
           {group("Possible", "nothing it needs is missing", possible)}
-          {group("Needs data this point does not have", "", needs)}
+          {group("Needs data that does not reach this point", "", needs)}
           {group("Cannot be checked", "no contract — nothing declared", unchecked)}
           {shown.length === 0 ? (
             <p className="wf-empty">No step matches that search.</p>

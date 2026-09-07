@@ -72,6 +72,15 @@ export type GraphNode = {
   impl: string;
   config?: Record<string, unknown>;
   visualType?: "ai_action" | "human_gate";
+  /**
+   * Where each of this step's inputs comes from: field name → source.
+   *
+   *     { "jobId": "trigger.requirement_id", "resumeId": "process.resumeId" }
+   *
+   * Absent on every version stored before input mapping existed, which read
+   * the trigger payload and nothing else.
+   */
+  inputs?: Record<string, string>;
 };
 
 export type GraphDefinition = {
@@ -103,6 +112,22 @@ export type LoadedVersion = {
    * at go-live — a draft binding cannot be stored. The canvas says which.
    */
   triggerSource?: "binding" | "draft" | "none";
+  /**
+   * Field names the trigger event's payload declares.
+   *
+   * Every step's input is built from the trigger payload, so this is what the
+   * rail checks each step's required inputs against.
+   */
+  triggerFields?: string[];
+  /**
+   * Whether that payload was ever described.
+   *
+   * Eight event schemas hold a permissive placeholder written at boot so
+   * ingress can accept an event nobody has documented. Reading those as
+   * "carries nothing" would blame the workflow for a gap in the catalogue, so
+   * the rail says it cannot check instead.
+   */
+  triggerDeclared?: boolean;
   editable: boolean;
 };
 
@@ -283,22 +308,35 @@ export type Proposal = {
     fallbackReason: string | null;
   };
   /**
-   * Set only when the description spanned two applications.
+   * The workflows this description becomes, in the order work flows through
+   * them. Null when it stayed inside one application — the ordinary case,
+   * which should cost the reader no attention.
    *
-   * Null is the ordinary case and the screen shows nothing for it — a concept
-   * nobody needs today should cost them no attention.
+   * An author may describe work that crosses applications; what cannot cross
+   * is the stored graph, so one flow is split into a chain joined by events.
    */
-  handoff: {
-    /** The published event joining the halves, if one was named. */
-    viaEvent: string | null;
-    otherModule: string;
-    /** Whether your half runs before the handoff event or after it. */
-    yourHalf: "before" | "after";
-    theirSteps: string[];
-    yourSteps: string[];
-    /** Active workflows already bound to the handoff event. */
-    handledBy: Array<{ graphKey: string; moduleQueue: string | null }>;
-  } | null;
+  chain:
+    | Array<{
+        module: string;
+        /** True for the application the author was working in. */
+        yours: boolean;
+        steps: string[];
+        /** The steps themselves — `graph` only carries the first link's. */
+        nodes: Array<{ id: string; impl: string; config?: Record<string, unknown> }>;
+        edges: Array<[string, string]>;
+        /** The handoff that starts this link. Null for the first. */
+        startsWith: {
+          fromModule: string;
+          toModule: string;
+          eventType: string;
+          /** False when this event would have to be registered first. */
+          exists: boolean;
+          handledBy: string | null;
+        } | null;
+        /** A live workflow already answers this link's trigger. */
+        alreadyBuilt: string | null;
+      }>
+    | null;
   suggestedTrigger: string | null;
   availableNodes: Array<{
     key: string;
@@ -338,4 +376,52 @@ export function acceptProposal(body: {
     bindingCreated: boolean;
     note: string;
   }>("/workflows/accept", { method: "POST", body: JSON.stringify(body) });
+}
+
+/**
+ * The workflows either side of this one.
+ *
+ * A cross-application flow is stored as a chain, and the editor edits one
+ * link. Without this the canvas would show no sign the others exist.
+ */
+export type ChainNeighbours = {
+  graphKey: string;
+  upstream: Array<{ graphKey: string; via: string }>;
+  downstream: Array<{ graphKey: string; via: string }>;
+};
+
+export function loadChain(graphKey: string) {
+  return request<ChainNeighbours>(
+    `/workflows/${encodeURIComponent(graphKey)}/chain`,
+  );
+}
+
+/**
+ * Accept a flow that crosses applications: one draft per application, plus any
+ * handoff event that does not exist yet.
+ *
+ * Separate from `acceptProposal` because it is a different promise — it writes
+ * to the shared event catalogue and creates workflows in applications the
+ * author does not own, and all of it happens or none of it does.
+ */
+export function acceptChain(body: {
+  links: Array<{
+    graphKey: string;
+    module: string;
+    fromModule?: string;
+    triggerEventType: string;
+    /** True when that trigger has to be added to the catalogue first. */
+    registerTrigger?: boolean;
+    nodes: Array<{ id: string; impl: string; config?: Record<string, unknown> }>;
+  }>;
+}) {
+  return request<{
+    created: Array<{ graphKey: string; module: string }>;
+    createdEvents: string[];
+    status: string;
+    note: string;
+  }>("/workflows/accept-chain", {
+    method: "POST",
+    body: JSON.stringify(body),
+  });
 }

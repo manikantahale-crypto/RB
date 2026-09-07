@@ -18,6 +18,7 @@ import "./styles.css";
 import "./styles/new-workflow.css";
 import "./styles/event-catalog.css";
 import "./styles/graph-editor.css";
+import "./styles/live-test.css";
 
 const root = document.getElementById("root");
 if (!root) {

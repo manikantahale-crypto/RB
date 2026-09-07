@@ -26,6 +26,14 @@ export type Finding = {
 export function validate(
   def: GraphDefinition,
   registry: RegistryNode[],
+  /**
+   * What the trigger carries, when the caller knows.
+   *
+   * Optional so the function still works for callers that have a graph and
+   * nothing else — they get every check but the last one, and the rail says so
+   * rather than staying silent.
+   */
+  trigger?: { fields: readonly string[]; declared: boolean },
 ): Finding[] {
   const findings: Finding[] = [];
   const byKey = new Map(registry.map((n) => [n.key, n]));
@@ -185,6 +193,58 @@ export function validate(
       text: `${legacy.length} step${legacy.length === 1 ? "" : "s"} have no contract`,
       detail: `${legacy.map((n) => n.id).join(", ")} — settings and data cannot be checked`,
     });
+  }
+
+  /* 7 — can every step actually get what it needs?
+   *
+   * The first check here about DATA rather than shape. Everything above asks
+   * whether the workflow is well-formed; a workflow can pass all of it and
+   * still die on its first event because the trigger does not carry a field a
+   * step cannot run without.
+   *
+   * The same check runs at go-live. Running it here too is the point: a
+   * problem found while authoring is a small edit, and the same problem found
+   * at publish is a rejected release.
+   */
+  if (!trigger) {
+    findings.push({
+      level: "warning",
+      text: "Inputs not checked",
+      detail: "Nothing was supplied about what the trigger event carries.",
+    });
+  } else if (!trigger.declared) {
+    findings.push({
+      level: "warning",
+      text: "Inputs not checked \u2014 the trigger does not describe itself",
+      detail:
+        "This event's schema is a placeholder, so there is nothing to check " +
+        "the steps against. Describing it in the event catalogue is what makes " +
+        "this checkable.",
+    });
+  } else {
+    const available = new Set(trigger.fields);
+    const starved: string[] = [];
+    for (const n of def.nodes) {
+      const required = byKey.get(n.impl)?.inputSchema?.required ?? [];
+      const mapped = new Set(Object.keys(n.inputs ?? {}));
+      for (const field of required) {
+        // A step receives the trigger payload with its input map merged on
+        // top, so a field is available if the trigger carries it or the step
+        // maps it from somewhere.
+        if (!available.has(field) && !mapped.has(field)) {
+          starved.push(`${n.id} needs ${field}`);
+        }
+      }
+    }
+    findings.push(
+      starved.length === 0
+        ? { level: "ok", text: "Every step can get what it needs" }
+        : {
+            level: "error",
+            text: `${starved.length} step${starved.length === 1 ? "" : "s"} cannot get what they need`,
+            detail: `${starved.join(", ")} \u2014 the trigger does not carry it and no source is mapped`,
+          },
+    );
   }
 
   return findings;
