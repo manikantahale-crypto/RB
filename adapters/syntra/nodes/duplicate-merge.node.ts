@@ -66,6 +66,13 @@ export const duplicateMerge = defineNode({
    * side-effect class describes REACH, not damage. This is the most
    * destructive node we have and it is correctly classed as internal.
    */
+  /**
+   * What this node may publish.
+   *
+   * Writes the merge and returns it. Nothing waits on it.
+   */
+  emits: [],
+
   sideEffect: "internal_write",
 
   /**

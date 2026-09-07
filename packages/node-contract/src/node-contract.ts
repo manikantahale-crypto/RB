@@ -181,6 +181,63 @@ export interface EmittedEvent {
 }
 
 /**
+ * What a node says it may publish.
+ *
+ * WHY THIS IS DECLARED AND NOT INFERRED.
+ *
+ * Applications hand work to each other by publishing an event. When the
+ * publisher never publishes, the next workflow is simply never triggered:
+ * the first run SUCCEEDS, nothing errors, and the work stops. It is the one
+ * failure in this design that leaves no trace anywhere.
+ *
+ * Nothing could catch it, because a node's emits were only ever visible by
+ * reading its code. The editor could not warn, the go-live gate could not
+ * check, and a chain drawn on screen was an assumption wearing the clothes of
+ * a fact. Declaring it moves that from unknowable to checkable.
+ *
+ * Two forms, because nodes genuinely do both:
+ *
+ *   "syntra.jd.parsed"          — a fixed event, published from the node
+ *   { fromConfig: "onActionable" } — the type is a design-time setting, so the
+ *                                 event is whatever the graph author chose
+ *
+ * Conditional emits are still declared. This is what the node MAY publish, not
+ * what it publishes every run — a list that only covered the guaranteed cases
+ * would miss every branch, which is most of them.
+ */
+export const EmitDeclarationSchema = z.union([
+  z.string().min(1),
+  z.object({
+    /** Name of the config field holding the event type. */
+    fromConfig: z.string().min(1),
+  }),
+]);
+export type EmitDeclaration = z.infer<typeof EmitDeclarationSchema>;
+
+/**
+ * The event types a node may publish, given the settings it was given.
+ *
+ * A `fromConfig` entry naming a field that is absent or is not a string
+ * contributes nothing rather than an empty or `undefined` event type — an
+ * unset optional setting means that exit is not wired, which is ordinary.
+ */
+export function resolveEmits(
+  emits: readonly EmitDeclaration[] | undefined,
+  config: Record<string, unknown> | undefined,
+): string[] {
+  const out: string[] = [];
+  for (const e of emits ?? []) {
+    if (typeof e === "string") {
+      out.push(e);
+      continue;
+    }
+    const v = config?.[e.fromConfig];
+    if (typeof v === "string" && v.length > 0) out.push(v);
+  }
+  return [...new Set(out)];
+}
+
+/**
  * The structural minimum a node may rely on. Deliberately smaller than the
  * engine's `NodeCtx`, which satisfies it — the constitution cannot import the
  * runtime it governs, and an adapter may not import the engine.
@@ -224,6 +281,17 @@ export const NodeContractSchema = z
      * config form — the flag lives on the field, never in a parallel list.
      */
     config: ZodSchemaField,
+
+    // ── what it publishes ─────────────────────────────────────────────
+    /**
+     * Every event this node may publish. Required, and `[]` is a real answer
+     * meaning "publishes nothing" — which is why there is no default. An
+     * absent declaration and a declaration of nothing must never look alike:
+     * one is a node nobody has described, the other is a node described as
+     * silent, and treating the first as the second is how a broken handoff
+     * gets reported as fine.
+     */
+    emits: z.array(EmitDeclarationSchema),
 
     // ── danger ────────────────────────────────────────────────────────
     sideEffect: SideEffectSchema,
@@ -448,6 +516,7 @@ export function toRegistryRow(c: AnyNodeContract) {
     output_schema: z.toJSONSchema(c.output),
     config_schema: z.toJSONSchema(c.config),
     admin_exposed: adminExposedFields(c),
+    emits: c.emits,
     side_effect: c.sideEffect,
     idempotency: c.idempotency,
     execution: {

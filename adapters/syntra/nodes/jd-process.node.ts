@@ -101,6 +101,14 @@ export const jdProcess = defineNode({
    * persists the parse against the requirement — running it twice writes
    * twice. Not `external`: SYNTRA is ours, and nothing leaves the building.
    */
+  /**
+   * What this node may publish.
+   *
+   * Published once the description has been read and structured, so
+   * anything that needs a parsed JD can wait for this rather than guess.
+   */
+  emits: ["syntra.jd.parsed"],
+
   sideEffect: "internal_write",
 
   /**

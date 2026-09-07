@@ -136,6 +136,14 @@ export const branchDecision = defineNode({
    * goes, and optionally emits one event saying it rejected. Orchestration,
    * not meaning.
    */
+  /**
+   * What this node may publish.
+   *
+   * Chooses a path. Control flow inside one run, visible to nobody
+   * outside it.
+   */
+  emits: [],
+
   sideEffect: "control",
 
   /**

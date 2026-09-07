@@ -8,6 +8,7 @@ import {
   isEditorTestable,
   registryKey,
   requiresAllowlist,
+  resolveEmits,
   toRegistryRow,
   type AnyNodeContract,
 } from "./node-contract.js";
@@ -27,6 +28,7 @@ const valid = () => ({
   input: z.object({ id: z.string() }),
   output: z.object({ ok: z.boolean() }),
   config: z.object({ threshold: z.number() }),
+  emits: [],
   sideEffect: "read" as const,
   idempotency: { strategy: "pure" as const },
   execution: {
@@ -290,5 +292,71 @@ describe("the serializable half", () => {
       }) as AnyNodeContract,
     );
     expect(checksumOf(a)).toBe(checksumOf(b));
+  });
+});
+
+describe("emits — what a node says it may publish", () => {
+  it("is required, because silence and no answer are different things", () => {
+    // `[]` means "publishes nothing". An absent field means nobody has said.
+    // A default would collapse the two, and every legacy node would start
+    // claiming it publishes nothing — which is exactly the false negative
+    // this field exists to remove.
+    const { emits, ...withoutEmits } = valid();
+    expect(() => defineNode(withoutEmits as never)).toThrow();
+  });
+
+  it("accepts a fixed event type", () => {
+    const node = define({ emits: ["syntra.jd.parsed"] });
+    expect(node.emits).toEqual(["syntra.jd.parsed"]);
+  });
+
+  it("accepts an event named by a config field", () => {
+    // How `astra.route.decision` works: the author picks the event at design
+    // time, so the node knows the setting's name but not the value.
+    const node = define({ emits: [{ fromConfig: "onActionable" }] });
+    expect(node.emits).toEqual([{ fromConfig: "onActionable" }]);
+  });
+
+  it("rejects an empty event type", () => {
+    expect(() => define({ emits: [""] })).toThrow();
+  });
+});
+
+describe("resolveEmits", () => {
+  it("returns fixed events as they are", () => {
+    expect(resolveEmits(["syntra.jd.parsed"], {})).toEqual(["syntra.jd.parsed"]);
+  });
+
+  it("reads a config-named event from the settings", () => {
+    expect(
+      resolveEmits([{ fromConfig: "onActionable" }], {
+        onActionable: "syntra.jd.normalized",
+      }),
+    ).toEqual(["syntra.jd.normalized"]);
+  });
+
+  it("drops a config-named event whose setting is unset", () => {
+    // An optional exit nobody wired is ordinary, not an error — and must not
+    // contribute an empty event type that would match nothing or everything.
+    expect(resolveEmits([{ fromConfig: "onRejected" }], {})).toEqual([]);
+    expect(resolveEmits([{ fromConfig: "onRejected" }], { onRejected: "" })).toEqual([]);
+  });
+
+  it("ignores a setting that is not a string", () => {
+    expect(resolveEmits([{ fromConfig: "passMin" }], { passMin: 0.6 })).toEqual([]);
+  });
+
+  it("does not report the same event twice", () => {
+    // A node can reach the same event two ways — a fixed emit and a config
+    // pointing at it. Callers ask "can this publish X", so once is enough.
+    expect(
+      resolveEmits(["syntra.match.completed", { fromConfig: "onDone" }], {
+        onDone: "syntra.match.completed",
+      }),
+    ).toEqual(["syntra.match.completed"]);
+  });
+
+  it("treats an undeclared node as publishing nothing knowable", () => {
+    expect(resolveEmits(undefined, { onActionable: "x" })).toEqual([]);
   });
 });

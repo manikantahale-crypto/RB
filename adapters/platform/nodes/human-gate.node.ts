@@ -70,6 +70,14 @@ export const humanGate = defineNode({
    * meaning. If it ever starts writing a decision row itself, this becomes
    * `internal_write` and the idempotency answer below stops being legal.
    */
+  /**
+   * What this node may publish.
+   *
+   * Parks the run and is resumed by a decision. The waiting is the
+   * mechanism, so there is nothing to publish.
+   */
+  emits: [],
+
   sideEffect: "control",
 
   /**

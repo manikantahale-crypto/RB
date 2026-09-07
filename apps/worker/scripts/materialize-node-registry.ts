@@ -75,6 +75,14 @@ async function ensureTable(pool: pg.Pool): Promise<void> {
       fixture_names  jsonb NOT NULL DEFAULT '[]',
       has_stub       boolean NOT NULL DEFAULT false,
       /**
+       * Every event the node may publish. NULLABLE ON PURPOSE, with no
+       * default: NULL means nobody has declared, '[]' means declared to
+       * publish nothing. A default of '[]' would have every undeclared legacy
+       * node claiming silence, and a handoff that is merely unknown would be
+       * reported as definitely broken.
+       */
+      emits          jsonb,
+      /**
        * 'contract'  declared, and the declaration is what runs.
        * 'declared'  declared, but the engine runs its own implementation, so
        *             nothing checks one against the other. See declaredNodes
@@ -86,6 +94,13 @@ async function ensureTable(pool: pg.Pool): Promise<void> {
       updated_at     timestamptz NOT NULL DEFAULT now()
     )
   `);
+  // The table is older than this column on any database that has been
+  // materialized before. Additive and nullable, so nothing already there
+  // changes meaning: every existing row becomes "not declared", which is
+  // exactly what it was.
+  await pool.query(
+    `ALTER TABLE node_registry ADD COLUMN IF NOT EXISTS emits jsonb`,
+  );
   await pool.query(
     `CREATE INDEX IF NOT EXISTS node_registry_module_idx ON node_registry (module)`,
   );
@@ -123,11 +138,11 @@ async function main() {
            registry_key, key, version, module, shareable, title, description,
            tags, input_schema, output_schema, config_schema, admin_exposed,
            side_effect, idempotency, execution, llm, dependencies, persistence,
-           fixture_names, has_stub, source, checksum, updated_at
+           fixture_names, has_stub, source, checksum, emits, updated_at
          ) VALUES (
            $1,$2,$3,$4,$5,$6,$7,$8::jsonb,$9::jsonb,$10::jsonb,$11::jsonb,
            $12::jsonb,$13,$14::jsonb,$15::jsonb,$16::jsonb,$17::jsonb,
-           $18::jsonb,$19::jsonb,$20,$22,$21, now()
+           $18::jsonb,$19::jsonb,$20,$22,$21,$23::jsonb, now()
          )
          ON CONFLICT (registry_key) DO UPDATE SET
            key=$2, version=$3, module=$4, shareable=$5, title=$6,
@@ -136,7 +151,7 @@ async function main() {
            admin_exposed=$12::jsonb, side_effect=$13, idempotency=$14::jsonb,
            execution=$15::jsonb, llm=$16::jsonb, dependencies=$17::jsonb,
            persistence=$18::jsonb, fixture_names=$19::jsonb, has_stub=$20,
-           source=$22, checksum=$21, updated_at=now()`,
+           source=$22, checksum=$21, emits=$23::jsonb, updated_at=now()`,
         [
           row.registry_key,
           row.key,
@@ -160,6 +175,7 @@ async function main() {
           row.has_stub,
           checksum,
           source,
+          JSON.stringify(row.emits),
         ],
       );
       written.push(`${row.registry_key} (${source})`);

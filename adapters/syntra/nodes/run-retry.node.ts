@@ -109,6 +109,13 @@ export const runRetry = defineNode({
   config: Config,
 
   /** Starting work again is a write, and it consumes real resources. */
+  /**
+   * What this node may publish.
+   *
+   * Re-queues work through the runner rather than by publishing.
+   */
+  emits: [],
+
   sideEffect: "internal_write",
 
   /**

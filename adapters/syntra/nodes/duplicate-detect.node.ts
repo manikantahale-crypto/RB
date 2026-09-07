@@ -71,6 +71,15 @@ export const duplicateDetect = defineNode({
    * reads like a question, but SYNTRA records a duplicate-review row when it
    * finds a match — so running it twice can raise two reviews for one person.
    */
+  /**
+   * What this node may publish.
+   *
+   * Only when something needs a person to look at it. Declared all the
+   * same: this lists what the node MAY publish, and a list limited to the
+   * guaranteed cases would miss every branch.
+   */
+  emits: ["syntra.duplicate.review_required"],
+
   sideEffect: "internal_write",
 
   /**

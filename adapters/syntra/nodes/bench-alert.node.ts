@@ -73,6 +73,13 @@ export const benchAlert = defineNode({
    * It is worth a direct question to the SYNTRA team rather than an assumption
    * either way.
    */
+  /**
+   * What this node may publish.
+   *
+   * Asks for matching to happen; it does not do the matching itself.
+   */
+  emits: ["syntra.match.requested"],
+
   sideEffect: "internal_write",
 
   /**

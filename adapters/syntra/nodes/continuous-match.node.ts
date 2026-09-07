@@ -47,6 +47,14 @@ export const continuousMatch = defineNode({
   config: Config,
 
   /** SYNTRA creates a match job and writes match rows. */
+  /**
+   * What this node may publish.
+   *
+   * Bench-wide matching, publishing the same event as the single-pair
+   * node for the same reason.
+   */
+  emits: ["syntra.match.completed"],
+
   sideEffect: "internal_write",
 
   /**

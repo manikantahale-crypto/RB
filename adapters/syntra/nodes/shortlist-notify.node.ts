@@ -86,6 +86,14 @@ export const shortlistNotify = defineNode({
    * If it never leaves their UI, downgrade to `internal_write` in a PR that
    * says so, and this comment is the record of why it started here.
    */
+  /**
+   * What this node may publish.
+   *
+   * Sends outward — email, not an internal event. Nothing in the platform
+   * waits on this node.
+   */
+  emits: [],
+
   sideEffect: "external",
 
   /**

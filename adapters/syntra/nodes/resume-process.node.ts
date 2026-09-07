@@ -75,6 +75,13 @@ export const resumeProcess = defineNode({
   config: Config,
 
   /** SYNTRA persists a candidate profile. Ours, so not `external`. */
+  /**
+   * What this node may publish.
+   *
+   * Published when a candidate profile is ready to be matched against.
+   */
+  emits: ["syntra.profile.prepared"],
+
   sideEffect: "internal_write",
 
   /**

@@ -74,6 +74,15 @@ export const matchProcess = defineNode({
   config: Config,
 
   /** SYNTRA writes a `syntra.matches` row. Internal to us. */
+  /**
+   * What this node may publish.
+   *
+   * One job against one resume — the same event bench-wide matching
+   * publishes, because a consumer cares that a score exists, not how it
+   * was arrived at.
+   */
+  emits: ["syntra.match.completed"],
+
   sideEffect: "internal_write",
 
   /**
