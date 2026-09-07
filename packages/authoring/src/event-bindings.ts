@@ -77,11 +77,18 @@ export class EventAlreadyBoundError extends Error {
     public readonly eventType: string,
     public readonly existingAgentId: string | null,
     public readonly existingGraphKey: string,
+    /** Where the current holder came from: a migration, or somebody authoring. */
+    public readonly existingSource: string = "authoring",
   ) {
     super(
       `Event "${eventType}" is already bound to graph "${existingGraphKey}"` +
         (existingAgentId ? ` (agent ${existingAgentId})` : "") +
-        `. Retire or rebind that agent before activating another.`,
+        (existingSource === "seed"
+          ? `. That binding was created by a migration and is what runs in ` +
+            `production today — taking it over stops "${existingGraphKey}" ` +
+            `from running at all. Confirm the takeover, or trigger this ` +
+            `workflow from a different event.`
+          : `. Retire or rebind that agent before activating another.`),
     );
     this.name = "EventAlreadyBoundError";
   }
@@ -90,6 +97,24 @@ export class EventAlreadyBoundError extends Error {
 /**
  * Activate authoring binding: retire other active rows for this event+scope,
  * insert/update this agent's binding. Same agent may replace its own binding.
+ *
+ * TAKING AN EVENT OVER IS NEVER SILENT.
+ *
+ * One event starts exactly one workflow — `graph_event_bindings_one_active`
+ * makes it a unique index — so binding an event somebody else holds does not
+ * add a listener, it REPLACES them. The workflow that used to answer that
+ * event stops running, and nothing about that is visible: no failed run, no
+ * error, no alert. Whatever it did just quietly stops happening.
+ *
+ * This used to refuse only when the current holder was authored. Every binding
+ * that ASTRA, SYNTRA and ORBIT actually run on came from a migration, so the
+ * bindings with real work behind them were the ones it would silently retire —
+ * exactly backwards. A seeded holder is now protected at least as well as an
+ * authored one.
+ *
+ * `allowTakeover` is how somebody says yes on purpose. It exists because
+ * replacing a seeded workflow is a legitimate thing to do eventually; it just
+ * should not be something you discover afterwards.
  */
 export async function upsertActiveEventBinding(
   // Not `PoolClient | DbQueryable`: a union of two call signatures is not
@@ -103,6 +128,11 @@ export async function upsertActiveEventBinding(
     moduleQueue?: string;
     agentId: string;
     version: number;
+    /**
+     * Take the event from whoever holds it, stopping their workflow.
+     * Only ever set from an explicit, informed confirmation.
+     */
+    allowTakeover?: boolean;
   },
 ): Promise<EventBindingRow> {
   const trigger = getTriggerEvent(args.eventType);
@@ -113,16 +143,26 @@ export async function upsertActiveEventBinding(
   const orgId = args.orgId;
 
   const existing = await resolveActiveEventBinding(client, args.eventType, orgId);
-  if (
-    existing &&
-    existing.agent_id &&
-    existing.agent_id !== args.agentId &&
-    existing.source === "authoring"
-  ) {
+
+  /**
+   * Replacing your own binding is not a takeover.
+   *
+   * Matched on the graph key as well as the agent, because an authored
+   * workflow re-activating over its own seeded row is the same workflow
+   * getting a new version — the common case, and refusing it would make every
+   * seeded workflow permanently unpublishable.
+   */
+  const sameOwner =
+    existing !== null &&
+    ((existing.agent_id !== null && existing.agent_id === args.agentId) ||
+      existing.graph_key === args.graphKey);
+
+  if (existing && !sameOwner && !args.allowTakeover) {
     throw new EventAlreadyBoundError(
       args.eventType,
       existing.agent_id,
       existing.graph_key,
+      existing.source,
     );
   }
 

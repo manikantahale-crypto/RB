@@ -1,0 +1,129 @@
+/**
+ * Taking an event away from whoever currently answers it.
+ *
+ * One event starts exactly ONE workflow — `graph_event_bindings_one_active` is
+ * a unique index — so binding an event somebody else holds does not add a
+ * listener, it replaces them. The previous workflow stops running and nothing
+ * says so: no failed run, no error, no alert.
+ *
+ * The guard used to refuse only when the holder was authored, which meant the
+ * bindings with real production work behind them (all of them seeded by
+ * migration) were precisely the ones it let go silently.
+ */
+import { describe, expect, it } from "vitest";
+import {
+  EventAlreadyBoundError,
+  upsertActiveEventBinding,
+  type EventBindingRow,
+} from "./event-bindings.js";
+
+const EVENT = "astra.requirement.received";
+
+const row = (over: Partial<EventBindingRow> = {}): EventBindingRow => ({
+  id: "11111111-1111-1111-1111-111111111111",
+  event_type: EVENT,
+  org_id: null,
+  graph_key: "astra.requirement.workflow",
+  module_queue: "module.syntra.jd",
+  agent_id: "01900000-0000-7000-8000-000000000501",
+  version: 1,
+  status: "active",
+  source: "seed",
+  ...over,
+});
+
+/**
+ * A client that answers the "who holds this event" SELECT with `existing`,
+ * and records everything else. Enough to exercise the guard without a
+ * database, because the guard is the whole point.
+ */
+function fakeClient(existing: EventBindingRow | null) {
+  const statements: string[] = [];
+  return {
+    statements,
+    query: async (text: string) => {
+      statements.push(text.trim().split("\n")[0]!.trim());
+      if (/^SELECT/i.test(text.trim())) {
+        return { rows: existing ? [existing] : [], rowCount: existing ? 1 : 0 };
+      }
+      if (/^INSERT/i.test(text.trim())) {
+        return { rows: [row({ source: "authoring" })], rowCount: 1 };
+      }
+      return { rows: [], rowCount: 0 };
+    },
+  };
+}
+
+const activate = (
+  client: ReturnType<typeof fakeClient>,
+  over: Record<string, unknown> = {},
+) =>
+  upsertActiveEventBinding(client as never, {
+    eventType: EVENT,
+    orgId: null,
+    graphKey: "astra.authored",
+    agentId: "99999999-9999-9999-9999-999999999999",
+    version: 1,
+    ...over,
+  });
+
+describe("upsertActiveEventBinding", () => {
+  it("refuses to take a seeded binding without being asked", () => {
+    // The regression this whole test file exists for: ASTRA's production
+    // trigger, held by a migration, silently handed to a new workflow.
+    return expect(activate(fakeClient(row()))).rejects.toThrow(
+      EventAlreadyBoundError,
+    );
+  });
+
+  it("says which workflow would stop running, and that it is production", async () => {
+    // "Already bound" is not enough to decide with. The name and the origin
+    // are what make it an informed answer rather than a guess.
+    const err = await activate(fakeClient(row())).catch((e) => e);
+    expect(err.existingGraphKey).toBe("astra.requirement.workflow");
+    expect(err.existingSource).toBe("seed");
+    expect(err.message).toContain("stops");
+    expect(err.message).toContain("astra.requirement.workflow");
+  });
+
+  it("still refuses an authored holder", async () => {
+    // The original behaviour, unchanged.
+    await expect(
+      activate(fakeClient(row({ source: "authoring", graph_key: "other.authored" }))),
+    ).rejects.toThrow(EventAlreadyBoundError);
+  });
+
+  it("writes nothing when it refuses", async () => {
+    // A guard that throws after retiring the old row would be worse than no
+    // guard: the previous workflow is already off by then.
+    const client = fakeClient(row());
+    await activate(client).catch(() => {});
+    expect(client.statements.some((q) => /^UPDATE|^INSERT/i.test(q))).toBe(false);
+  });
+
+  it("takes it over when the caller confirms", async () => {
+    // Replacing a seeded workflow is legitimate. It just has to be on purpose.
+    const client = fakeClient(row());
+    await expect(activate(client, { allowTakeover: true })).resolves.toBeTruthy();
+    expect(client.statements.some((q) => /^INSERT/i.test(q))).toBe(true);
+  });
+
+  it("lets a workflow replace its own seeded binding", async () => {
+    // The common case, and the one that must not need a confirmation: an
+    // authored workflow publishing a new version over the row a migration
+    // created for it. Refusing this would make seeded workflows permanently
+    // unpublishable.
+    const client = fakeClient(row({ graph_key: "astra.authored" }));
+    await expect(activate(client)).resolves.toBeTruthy();
+  });
+
+  it("lets the same agent replace its own binding", async () => {
+    const client = fakeClient(row({ agent_id: "99999999-9999-9999-9999-999999999999" }));
+    await expect(activate(client)).resolves.toBeTruthy();
+  });
+
+  it("binds freely when nothing holds the event", async () => {
+    const client = fakeClient(null);
+    await expect(activate(client)).resolves.toBeTruthy();
+  });
+});

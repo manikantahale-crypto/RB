@@ -2405,6 +2405,12 @@ export function registerAgentRoutes(
             orgId,
             graphKey,
             agentId,
+            /**
+             * Only ever true when the caller has been shown WHICH workflow
+             * stops running and said yes to that. The 409 below carries the
+             * name so the question can be asked properly.
+             */
+            allowTakeover: (req.body as any)?.confirmTakeover === true,
             version: latest.version,
           });
           bindingEvent = triggerEventType;
@@ -2416,6 +2422,14 @@ export function registerAgentRoutes(
               eventType: err.eventType ?? triggerEventType,
               existingAgentId: err.existingAgentId ?? null,
               existingGraphKey: err.existingGraphKey ?? null,
+              /**
+               * 'seed' means a migration created it and it is what runs in
+               * production — the case worth a firmer warning than "already
+               * bound", because taking it stops real work.
+               */
+              existingSource: err.existingSource ?? "authoring",
+              /** Re-send with this to take the event over deliberately. */
+              retryWith: { confirmTakeover: true },
             });
           }
           throw err;
@@ -2701,6 +2715,12 @@ export function registerAgentRoutes(
             orgId,
             graphKey,
             agentId,
+            /**
+             * Only ever true when the caller has been shown WHICH workflow
+             * stops running and said yes to that. The 409 below carries the
+             * name so the question can be asked properly.
+             */
+            allowTakeover: (req.body as any)?.confirmTakeover === true,
             version: targetVersion,
           });
           bindingEvent = triggerEventType;
@@ -2715,6 +2735,14 @@ export function registerAgentRoutes(
               eventType: err.eventType ?? triggerEventType,
               existingAgentId: err.existingAgentId ?? null,
               existingGraphKey: err.existingGraphKey ?? null,
+              /**
+               * 'seed' means a migration created it and it is what runs in
+               * production — the case worth a firmer warning than "already
+               * bound", because taking it stops real work.
+               */
+              existingSource: err.existingSource ?? "authoring",
+              /** Re-send with this to take the event over deliberately. */
+              retryWith: { confirmTakeover: true },
             });
           }
           throw err;
