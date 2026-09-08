@@ -404,6 +404,177 @@ export function registerEditorRoutes(app: FastifyLike, pool: Pool): void {
    * purpose: they differ between any two versions by construction, so
    * reporting them is noise that trains people to skim.
    */
+  /**
+   * Take a workflow offline — stop it running, without deleting anything.
+   *
+   * Retires the ACTIVE BINDING and nothing else. The definition stays active,
+   * the versions stay where they are, and the workflow is still there to look
+   * at; it simply has no door. That is the smallest reversible act that means
+   * "stop", and putting it back is one binding.
+   *
+   * The agent equivalent also retires the definition. That conflates two
+   * decisions — "stop this running" and "un-publish this version" — and makes
+   * coming back a two-step recovery instead of a one-line one.
+   *
+   * `expectedEventType` is optimistic concurrency: a screen that has been open
+   * a while may be looking at a binding that has since changed, and taking the
+   * wrong event offline is not something to discover afterwards.
+   */
+  app.post("/workflows/:graphKey/take-offline", async (req: any, reply: any) => {
+    const graphKey = String(req.params?.graphKey ?? "");
+    const expected = req.body?.expectedEventType
+      ? String(req.body.expectedEventType)
+      : null;
+    if (!graphKey) return reply.code(400).send({ error: "graph_key_required" });
+
+    try {
+      const { rows: bindings } = await pool.query(
+        `SELECT event_type, module_queue FROM graph_event_bindings
+          WHERE graph_key = $1 AND status = 'active'`,
+        [graphKey],
+      );
+
+      if (bindings.length === 0) {
+        return reply.code(409).send({
+          error: "not_bound",
+          message:
+            "This workflow has no active binding, so it is already offline. " +
+            "Nothing was changed.",
+        });
+      }
+
+      if (expected && !bindings.some((b: any) => b.event_type === expected)) {
+        return reply.code(409).send({
+          error: "binding_changed",
+          message: `This workflow is no longer bound to ${expected}.`,
+          boundTo: bindings.map((b: any) => b.event_type),
+        });
+      }
+
+      const { rowCount } = await pool.query(
+        `UPDATE graph_event_bindings
+            SET status = 'retired', updated_at = now()
+          WHERE graph_key = $1 AND status = 'active'`,
+        [graphKey],
+      );
+
+      return {
+        graphKey,
+        offline: true,
+        retired: bindings.map((b: any) => b.event_type),
+        rowsChanged: rowCount ?? 0,
+        note:
+          "The workflow and all its versions are untouched — only the binding " +
+          "was retired. Events of that type will now be acknowledged and go " +
+          "nowhere until something is bound again.",
+      };
+    } catch (err: any) {
+      req.log?.error?.(err);
+      return reply
+        .code(500)
+        .send({ error: "take_offline_failed", message: String(err) });
+    }
+  });
+
+  /**
+   * Roll back to an earlier version.
+   *
+   * A binding names a workflow, not a version — the active version is resolved
+   * at routing time — so rolling back means changing WHICH version is active,
+   * not re-pointing the binding.
+   *
+   * One transaction, because `graph_definitions_one_active` permits exactly one
+   * active version per key: retiring the current one and activating the target
+   * must happen together or the workflow is briefly unroutable.
+   *
+   * Nothing is deleted. The version rolled away from is retired, not removed,
+   * so rolling forward again is the same call with the other number.
+   */
+  app.post("/workflows/:graphKey/rollback", async (req: any, reply: any) => {
+    const graphKey = String(req.params?.graphKey ?? "");
+    const to = req.body?.toVersion != null ? Number(req.body.toVersion) : null;
+    if (!graphKey) return reply.code(400).send({ error: "graph_key_required" });
+
+    const client = await pool.connect();
+    try {
+      const { rows: versions } = await client.query(
+        `SELECT version, status FROM graph_definitions
+          WHERE graph_key = $1 ORDER BY version DESC`,
+        [graphKey],
+      );
+      if (versions.length === 0) {
+        return reply.code(404).send({ error: "workflow_not_found", graphKey });
+      }
+
+      const current = versions.find((v: any) => v.status === "active");
+      if (!current) {
+        return reply.code(409).send({
+          error: "nothing_active",
+          message:
+            "No version of this workflow is active, so there is nothing to roll " +
+            "back from.",
+        });
+      }
+
+      /**
+       * Default to the version below the active one — not `active - 1`, which
+       * assumes numbers are contiguous. They are not: syntra.authored has 80
+       * versions and gaps where drafts were never published.
+       */
+      const target =
+        to !== null
+          ? versions.find((v: any) => Number(v.version) === to)
+          : versions.find((v: any) => Number(v.version) < Number(current.version));
+
+      if (!target) {
+        return reply.code(400).send({
+          error: "no_target_version",
+          message:
+            to !== null
+              ? `Version ${to} does not exist for this workflow.`
+              : "There is no earlier version to roll back to.",
+          available: versions.map((v: any) => Number(v.version)),
+        });
+      }
+      if (Number(target.version) === Number(current.version)) {
+        return reply.code(409).send({
+          error: "already_active",
+          message: `Version ${target.version} is already the active one.`,
+        });
+      }
+
+      await client.query("BEGIN");
+      await client.query(
+        `UPDATE graph_definitions SET status = 'retired'
+          WHERE graph_key = $1 AND status = 'active'`,
+        [graphKey],
+      );
+      await client.query(
+        `UPDATE graph_definitions SET status = 'active', activated_at = now()
+          WHERE graph_key = $1 AND version = $2`,
+        [graphKey, target.version],
+      );
+      await client.query("COMMIT");
+
+      return {
+        graphKey,
+        from: Number(current.version),
+        to: Number(target.version),
+        note:
+          `v${current.version} was retired, not deleted — rolling forward again ` +
+          `is the same call with the other version number.`,
+      };
+    } catch (err: any) {
+      await client.query("ROLLBACK").catch(() => {});
+      req.log?.error?.(err);
+      return reply
+        .code(500)
+        .send({ error: "rollback_failed", message: String(err) });
+    } finally {
+      client.release();
+    }
+  });
+
   app.get("/workflows/:graphKey/diff", async (req: any, reply: any) => {
     const graphKey = String(req.params.graphKey ?? "");
     const fromQ = req.query?.from ? Number(req.query.from) : null;

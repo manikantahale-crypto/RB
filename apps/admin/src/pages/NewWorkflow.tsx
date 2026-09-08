@@ -889,7 +889,17 @@ export function NewWorkflowPage() {
                           : "no step could be chosen"}
                       </span>
                       <span className="nw-row-why">
-                        {proposal.graph.source === "model" ? (
+                        {/* `resolved` is not a weaker "model" — it means no
+                            model was called at all, because the workflow this
+                            describes already runs and only a setting differs.
+                            Saying "built by …" here would credit a model with
+                            something it was never asked. */}
+                        {proposal.graph.source === "resolved" ? (
+                          <>
+                            {proposal.graph.summary} · nothing was generated ·
+                            open it in the editor to see the change in place
+                          </>
+                        ) : proposal.graph.source === "model" ? (
                           <>
                             built by {proposal.graph.model} · every step checked
                             against the node registry · reshape it in the editor

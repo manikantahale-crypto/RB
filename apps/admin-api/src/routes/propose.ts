@@ -70,6 +70,10 @@ import {
   type EventFacts,
 } from "../lib/build-plan.js";
 import {
+  resolveAgainstExisting,
+  type Resolution,
+} from "../lib/resolve-before-generate.js";
+import {
   decideChain,
   detectTriggeredWorkflows,
   emitsEvent,
@@ -858,7 +862,13 @@ export function registerProposeRoutes(
          * which is where they were going to end up anyway.
          */
         let graph: {
-          source: "model" | "placeholder";
+          /**
+           * `resolved` is a real graph that no model produced: the existing
+           * workflow with the settings the description asked for. It behaves
+           * like `model` everywhere except the ledger, which must not credit
+           * a model with something it was never asked.
+           */
+          source: "model" | "placeholder" | "resolved";
           nodes: Array<{ id: string; impl: string; config?: Record<string, unknown> }>;
           edges: Array<[string, string]>;
           unsupported: string[];
@@ -908,7 +918,95 @@ export function registerProposeRoutes(
           return first ? [{ id, impl: String(first.key), config: kept }] : [];
         };
 
-        if (!opts.llm) {
+        /**
+         * BEFORE ASKING A MODEL TO INVENT SOMETHING, SEE IF IT ALREADY EXISTS.
+         *
+         * Most descriptions are a change to a workflow that already runs.
+         * "…match against our candidates. Accept at 92" reads like a new
+         * workflow and is not one: that chain runs today, and the only thing
+         * the sentence asks for is one field on one step.
+         *
+         * Generating anyway hands the author a second workflow doing what the
+         * first already does, bound to nothing, and leaves them to notice.
+         */
+        let resolution: Resolution = {
+          kind: "generate",
+          reason: "Not attempted.",
+        };
+        /** Set only when the request was answered without calling a model. */
+        let resolvedGraph: typeof graph | null = null;
+        if (best?.eventType) {
+          const { rows: boundRows } = await client.query(
+            `SELECT b.graph_key, d.version, d.definition
+               FROM graph_event_bindings b
+               JOIN graph_definitions d
+                 ON d.graph_key = b.graph_key AND d.status = 'active'
+              WHERE b.event_type = $1 AND b.status = 'active'
+              LIMIT 1`,
+            [best.eventType],
+          );
+          const row = boundRows[0];
+          const def = row
+            ? typeof row.definition === "string"
+              ? JSON.parse(row.definition)
+              : row.definition
+            : null;
+
+          resolution = resolveAgainstExisting({
+            triggerEventType: best.eventType,
+            boundTo: new Map(row ? [[best.eventType, String(row.graph_key)]] : []),
+            existing: row
+              ? {
+                  graphKey: String(row.graph_key),
+                  version: Number(row.version),
+                  nodes: (def?.nodes ?? []) as Array<{
+                    id: string;
+                    impl: string;
+                    config?: Record<string, unknown>;
+                  }>,
+                }
+              : null,
+            wanted: extracted,
+            declaredFieldsOf: new Map(
+              nodeRows.map((n: any) => [
+                String(n.key),
+                Object.keys(n.config_schema?.properties ?? {}),
+              ]),
+            ),
+          });
+
+          if (resolution.kind === "change" || resolution.kind === "already-satisfied") {
+            const changed = ((def?.nodes ?? []) as Array<{
+              id: string;
+              impl: string;
+              config?: Record<string, unknown>;
+            }>).map((n) => {
+              const forThis =
+                resolution.kind === "change"
+                  ? resolution.changes.filter((c) => c.nodeId === n.id)
+                  : [];
+              if (forThis.length === 0) return n;
+              const config = { ...(n.config ?? {}) };
+              for (const c of forThis) config[c.field] = c.to;
+              return { ...n, config };
+            });
+
+            resolvedGraph = {
+              source: "resolved",
+              nodes: changed,
+              edges: (def?.edges ?? []) as Array<[string, string]>,
+              unsupported: [],
+              model: null,
+              summary: resolution.summary,
+              fallbackReason: null,
+            };
+          }
+        }
+
+        if (resolvedGraph) {
+          // Answered from the workflow that already runs. No model was called.
+          graph = resolvedGraph;
+        } else if (!opts.llm) {
           graph = {
             source: "placeholder",
             nodes: placeholder(),
@@ -1137,7 +1235,7 @@ export function registerProposeRoutes(
         };
 
         const split =
-          graph.source === "model"
+          graph.source !== "placeholder"
             ? splitByModule({
                 nodes: graph.nodes,
                 edges: graph.edges,
@@ -1414,6 +1512,37 @@ export function registerProposeRoutes(
          * node key must already exist in the registry, and anything the model
          * could not build has to be declared rather than quietly dropped.
          */
+        /**
+         * Answered without a model. Worth its own line, because "we did not
+         * generate anything" looks identical to "generation failed" unless
+         * somebody says which it was.
+         */
+        if (graph.source === "resolved" && resolution.kind === "change") {
+          ledger.push({
+            kind: "MATCHED",
+            text: `${resolution.graphKey} v${resolution.version} already does this`,
+            citation:
+              `No workflow was generated. ` +
+              resolution.changes
+                .map(
+                  (c) =>
+                    `${c.nodeId}.${c.field} ${JSON.stringify(c.from) ?? "unset"} → ${JSON.stringify(c.to)} (from "${c.phrase}")`,
+                )
+                .join("; "),
+            source: "system",
+          });
+        }
+        if (graph.source === "resolved" && resolution.kind === "already-satisfied") {
+          ledger.push({
+            kind: "MATCHED",
+            text: `${resolution.graphKey} v${resolution.version} already does exactly this`,
+            citation:
+              "Every setting you asked for is the value it is already set to. " +
+              "Nothing was generated and nothing needs changing.",
+            source: "system",
+          });
+        }
+
         if (graph.source === "model") {
           /**
            * The step chain, not `builtSummary`. The summary is a full sentence

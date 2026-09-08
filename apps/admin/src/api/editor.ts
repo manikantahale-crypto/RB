@@ -298,7 +298,11 @@ export type Proposal = {
    * advice.
    */
   graph: {
-    source: "model" | "placeholder";
+    /**
+     * `resolved` means no model was called: the request was answered from
+     * the workflow that already runs, with the settings it asked for changed.
+     */
+    source: "model" | "placeholder" | "resolved";
     nodes: Array<{ id: string; impl: string; config?: Record<string, unknown> }>;
     edges: Array<[string, string]>;
     /** What the model said it could not build. Never silently dropped. */
@@ -565,4 +569,48 @@ export function loadDiff(graphKey: string, from?: number, to?: number) {
   return request<DiffResponse>(
     `/workflows/${encodeURIComponent(graphKey)}/diff${qs ? `?${qs}` : ""}`,
   );
+}
+
+/**
+ * Stop a workflow running, without deleting anything.
+ *
+ * Retires its active binding and nothing else — the definition and every
+ * version stay exactly as they are. `expectedEventType` guards against a screen
+ * that has been open a while: if the binding has changed underneath you, this
+ * refuses rather than taking the wrong event offline.
+ */
+export function takeWorkflowOffline(
+  graphKey: string,
+  expectedEventType?: string,
+) {
+  return request<{
+    graphKey: string;
+    offline: boolean;
+    retired: string[];
+    rowsChanged: number;
+    note: string;
+  }>(`/workflows/${encodeURIComponent(graphKey)}/take-offline`, {
+    method: "POST",
+    body: JSON.stringify(expectedEventType ? { expectedEventType } : {}),
+  });
+}
+
+/**
+ * Make an earlier version the active one.
+ *
+ * A binding names a workflow, not a version, so rolling back changes which
+ * version is active rather than re-pointing anything. Omit `toVersion` for the
+ * version below the current one — which is not `active - 1`, since version
+ * numbers have gaps.
+ */
+export function rollbackWorkflow(graphKey: string, toVersion?: number) {
+  return request<{
+    graphKey: string;
+    from: number;
+    to: number;
+    note: string;
+  }>(`/workflows/${encodeURIComponent(graphKey)}/rollback`, {
+    method: "POST",
+    body: JSON.stringify(toVersion != null ? { toVersion } : {}),
+  });
 }
