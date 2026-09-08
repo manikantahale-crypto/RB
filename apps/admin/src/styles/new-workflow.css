@@ -450,3 +450,139 @@
 /* A retry beside the reason it failed. The one failure that fixes itself
    should not require navigating away to repeat a description unchanged. */
 .nw-fallback-actions { margin-top: var(--space-3); }
+
+/* ── the plan ─────────────────────────────────────────────────────────────
+   Workflow boxes joined by named events. Boxes, not one canvas: the workflows
+   version independently, fail independently, and may belong to teams the
+   author cannot change — a single picture hides all three until it breaks.
+
+   The seam is drawn, so it has to be legible. Hence the event's own name,
+   description and publish count sit on the link rather than the author being
+   left to infer a gap. */
+.nw-plan {
+  display: flex;
+  flex-direction: column;
+}
+.nw-plan-verdict {
+  font-size: var(--font-size-sm);
+  font-weight: var(--font-weight-semibold);
+  margin: 0 0 var(--space-4);
+  padding: var(--space-3);
+  border-radius: var(--radius-md);
+  background: var(--surface-sunken);
+  color: var(--text-primary);
+}
+.nw-plan-verdict--blocked {
+  background: var(--status-danger-bg);
+  color: var(--status-danger-fg);
+  border: 1px solid var(--status-danger-border);
+}
+
+/* ── a workflow ── */
+.nw-plan-box {
+  display: grid;
+  grid-template-columns: 1.6rem auto auto minmax(0, 1fr);
+  gap: var(--space-3);
+  align-items: baseline;
+  padding: var(--space-3);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-md);
+  background: var(--surface-raised);
+}
+/* Already runs: drawn, but quiet. Nothing here is being changed. */
+.nw-plan-box--exists {
+  border-left: 3px solid var(--border-subtle);
+  opacity: 0.85;
+}
+/* This is where the canvas opens. */
+.nw-plan-box--new {
+  border-left: 3px solid var(--accent);
+}
+/* Needs a developer — the one state the author cannot resolve. */
+.nw-plan-box--blocked {
+  border-left: 3px solid var(--status-danger-border);
+  background: var(--status-danger-bg);
+}
+.nw-plan-seq {
+  font-family: var(--font-family-mono);
+  font-size: var(--font-size-xs);
+  color: var(--text-muted);
+}
+.nw-plan-name {
+  font-family: var(--font-family-display);
+  font-size: var(--font-size-sm);
+  font-weight: var(--font-weight-semibold);
+}
+.nw-plan-tag {
+  margin-left: var(--space-2);
+  padding: 0 var(--space-2);
+  border-radius: var(--radius-sm);
+  background: var(--surface-sunken);
+  font-family: var(--font-family-mono);
+  font-size: var(--font-size-xs);
+  font-weight: var(--font-weight-normal);
+  color: var(--text-secondary);
+}
+.nw-plan-state {
+  font-family: var(--font-family-mono);
+  font-size: var(--font-size-xs);
+  letter-spacing: 0.04em;
+  color: var(--text-secondary);
+}
+.nw-plan-detail {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  min-width: 0;
+}
+.nw-plan-steps {
+  font-family: var(--font-family-mono);
+  font-size: var(--font-size-xs);
+  color: var(--text-secondary);
+  overflow-wrap: anywhere;
+}
+.nw-plan-why {
+  font-size: var(--font-size-xs);
+  color: var(--text-secondary);
+  line-height: var(--line-height-normal);
+}
+
+/* ── the event between two workflows ── */
+.nw-plan-link {
+  display: grid;
+  grid-template-columns: 1.6rem minmax(0, 1fr);
+  gap: var(--space-3);
+  padding: var(--space-2) 0;
+}
+.nw-plan-rail {
+  justify-self: center;
+  width: 2px;
+  background: var(--border-subtle);
+  border-radius: 1px;
+}
+.nw-plan-link--blocked .nw-plan-rail {
+  background: var(--status-danger-border);
+}
+.nw-plan-linkbody {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  padding: var(--space-2) 0;
+  min-width: 0;
+}
+.nw-plan-event {
+  font-family: var(--font-family-mono);
+  font-size: var(--font-size-xs);
+  color: var(--text-primary);
+  overflow-wrap: anywhere;
+}
+.nw-plan-facts {
+  font-family: var(--font-family-mono);
+  font-size: var(--font-size-xs);
+  color: var(--text-muted);
+}
+.nw-plan-reason {
+  font-size: var(--font-size-xs);
+  color: var(--status-danger-fg);
+  line-height: var(--line-height-normal);
+}

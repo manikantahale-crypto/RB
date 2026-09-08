@@ -346,6 +346,39 @@ export type Proposal = {
         handoffEmitted: "yes" | "no" | "unknown" | null;
       }>
     | null;
+  /**
+   * The whole outcome the description resolved to — workflow boxes joined by
+   * named events, each marked exists / new / blocked. Null for a placeholder
+   * proposal, where there is nothing to resolve.
+   */
+  plan: {
+    steps: Array<{
+      seq: number;
+      module: string;
+      graphKey: string | null;
+      version: number | null;
+      state: "exists" | "new" | "blocked";
+      yours: boolean;
+      steps: string[];
+      summary: string;
+    }>;
+    links: Array<{
+      fromSeq: number;
+      toSeq: number;
+      eventType: string | null;
+      description: string | null;
+      producedWhen: string | null;
+      publishCount: number;
+      bound: boolean;
+      routable: boolean;
+      emitted: "yes" | "no" | "unknown";
+      blocked: boolean;
+      reason: string | null;
+    }>;
+    satisfied: boolean;
+    verdict: string;
+  } | null;
+
   /** True when the flow crosses applications, split into a chain or not. */
   spansModules: boolean;
   /**
@@ -456,4 +489,80 @@ export function acceptChain(body: {
     method: "POST",
     body: JSON.stringify(body),
   });
+}
+
+export type GoLiveCheck = {
+  id: string;
+  ok: boolean;
+  message: string;
+};
+
+export type GoLiveChecks = {
+  graphKey: string;
+  version: number;
+  status: string;
+  /**
+   * False for a runtime workflow key. The gate refuses those by design — they
+   * are seeded by migration and an authored workflow must not collide with one
+   * — so judging them would produce failures that mean nothing.
+   */
+  applicable: boolean;
+  reason: string | null;
+  ok?: boolean;
+  checks: GoLiveCheck[];
+};
+
+/**
+ * What the go-live gate would say, asked while there is still time to act.
+ *
+ * Read-only, and deliberately so: asking the question must never be the thing
+ * that answers it. These are the same checks that run at release — the only
+ * thing that was missing was somewhere to see them beforehand.
+ */
+export function loadGoLiveChecks(graphKey: string, version?: number) {
+  const q = version ? `?version=${version}` : "";
+  return request<GoLiveChecks>(
+    `/workflows/${encodeURIComponent(graphKey)}/checks${q}`,
+  );
+}
+
+export type GraphDiff = {
+  trigger: { from: string | null; to: string | null; changed: boolean };
+  nodes: Array<{
+    id: string;
+    kind: "added" | "removed" | "changed";
+    impl: string;
+    implFrom?: string;
+    config: Array<{ field: string; from: unknown; to: unknown }>;
+  }>;
+  edgesAdded: Array<[string, string]>;
+  edgesRemoved: Array<[string, string]>;
+  identical: boolean;
+  summary: string;
+};
+
+export type DiffResponse = {
+  graphKey: string;
+  from: number | null;
+  to: number;
+  versions: Array<{ version: number; status: string }>;
+  diff: GraphDiff | null;
+  /** Set when there is nothing to compare — a first version. */
+  note: string | null;
+};
+
+/**
+ * What changed between two versions.
+ *
+ * With no arguments it compares the two most recent, because that is the
+ * question nine times in ten: what did I just do.
+ */
+export function loadDiff(graphKey: string, from?: number, to?: number) {
+  const q = new URLSearchParams();
+  if (from != null) q.set("from", String(from));
+  if (to != null) q.set("to", String(to));
+  const qs = q.toString();
+  return request<DiffResponse>(
+    `/workflows/${encodeURIComponent(graphKey)}/diff${qs ? `?${qs}` : ""}`,
+  );
 }

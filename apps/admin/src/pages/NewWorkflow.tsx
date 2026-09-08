@@ -287,6 +287,143 @@ export function NewWorkflowPage() {
                   most useful thing here is seeing WHERE your part sits and,
                   very often, that a neighbouring half already exists.
               */}
+              {/* ── THE PLAN ─────────────────────────────────────────
+
+                  What the author asked for, whole.
+
+                  A request is an outcome, and an outcome is a chain of
+                  workflows joined by events. Answering it with one
+                  application's graph and an apology in `unsupported[]` is the
+                  wrong answer: `unsupported` means "no node in the system can
+                  do this", and a handoff to another application is the
+                  opposite — it means "this is already handled, over there".
+
+                  Boxes rather than one continuous canvas, deliberately. The
+                  workflows version independently, fail independently, and may
+                  belong to teams the author cannot change. Drawing them as one
+                  picture hides all three until something breaks. The seam is
+                  real, so it is visible — and made legible by naming the event
+                  that carries the work, with what the catalogue knows about it.
+              */}
+              {proposal.plan && proposal.plan.steps.length > 0 ? (
+                <section className="nw-block">
+                  <h2 className="nw-block-title">
+                    <span>▣ The plan</span>
+                    <span className="ge-muted">
+                      what you asked for, end to end
+                    </span>
+                  </h2>
+
+                  <div className="nw-card nw-plan">
+                    <p
+                      className={
+                        proposal.plan.steps.some((s) => s.state === "blocked")
+                          ? "nw-plan-verdict nw-plan-verdict--blocked"
+                          : "nw-plan-verdict"
+                      }
+                      role="status"
+                    >
+                      {proposal.plan.verdict}
+                    </p>
+
+                    {proposal.plan.steps.map((step) => {
+                      const into = proposal.plan!.links.find(
+                        (l) => l.toSeq === step.seq,
+                      );
+                      return (
+                        <div key={step.seq}>
+                          {/* the event that carries work into this step */}
+                          {into ? (
+                            <div
+                              className={
+                                into.blocked
+                                  ? "nw-plan-link nw-plan-link--blocked"
+                                  : "nw-plan-link"
+                              }
+                            >
+                              <span className="nw-plan-rail" aria-hidden="true" />
+                              <div className="nw-plan-linkbody">
+                                {into.eventType ? (
+                                  <>
+                                    <code className="nw-plan-event">
+                                      {into.eventType}
+                                    </code>
+                                    {into.description ? (
+                                      <span className="nw-plan-why">
+                                        {into.description}
+                                      </span>
+                                    ) : null}
+                                    <span className="nw-plan-facts">
+                                      {into.producedWhen
+                                        ? `${into.producedWhen} · `
+                                        : ""}
+                                      {/* A handoff that has never been published
+                                          is a chain that has never run. That is
+                                          the most useful warning on this screen. */}
+                                      {into.publishCount > 0
+                                        ? `published ${into.publishCount}×`
+                                        : "never published"}
+                                      {into.bound && !into.routable
+                                        ? " · queue not served"
+                                        : ""}
+                                      {into.emitted === "unknown"
+                                        ? " · nothing declares it is published"
+                                        : ""}
+                                    </span>
+                                  </>
+                                ) : (
+                                  <span className="nw-plan-event">
+                                    ✖ nothing carries the work across
+                                  </span>
+                                )}
+                                {into.reason ? (
+                                  <span className="nw-plan-reason">
+                                    {into.reason}
+                                  </span>
+                                ) : null}
+                              </div>
+                            </div>
+                          ) : null}
+
+                          <div
+                            className={`nw-plan-box nw-plan-box--${step.state}`}
+                          >
+                            <span className="nw-plan-seq">{step.seq}</span>
+                            <span className="nw-plan-name">
+                              {step.module.toUpperCase()}
+                              {step.yours ? (
+                                <span className="nw-plan-tag">yours</span>
+                              ) : null}
+                            </span>
+                            <span className="nw-plan-state">
+                              {step.state === "exists"
+                                ? "EXISTS"
+                                : step.state === "new"
+                                  ? "TO BUILD"
+                                  : "BLOCKED"}
+                            </span>
+                            <span className="nw-plan-detail">
+                              {step.graphKey ? (
+                                <code>
+                                  {step.graphKey}
+                                  {step.version ? ` v${step.version}` : ""}
+                                </code>
+                              ) : null}
+                              <span className="nw-plan-steps">
+                                {step.steps.join(" → ") || "no steps"}
+                              </span>
+                              <span className="nw-plan-why">
+                                {step.summary}
+                              </span>
+                            </span>
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </section>
+              ) : null}
+
               {proposal.chain && proposal.chain.length > 1 ? (
                 <section className="nw-block">
                   <h2 className="nw-block-title">

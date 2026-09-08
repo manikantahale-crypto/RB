@@ -66,6 +66,10 @@ import {
   type EmitDeclaration,
 } from "@tekisho/node-contract";
 import {
+  buildPlan,
+  type EventFacts,
+} from "../lib/build-plan.js";
+import {
   decideChain,
   detectTriggeredWorkflows,
   emitsEvent,
@@ -1059,7 +1063,7 @@ export function registerProposeRoutes(
         );
 
         const { rows: activeBindings } = await client.query(
-          `SELECT event_type, graph_key FROM graph_event_bindings
+          `SELECT event_type, graph_key, module_queue FROM graph_event_bindings
             WHERE status = 'active'`,
         );
         const boundTo = new Map<string, string>(
@@ -1078,9 +1082,42 @@ export function registerProposeRoutes(
          * a retired one runs for nobody.
          */
         const { rows: activeDefs } = await client.query(
-          `SELECT graph_key, definition FROM graph_definitions
+          `SELECT graph_key, version, definition FROM graph_definitions
             WHERE status = 'active'`,
         );
+        const versionOf = new Map<string, number>(
+          activeDefs.map((d: any) => [String(d.graph_key), Number(d.version)]),
+        );
+        const queueOf = new Map<string, string>(
+          activeBindings.map((b: any) => [
+            String(b.event_type),
+            String(b.module_queue),
+          ]),
+        );
+        /**
+         * Queues a worker actually serves. A binding naming anything else is a
+         * door that opens onto nothing: the event is accepted, routed, queued,
+         * and never picked up. Five live bindings are in that state today.
+         */
+        const workedQueues = new Set<string>([
+          "module.syntra.jd",
+          "module.design.resume",
+          "module.design.duplicate",
+          "module.syntra.match",
+          "module.orbit.bench",
+        ]);
+        const eventFacts = new Map<string, EventFacts>(
+          eventRows.map((e: any) => [
+            String(e.event_type),
+            {
+              eventType: String(e.event_type),
+              description: e.description ?? null,
+              producedWhen: e.produced_when ?? null,
+              publishCount: Number(e.publish_count ?? 0),
+            },
+          ]),
+        );
+
         const implsOf = new Map<string, readonly string[]>(
           activeDefs.map((d: any) => [
             String(d.graph_key),
@@ -1166,6 +1203,38 @@ export function registerProposeRoutes(
           // No self key at proposal time: the workflow does not exist yet, so
           // it cannot be the thing its own steps re-enter.
         });
+
+        /**
+         * The plan, built whether or not the flow is stored as a chain.
+         *
+         * The author asked for an outcome. Whether the platform stores that as
+         * one workflow or three is a storage decision made later and lower
+         * down; it must not change what they are shown. So the plan is derived
+         * from the segments — the applications the work passes through —
+         * rather than from `chain`, which only exists when we split.
+         */
+        const plan =
+          split && split.segments.length > 0
+            ? buildPlan({
+                chain: split.segments.map((seg, i) => ({
+                  module: seg.module,
+                  yours: seg.module === module,
+                  steps: seg.stepIds,
+                  nodes: seg.stepIds
+                    .map((id) => graph.nodes.find((n) => n.id === id))
+                    .filter((n): n is NonNullable<typeof n> => Boolean(n)),
+                  startsWith: handoffs[i] ?? null,
+                  alreadyBuilt: handoffs[i]?.handledBy ?? null,
+                })),
+                triggerEventType: best?.eventType ?? null,
+                eventFacts,
+                boundTo,
+                queueOf,
+                workedQueues,
+                versionOf,
+                emitsOf,
+              })
+            : null;
 
         const borrowedSteps = graph.nodes
           .filter((n) => {
@@ -1584,6 +1653,7 @@ export function registerProposeRoutes(
            * case — a concept nobody needs today should cost them no attention.
            */
           chain,
+          plan,
           spansModules,
           chainDecision,
           borrowedSteps,
