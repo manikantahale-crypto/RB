@@ -16,6 +16,8 @@ import {
 
 } from '@tekisho/orchestrator/src/routing/table.js';
 
+import { decideRoute } from '@tekisho/orchestrator/src/routing/decide-route.js';
+
 import { resolveActiveEventBinding } from '@tekisho/authoring/src/event-bindings.js';
 
 import {
@@ -94,26 +96,14 @@ export async function startIngressRouter(args: {
 
 
 
-      const plan = planForEvent(envelope.event_type);
-
-      if (plan.kind !== 'graph') {
-
-        orchStory(
-
-          'ROUTE',
-
-          `${plan.kind.toUpperCase()}  ${envelope.event_type} — ${plan.note} (ack, no graph)`,
-
-        );
-
-        continue;
-
-      }
-
-
-
       try {
 
+        /**
+         * The binding decides; the hardcoded plan only fills the silence.
+         * The precedence itself lives in `decideRoute`, where it is unit
+         * tested — see that file for why it used to be the other way round and
+         * what it cost.
+         */
         const binding = await resolveActiveEventBinding(
 
           pool,
@@ -126,15 +116,23 @@ export async function startIngressRouter(args: {
 
 
 
-        if (!binding) {
+        const decision = decideRoute({
 
-          orchStory(
+          eventType: envelope.event_type,
 
-            'ROUTE',
+          organizationId: envelope.organization_id ?? null,
 
-            `UNROUTABLE  ${envelope.event_type}  org=${envelope.organization_id ?? '~global~'} — no active binding (ack)`,
+          binding,
 
-          );
+          plan: planForEvent(envelope.event_type),
+
+        });
+
+
+
+        if (decision.kind === 'ack') {
+
+          orchStory('ROUTE', `${decision.label}  ${decision.note}`);
 
           continue;
 
@@ -142,9 +140,9 @@ export async function startIngressRouter(args: {
 
 
 
-        const graphKey = binding.graph_key;
+        const graphKey = decision.graphKey;
 
-        const moduleQueue = binding.module_queue;
+        const moduleQueue = decision.moduleQueue;
 
 
 
@@ -184,7 +182,7 @@ export async function startIngressRouter(args: {
 
           `${envelope.event_type} → ${moduleQueue}  graph=${graphKey}@${graphVersion}` +
 
-            `  agent=${binding.agent_id ?? 'n/a'}  via=${binding.source}  next=run graph`,
+            `  agent=${binding?.agent_id ?? 'n/a'}  via=${binding?.source ?? 'binding'}  next=run graph`,
 
         );
 

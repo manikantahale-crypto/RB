@@ -16,6 +16,7 @@ import {
   DISPATCH_QUEUE,
   MODULE_SEND_OPTIONS,
 } from "@tekisho/orchestrator/src/routing/table.js";
+import { decideRelayTargets } from "@tekisho/orchestrator/src/routing/decide-route.js";
 
 export { DISPATCH_QUEUE };
 export const DISPATCH_DLQ = "orchestration.dispatch.dlq";
@@ -109,6 +110,32 @@ export async function relayOnce(
     const txDb = pgClientAsBossDb(client);
     const publishedIds: string[] = [];
 
+    /**
+     * WHICH EVENTS SOMEBODY HAS BOUND A WORKFLOW TO.
+     *
+     * This relay is the FIRST of the two places `planForEvent` used to decide
+     * everything, and it is the one that actually matters: an event it sends to
+     * DISPATCH never reaches the ingress router at all. Fixing the router alone
+     * changed nothing for the six bindings whose events the hardcoded map calls
+     * terminal or fail — they were never routed there in the first place.
+     *
+     * So a bound event now goes to the router as well, whatever the map says.
+     *
+     * ADDITIVE, NOT A SWAP. Dispatch keeps its control-plane duties, and they
+     * are not optional: `resume` unparks a waiting human gate, `fail` records
+     * the run for replay. A bound `fail` event now does BOTH — the failure is
+     * recorded and the retry workflow runs, which is exactly the intent.
+     *
+     * One query per batch rather than one per event: there are twenty bindings
+     * and a hundred rows in a batch, and this sits in the hot path.
+     */
+    const boundEvents = await client
+      .query<{ event_type: string }>(
+        `SELECT DISTINCT event_type FROM graph_event_bindings WHERE status = 'active'`,
+      )
+      .then((r) => new Set(r.rows.map((x) => x.event_type)))
+      .catch(() => new Set<string>());
+
     for (const row of rows) {
       const envelope = toEnvelope(row);
       const plan = planForEvent(row.event_type);
@@ -118,9 +145,15 @@ export async function relayOnce(
         db: txDb,
       };
 
-      if (plan.kind === "graph") {
+      const targets = decideRelayTargets({
+        plan,
+        bound: boundEvents.has(row.event_type),
+      });
+
+      if (targets.ingress) {
         console.log(
-          `[Orch] ── RELAY  ${row.event_type}  id=${row.event_id}  producer=${row.producer}  corr=${row.correlation_id}  → ${INGRESS_QUEUE}  next=router`,
+          `[Orch] ── RELAY  ${row.event_type}  id=${row.event_id}  producer=${row.producer}  corr=${row.correlation_id}  → ${INGRESS_QUEUE}  next=router` +
+            (plan.kind !== "graph" ? `  (bound; map says ${plan.kind})` : ""),
         );
         try {
           await boss.send(INGRESS_QUEUE, envelope, sendOpts);
@@ -132,7 +165,9 @@ export async function relayOnce(
             singletonKey: row.event_id,
           });
         }
-      } else {
+      }
+
+      if (targets.dispatch) {
         const stamped = envelope as EventEnvelope & {
           __graphKey?: string;
           __graphVersion?: number;

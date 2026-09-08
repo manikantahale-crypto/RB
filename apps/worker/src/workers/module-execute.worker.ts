@@ -62,7 +62,48 @@ export async function startModuleWorkers(args: {
 
 
 
-  for (const queue of MODULE_QUEUES) {
+  /**
+   * QUEUES ARE DATA, NOT A CONSTANT.
+   *
+   * This used to loop over `MODULE_QUEUES` alone — five names in a TypeScript
+   * file. A binding naming anything else was a door opening onto nothing: the
+   * event was accepted by ingress, routed, stamped and enqueued, and then
+   * nobody came. No error, because nothing failed.
+   *
+   * `module.relay` and `module.interview` were in exactly that state, carrying
+   * five live bindings between them. Serving them required an engine release,
+   * which is one of the three reasons onboarding a module used to cost a
+   * deploy.
+   *
+   * So the list is now the union of what the code knows and what the database
+   * says. `MODULE_QUEUES` stays as a FLOOR — a queue that is expected but has
+   * no binding yet is still subscribed, so the first event to arrive is not
+   * dropped waiting for a binding to exist.
+   *
+   * Read once at boot. A queue registered later needs a worker restart, which
+   * is the same cost as any other subscription and far below an engine release.
+   */
+  const bound = await pool
+    .query<{ module_queue: string }>(
+      `SELECT DISTINCT module_queue
+         FROM graph_event_bindings
+        WHERE status = 'active' AND module_queue IS NOT NULL`,
+    )
+    .then((r) => r.rows.map((x) => x.module_queue))
+    .catch(() => [] as string[]);
+
+  const queues = [...new Set<string>([...MODULE_QUEUES, ...bound])];
+
+  const extra = queues.filter(
+    (q) => !(MODULE_QUEUES as readonly string[]).includes(q),
+  );
+  orchStory(
+    'RUN',
+    `serving ${queues.length} module queues` +
+      (extra.length ? ` (${extra.length} from bindings: ${extra.join(', ')})` : ''),
+  );
+
+  for (const queue of queues) {
 
     await boss.createQueue(queue);
 
