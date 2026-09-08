@@ -29,6 +29,7 @@ export {
 
   // projections — derived, never hand-maintained
   registryKey,
+  contractFilePath,
   isEditorTestable,
   requiresAllowlist,
   fixtureMatchMode,

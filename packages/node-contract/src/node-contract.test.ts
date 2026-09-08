@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { z } from "zod";
 import {
+  contractFilePath,
   adminExposedFields,
   checksumOf,
   defineNode,
@@ -358,5 +359,38 @@ describe("resolveEmits", () => {
 
   it("treats an undeclared node as publishing nothing knowable", () => {
     expect(resolveEmits(undefined, { onActionable: "x" })).toEqual([]);
+  });
+});
+
+describe("contractFilePath", () => {
+  it("derives the path from module and the last two key segments", () => {
+    expect(
+      contractFilePath({ key: "syntra.duplicate.detect", module: "syntra" }),
+    ).toBe("syntra/nodes/duplicate-detect.node.ts");
+  });
+
+  it("uses `module`, not the key's first segment", () => {
+    // orch.branch.decision lives in platform/ and drops `orch` entirely. A rule
+    // written from the SYNTRA nodes alone — "key minus its module" — rejects it.
+    expect(
+      contractFilePath({ key: "orch.branch.decision", module: "platform" }),
+    ).toBe("platform/nodes/branch-decision.node.ts");
+  });
+
+  it("handles a two-segment key", () => {
+    expect(contractFilePath({ key: "human.gate", module: "platform" })).toBe(
+      "platform/nodes/human-gate.node.ts",
+    );
+  });
+
+  it("agrees with every contract currently in the tree", () => {
+    // The nine SYNTRA nodes, where the last two segments and "key minus
+    // module" happen to coincide.
+    expect(contractFilePath({ key: "syntra.run.retry", module: "syntra" })).toBe(
+      "syntra/nodes/run-retry.node.ts",
+    );
+    expect(
+      contractFilePath({ key: "syntra.shortlist.notify", module: "syntra" }),
+    ).toBe("syntra/nodes/shortlist-notify.node.ts");
   });
 });

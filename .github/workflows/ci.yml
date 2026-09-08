@@ -103,6 +103,14 @@ jobs:
       - name: node-api — module boundaries
         run: npx vitest run node-api/structure.test.js
 
+      # adapters/README.md has always said filenames derive from a node's key
+      # "so registry:check can verify a file sits where its key says". That
+      # script did not exist, and typecheck:adapters proves only that the
+      # contracts compile — not where they live, and not that anything loads
+      # them. A convention nobody checks is a habit, and habits drift.
+      - name: adapters — every contract where its key says
+        run: npm run check:registry
+
   secrets:
     name: no committed credentials
     runs-on: ubuntu-latest

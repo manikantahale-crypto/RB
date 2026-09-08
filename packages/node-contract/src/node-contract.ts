@@ -469,6 +469,31 @@ export function registryKey(c: Pick<NodeContract, "key" | "version">): string {
   return `${c.key}@${c.version.split(".")[0]}`;
 }
 
+/**
+ * Where a contract's file must live, derived from the contract itself.
+ *
+ * `adapters/README.md` has always said filenames derive from the key
+ * mechanically "so `registry:check` can verify a file sits where its key says".
+ * That script did not exist, and in its absence the convention held only
+ * because everyone happened to follow it.
+ *
+ * THE RULE IS THE LAST TWO SEGMENTS, not "the key minus its module". Those are
+ * the same thing for the nine SYNTRA nodes and different for both platform
+ * ones: `orch.branch.decision` lives in `platform/` and drops `orch`, and
+ * `human.gate` has only two segments to begin with. A rule written from the
+ * SYNTRA nodes alone would have rejected both.
+ *
+ * The directory comes from `module`, not from the key's first segment — for
+ * exactly the same reason.
+ */
+export function contractFilePath(
+  c: Pick<NodeContract, "key" | "module">,
+): string {
+  const parts = c.key.split(".");
+  const file = parts.slice(-2).join("-");
+  return `${c.module}/nodes/${file}.node.ts`;
+}
+
 /** `external` / `financial` are never node-testable in the editor (§6.1). */
 export function isEditorTestable(c: Pick<NodeContract, "sideEffect">): boolean {
   return !NEEDS_ALLOWLIST.includes(c.sideEffect);
