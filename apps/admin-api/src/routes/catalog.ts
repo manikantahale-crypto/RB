@@ -63,31 +63,61 @@ export function registerCatalogAndCreateRoutes(
       });
     }
 
-    // Prefer DB event_schemas descriptions when present; always bound to trigger catalog.
-    const triggers = listTriggerEvents();
+    /**
+     * THE CATALOGUE IS THE LIST. The hardcoded eighteen are defaults on top.
+     *
+     * This used to offer `listTriggerEvents()` and only that — eighteen events,
+     * while `event_schemas` holds forty-five. An event somebody registered
+     * themselves never appeared, so the only way to trigger a workflow on it
+     * was to know its name and type it somewhere else.
+     *
+     * Now every registered event is offered. The hardcoded entry still supplies
+     * the label and the deliberately chosen `moduleQueue`
+     * (`module.design.resume` is not derivable from `syntra.resume.received`),
+     * and an event without one gets its own name as the label and no queue —
+     * which `upsertActiveEventBinding` then derives at bind time.
+     */
+    const known = new Map(listTriggerEvents().map((t) => [t.eventType, t]));
     return withOrgScope(pool, readOrgId(req.headers), async (client) => {
-      const types = triggers.map((t) => t.eventType);
       const { rows } = await client.query<{
         event_type: string;
         description: string | null;
       }>(
         `SELECT event_type, description
            FROM event_schemas
-          WHERE event_type = ANY($1::text[])
-            AND schema_version = '1.0'`,
-        [types],
+          WHERE schema_version = '1.0'
+          ORDER BY event_type`,
       );
-      const byType = new Map(rows.map((r) => [r.event_type, r.description]));
 
-      return reply.send({
-        events: triggers.map((t) => ({
+      const fromCatalogue = rows.map((r) => {
+        const hardcoded = known.get(r.event_type);
+        return {
+          eventType: r.event_type,
+          label: hardcoded?.label ?? r.event_type,
+          description: r.description ?? hardcoded?.description ?? null,
+          moduleQueue: hardcoded?.moduleQueue ?? null,
+          defaultGraphKey: hardcoded?.defaultGraphKey ?? null,
+        };
+      });
+
+      /**
+       * A hardcoded trigger the catalogue has no row for is still offered.
+       * Dropping it would silently remove something that works today, which is
+       * a worse failure than listing one event twice — and it cannot be twice,
+       * because these are the ones the loop above did not find.
+       */
+      const seen = new Set(fromCatalogue.map((e) => e.eventType));
+      const orphans = [...known.values()]
+        .filter((t) => !seen.has(t.eventType))
+        .map((t) => ({
           eventType: t.eventType,
           label: t.label,
-          description: byType.get(t.eventType) ?? t.description,
+          description: t.description,
           moduleQueue: t.moduleQueue,
           defaultGraphKey: t.defaultGraphKey,
-        })),
-      });
+        }));
+
+      return reply.send({ events: [...fromCatalogue, ...orphans] });
     });
   });
 

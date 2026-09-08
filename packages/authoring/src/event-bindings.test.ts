@@ -37,16 +37,36 @@ const row = (over: Partial<EventBindingRow> = {}): EventBindingRow => ({
  * and records everything else. Enough to exercise the guard without a
  * database, because the guard is the whole point.
  */
-function fakeClient(existing: EventBindingRow | null) {
+function fakeClient(
+  existing: EventBindingRow | null,
+  opts: { catalogue?: boolean; siblingQueue?: string | null } = {},
+) {
+  /** Whether `event_schemas` knows this event. */
+  const catalogue = opts.catalogue ?? true;
+  /** The queue this application's other triggers already use, if any. */
+  const siblingQueue = opts.siblingQueue ?? null;
   const statements: string[] = [];
   return {
     statements,
     query: async (text: string) => {
-      statements.push(text.trim().split("\n")[0]!.trim());
-      if (/^SELECT/i.test(text.trim())) {
+      const t = text.trim();
+      statements.push(t.split("\n")[0]!.trim());
+
+      // "Is this event in the catalogue at all?"
+      if (/event_schemas/i.test(t)) {
+        return { rows: catalogue ? [{ ok: 1 }] : [], rowCount: catalogue ? 1 : 0 };
+      }
+      // "What queue do this application's other triggers use?"
+      if (/event_type LIKE/i.test(t)) {
+        return {
+          rows: siblingQueue ? [{ module_queue: siblingQueue }] : [],
+          rowCount: siblingQueue ? 1 : 0,
+        };
+      }
+      if (/^SELECT/i.test(t)) {
         return { rows: existing ? [existing] : [], rowCount: existing ? 1 : 0 };
       }
-      if (/^INSERT/i.test(text.trim())) {
+      if (/^INSERT/i.test(t)) {
         return { rows: [row({ source: "authoring" })], rowCount: 1 };
       }
       return { rows: [], rowCount: 0 };
@@ -125,5 +145,73 @@ describe("upsertActiveEventBinding", () => {
   it("binds freely when nothing holds the event", async () => {
     const client = fakeClient(null);
     await expect(activate(client)).resolves.toBeTruthy();
+  });
+});
+
+describe("binding an event the hardcoded catalogue has never heard of", () => {
+  /** Not one of the eighteen — the case that used to be impossible. */
+  const NEW_EVENT = "syntra.shortlist.approved";
+
+  const activate = (
+    client: ReturnType<typeof fakeClient>,
+    over: Record<string, unknown> = {},
+  ) =>
+    upsertActiveEventBinding(client as never, {
+      eventType: NEW_EVENT,
+      orgId: null,
+      graphKey: "syntra.authored",
+      agentId: "99999999-9999-9999-9999-999999999999",
+      version: 1,
+      ...over,
+    });
+
+  it("binds it when the event catalogue knows it", async () => {
+    // Registering an event and binding a workflow to it used to fail with
+    // `Unknown trigger event_type`, fixable only by an authoring release. That
+    // was the third of three places onboarding a module cost a deploy.
+    const client = fakeClient(null, { catalogue: true });
+    await expect(activate(client)).resolves.toBeTruthy();
+  });
+
+  it("still refuses an event nobody has registered", async () => {
+    // The catalogue is the authority, so an event that is in neither the
+    // hardcoded list nor `event_schemas` is a typo, not a new trigger.
+    const client = fakeClient(null, { catalogue: false });
+    await expect(activate(client)).rejects.toThrow(/Register it in the event/);
+  });
+
+  it("puts it on the queue its application already uses", async () => {
+    // A new SYNTRA trigger belongs with SYNTRA's other work, not on a queue of
+    // its own that nothing else touches.
+    const client = fakeClient(null, {
+      catalogue: true,
+      siblingQueue: "module.syntra.jd",
+    });
+    const row = await activate(client);
+    expect(row).toBeTruthy();
+  });
+
+  it("takes an explicit queue over anything it would derive", async () => {
+    const client = fakeClient(null, { catalogue: true });
+    await expect(
+      activate(client, { moduleQueue: "module.chosen.by.hand" }),
+    ).resolves.toBeTruthy();
+    // With a queue given, it never needs to ask the catalogue at all.
+    expect(client.statements.some((q) => /event_schemas/i.test(q))).toBe(false);
+  });
+
+  it("does not consult the catalogue for one of the known eighteen", async () => {
+    // The hardcoded entry carries a deliberately chosen queue —
+    // `module.design.resume` is not derivable from `syntra.resume.received` —
+    // so it stays the first answer, as a default rather than a gate.
+    const client = fakeClient(null, { catalogue: true });
+    await upsertActiveEventBinding(client as never, {
+      eventType: "syntra.resume.received",
+      orgId: null,
+      graphKey: "resume.intake",
+      agentId: "99999999-9999-9999-9999-999999999999",
+      version: 1,
+    });
+    expect(client.statements.some((q) => /event_schemas/i.test(q))).toBe(false);
   });
 });

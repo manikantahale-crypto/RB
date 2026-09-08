@@ -95,6 +95,47 @@ export class EventAlreadyBoundError extends Error {
 }
 
 /**
+ * Which queue an event's work should go to, when nothing has said.
+ *
+ * Only reached for an event outside the hardcoded catalogue — one somebody
+ * registered themselves. Three steps, most specific first:
+ *
+ *   1. what another event from the same application already uses. If SYNTRA's
+ *      other triggers go to `module.syntra.jd`, a new SYNTRA trigger belongs
+ *      with them rather than on a queue of its own.
+ *   2. `module.<application>`, derived from the event's prefix.
+ *   3. `module.default`, if the event name has no prefix at all.
+ *
+ * A derived name is safe to invent NOW and was not before: the module worker
+ * used to subscribe to five hardcoded queues, so a binding naming anything
+ * else was a door onto nothing. It now subscribes to whatever queues active
+ * bindings name, so a queue invented here is served from the next restart.
+ */
+async function deriveModuleQueue(
+  client: DbQueryable,
+  eventType: string,
+): Promise<string> {
+  const application = eventType.split(".")[0] ?? "";
+
+  if (application) {
+    const { rows } = await client.query<{ module_queue: string }>(
+      `SELECT module_queue, count(*) AS n
+         FROM graph_event_bindings
+        WHERE status = 'active'
+          AND event_type LIKE $1
+          AND module_queue IS NOT NULL
+        GROUP BY module_queue
+        ORDER BY n DESC
+        LIMIT 1`,
+      [`${application}.%`],
+    );
+    if (rows[0]?.module_queue) return rows[0].module_queue;
+  }
+
+  return application ? `module.${application}` : "module.default";
+}
+
+/**
  * Activate authoring binding: retire other active rows for this event+scope,
  * insert/update this agent's binding. Same agent may replace its own binding.
  *
@@ -135,11 +176,39 @@ export async function upsertActiveEventBinding(
     allowTakeover?: boolean;
   },
 ): Promise<EventBindingRow> {
+  /**
+   * THE CATALOGUE DECIDES WHAT IS A VALID TRIGGER, NOT A HARDCODED LIST.
+   *
+   * This used to be `getTriggerEvent(eventType)` and a throw. That list holds
+   * eighteen events; `event_schemas` holds forty-five. So registering a new
+   * event and binding a workflow to it failed with
+   * `Unknown trigger event_type` — and the only fix was an authoring release.
+   *
+   * That was the third of three places onboarding a module cost a deploy. The
+   * other two were the router's event map and the worker's queue list.
+   *
+   * The hardcoded entry is still consulted FIRST, because it carries a
+   * `moduleQueue` chosen deliberately (`module.design.resume` is not derivable
+   * from `syntra.resume.received`). It is now a source of defaults rather than
+   * a gate.
+   */
   const trigger = getTriggerEvent(args.eventType);
-  if (!trigger) {
-    throw new Error(`Unknown trigger event_type: ${args.eventType}`);
+  let moduleQueue = args.moduleQueue ?? trigger?.moduleQueue;
+
+  if (!moduleQueue) {
+    const { rows: known } = await client.query(
+      `SELECT 1 FROM event_schemas WHERE event_type = $1 LIMIT 1`,
+      [args.eventType],
+    );
+    if (known.length === 0) {
+      throw new Error(
+        `Unknown event type: ${args.eventType}. Register it in the event ` +
+          `catalogue before binding a workflow to it.`,
+      );
+    }
+    moduleQueue = await deriveModuleQueue(client, args.eventType);
   }
-  const moduleQueue = args.moduleQueue ?? trigger.moduleQueue;
+
   const orgId = args.orgId;
 
   const existing = await resolveActiveEventBinding(client, args.eventType, orgId);
