@@ -36,6 +36,7 @@ const OWNS = {
   "event-catalog.css": ["ec"],
   "new-workflow.css": ["nw"],
   "live-test.css": ["lt"],
+  "platform-health.css": ["ph"],
 };
 
 /**

@@ -1,6 +1,7 @@
 import { BrowserRouter, Link, Navigate, Route, Routes, useLocation } from "react-router-dom";
 import { BuilderPage } from "./pages/BuilderPage";
 import { GoLiveRequestsPage } from "./pages/GoLiveRequests";
+import { PlatformHealthPage } from "./pages/PlatformHealth";
 import { PolicyEditorPage } from "./pages/PolicyEditor";
 import { WorkflowTestPage } from "./pages/WorkflowTestPage";
 import { WorkflowsRegistryPage } from "./pages/WorkflowsRegistry";
@@ -61,6 +62,9 @@ function AppShell() {
             is it doing", not on a half-built editor. */}
         <Route path="/" element={<Navigate to="/workflows" replace />} />
         <Route path="/go-live-requests" element={<GoLiveRequestsPage />} />
+        {/* The faults nothing else reports: work nobody collects, steps in no
+            registry, events nothing answers. */}
+        <Route path="/platform/health" element={<PlatformHealthPage />} />
         <Route path="/ops" element={<Navigate to="/workflows" replace />} />
         <Route path="/runs" element={<Navigate to="/workflows" replace />} />
         <Route path="/dev/workflow/:fixtureId" element={<WorkflowTestPage />} />

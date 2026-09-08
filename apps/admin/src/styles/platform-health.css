@@ -1,0 +1,126 @@
+/* ═══════════════ Platform health ═══════════════
+   ONE STYLESHEET PER SCREEN.
+
+   `npm run check:styles -w @tekisho/admin` keeps the split honest: a class
+   whose prefix does not belong to this screen fails the build.
+
+   Every value here comes from tokens.css.
+   ═══════════════════════════════════════════════════════════════════════ */
+
+.ph-page {
+  display: flex;
+  flex-direction: column;
+  gap: var(--panel-gap);
+}
+.ph-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--space-3);
+}
+.ph-crumb {
+  font-family: var(--font-family-mono);
+  font-size: var(--font-size-xs);
+  color: var(--text-muted);
+  margin: 0 0 var(--space-2);
+}
+.ph-title {
+  font-family: var(--font-family-display);
+  font-size: var(--font-size-xl);
+  margin: 0;
+}
+.ph-counts {
+  font-family: var(--font-family-mono);
+  font-size: var(--font-size-xs);
+  color: var(--text-secondary);
+}
+.ph-error {
+  padding: var(--space-4);
+  border: 1px solid var(--status-danger-border);
+  border-radius: var(--radius-lg);
+  background: var(--status-danger-bg);
+  color: var(--status-danger-fg);
+}
+
+/* ── the verdict ──────────────────────────────────────────────────────────
+   Says what was NOT looked at as well as what passed. A screen reporting "all
+   clear" while two checks could not run tells the same lie the checks exist
+   to stop. */
+.ph-verdict {
+  margin: 0;
+  padding: var(--space-3);
+  border-radius: var(--radius-md);
+  background: var(--surface-sunken);
+  font-size: var(--font-size-sm);
+  font-weight: var(--font-weight-semibold);
+  color: var(--text-primary);
+}
+.ph-verdict--bad {
+  background: var(--status-danger-bg);
+  color: var(--status-danger-fg);
+  border: 1px solid var(--status-danger-border);
+}
+
+/* ── one check ── */
+.ph-card {
+  padding: var(--space-4);
+  border: 1px solid var(--border-subtle);
+  border-left-width: 3px;
+  border-radius: var(--radius-lg);
+  background: var(--surface-raised);
+}
+.ph-card--pass { border-left-color: var(--status-success-border); }
+.ph-card--fail { border-left-color: var(--status-danger-border); }
+/* Deliberately its own colour. Not-checked is not a milder failure and not a
+   quiet pass — it is the absence of an answer. */
+.ph-card--unchecked { border-left-color: var(--border-subtle); opacity: 0.85; }
+
+.ph-card-title {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-2);
+  font-family: var(--font-family-display);
+  font-size: var(--font-size-md);
+  margin: 0 0 var(--space-2);
+}
+.ph-mark {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 1.25rem;
+  height: 1.25rem;
+  border-radius: var(--radius-sm);
+  font-size: var(--font-size-xs);
+}
+.ph-card--pass .ph-mark { background: var(--status-success-bg); color: var(--status-success-fg); }
+.ph-card--fail .ph-mark { background: var(--status-danger-bg); color: var(--status-danger-fg); }
+.ph-card--unchecked .ph-mark { background: var(--surface-sunken); color: var(--text-muted); }
+
+.ph-id {
+  margin-left: auto;
+  font-family: var(--font-family-mono);
+  font-size: var(--font-size-xs);
+  color: var(--text-muted);
+}
+.ph-message {
+  margin: 0;
+  font-size: var(--font-size-sm);
+  color: var(--text-secondary);
+  line-height: var(--line-height-normal);
+}
+.ph-detail {
+  margin: var(--space-3) 0 0;
+  padding-left: var(--space-5);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  font-family: var(--font-family-mono);
+  font-size: var(--font-size-xs);
+  color: var(--text-secondary);
+  overflow-wrap: anywhere;
+}
+.ph-foot {
+  margin: 0;
+  font-size: var(--font-size-xs);
+  color: var(--text-muted);
+}
