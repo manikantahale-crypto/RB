@@ -14,6 +14,7 @@
  * imports the canvas is not.
  */
 import type { GraphDefinition } from "../api/editor";
+import { ROUTER_DEFINITIONS } from "@tekisho/graph-contract";
 
 /**
  * Which edge an insertion is happening on, in DEFINITION space.
@@ -158,8 +159,12 @@ export function removeStep(def: GraphDefinition, id: string): GraphDefinition {
    reports it — the run just silently goes the other way. So a branch is added
    by choosing a router and getting its outcomes, never by typing a label.
 
-   Keep in sync with packages/orchestrator/src/graphs/routers.ts and
-   ALLOWED_ROUTER_KEYS in packages/authoring/src/validate-llm-graph.ts.
+   THE KEYS AND OUTCOMES ARE NOT DECLARED HERE. They come from
+   `@tekisho/graph-contract`, which the engine reads too. This file used to
+   keep its own copy of the same four routers — two hand-written lists of the
+   same thing, in packages owned by different people, and the only question was
+   when they would disagree. All that is added below is what only a screen
+   knows: a label and the sentence explaining the choice.
    ───────────────────────────────────────────────────────────────────────── */
 
 export type RouterSpec = {
@@ -186,40 +191,39 @@ export type RouterSpec = {
   why: string;
 };
 
-export const ROUTERS: RouterSpec[] = [
-  {
-    key: "branch_key",
+/** The half only a screen knows. Everything else comes from the contract. */
+const ROUTER_WORDS: Record<string, { label: string; why: string }> = {
+  branch_key: {
     label: "On a confidence score",
-    outcomes: ["pass", "human_review", "reject"],
-    decisionImpl: "orch.branch.decision",
-    customOutcomes: true,
     why: "Adds a step that reads a score and decides. You choose the paths and where each one starts.",
   },
-  {
-    key: "result.approved_or_end",
+  "result.approved_or_end": {
     label: "On whether it was approved",
-    outcomes: ["approved", "rejected"],
-    decisionImpl: null,
-    customOutcomes: false,
     why: "Reads the result of the step before it. No extra step is added.",
   },
-  {
-    key: "result.continue_or_gate",
+  "result.continue_or_gate": {
     label: "On whether a person has answered yet",
-    outcomes: ["continued", "gate"],
-    decisionImpl: null,
-    customOutcomes: false,
     why: "For a human gate: carry on once it is resumed, otherwise wait.",
   },
-  {
-    key: "result.has_duplicate_or_end",
+  "result.has_duplicate_or_end": {
     label: "On whether a duplicate was found",
-    outcomes: ["duplicate_found", "no_duplicate"],
-    decisionImpl: null,
-    customOutcomes: false,
     why: "Reads the result of the step before it. No extra step is added.",
   },
-];
+};
+
+/**
+ * A router the contract names but nobody has written words for still gets
+ * offered, under its key. Hiding it would be worse: the engine can run it, so
+ * an author who cannot see it is being kept from something that works.
+ */
+export const ROUTERS: RouterSpec[] = ROUTER_DEFINITIONS.map((r) => ({
+  key: r.key,
+  outcomes: [...r.outcomes],
+  decisionImpl: r.decisionImpl,
+  customOutcomes: r.customOutcomes,
+  label: ROUTER_WORDS[r.key]?.label ?? r.key,
+  why: ROUTER_WORDS[r.key]?.why ?? "",
+}));
 
 /** One `conditionalEdges` entry: a step and where each of its outcomes goes. */
 export type Fork = { from: string; router: string; map: Record<string, string> };

@@ -18,6 +18,16 @@ export const HARD_FILTER_KEYS = [
  * Router keys the runtime supports in conditionalEdges.
  * Must stay in sync with packages/orchestrator/src/graphs/routers.ts.
  */
+/**
+ * Written out rather than derived from `@tekisho/graph-contract`, on purpose:
+ * `RouterKey` below is a union used for narrowing, and deriving the list would
+ * widen it to `string` and lose that. `MODULES` in the node contract is written
+ * out for the same reason.
+ *
+ * The cast is the one place this could drift from the contract, so a test
+ * asserts they match — add a router to the contract without adding it here and
+ * `validate-llm-graph.test.ts` fails.
+ */
 export const ALLOWED_ROUTER_KEYS = [
   "branch_key",
   "result.approved_or_end",
