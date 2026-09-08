@@ -21,6 +21,12 @@ import {
 } from "@tekisho/graph-contract";
 import { withOrgScope } from "../with-org-scope.js";
 import { deriveChain } from "../lib/derive-chain.js";
+import { collectGateEvidence } from "../lib/gate-evidence.js";
+import { diffGraphs } from "../lib/diff-graphs.js";
+import {
+  evaluateGoLiveGate,
+  oneActiveIndexIsPerGraphKey,
+} from "@tekisho/authoring/src/go-live-gate.js";
 
 type FastifyLike = {
   get: (path: string, handler: any) => void;
@@ -368,6 +374,188 @@ export function registerEditorRoutes(app: FastifyLike, pool: Pool): void {
    * Derived rather than stored — see `lib/derive-chain.ts` for how, and for
    * the one kind of link it cannot see.
    */
+  /**
+   * Screen 9 — the go-live checks, run before anybody asks for go-live.
+   *
+   * THE CHECKS ALREADY EXISTED. `evaluateGoLiveGate` has run on every agent
+   * release for weeks; it was simply unreachable for a workflow, so an author
+   * building one found out what the gate thought at the moment it refused
+   * them. Showing the same verdicts while there is still time to act on them
+   * costs one endpoint and no new logic.
+   *
+   * Read-only. It decides nothing and changes nothing — asking what the gate
+   * would say must never be the thing that makes it say it.
+   *
+   * The gate refuses any key containing `.workflow`, deliberately: those are
+   * runtime keys seeded by migration, and an authored workflow must not
+   * collide with one. So this reports honestly on drafts and says why it
+   * cannot judge a seeded workflow, rather than showing a wall of failures
+   * that mean nothing.
+   */
+  /**
+   * Screen 8 — what changed between two versions.
+   *
+   * Defaults to the two most recent, because that is the question actually
+   * being asked nine times in ten: what did I just do. Any pair can be named
+   * explicitly.
+   *
+   * The comparison is field-level rather than textual — see `diff-graphs.ts`
+   * for why. Version numbers, checksums and timestamps are excluded on
+   * purpose: they differ between any two versions by construction, so
+   * reporting them is noise that trains people to skim.
+   */
+  app.get("/workflows/:graphKey/diff", async (req: any, reply: any) => {
+    const graphKey = String(req.params.graphKey ?? "");
+    const fromQ = req.query?.from ? Number(req.query.from) : null;
+    const toQ = req.query?.to ? Number(req.query.to) : null;
+    try {
+      const { rows } = await pool.query(
+        `SELECT version, status, definition FROM graph_definitions
+          WHERE graph_key = $1 ORDER BY version DESC`,
+        [graphKey],
+      );
+      if (rows.length === 0) {
+        return reply.code(404).send({ error: "workflow_not_found", graphKey });
+      }
+      if (rows.length === 1 && fromQ === null && toQ === null) {
+        return {
+          graphKey,
+          from: null,
+          to: rows[0].version,
+          versions: rows.map((r: any) => ({
+            version: r.version,
+            status: r.status,
+          })),
+          diff: null,
+          note: "This is the first version — there is nothing to compare it with.",
+        };
+      }
+
+      const pick = (want: number | null, fallbackIndex: number) =>
+        want !== null
+          ? rows.find((r: any) => Number(r.version) === want)
+          : rows[fallbackIndex];
+
+      const newer = pick(toQ, 0);
+      const older = pick(fromQ, 1);
+      if (!newer || !older) {
+        return reply.code(400).send({
+          error: "version_not_found",
+          message: "One of the versions asked for does not exist.",
+          available: rows.map((r: any) => r.version),
+        });
+      }
+
+      const parse = (d: unknown) =>
+        typeof d === "string" ? JSON.parse(d) : (d as Record<string, unknown>);
+
+      return {
+        graphKey,
+        from: older.version,
+        to: newer.version,
+        versions: rows.map((r: any) => ({
+          version: r.version,
+          status: r.status,
+        })),
+        // Older first: passing them the other way round produces a diff that
+        // is correct and backwards.
+        diff: diffGraphs(parse(older.definition), parse(newer.definition)),
+        note: null,
+      };
+    } catch (err: any) {
+      req.log?.error?.(err);
+      return reply.code(500).send({ error: "diff_failed", message: String(err) });
+    }
+  });
+
+  app.get("/workflows/:graphKey/checks", async (req: any, reply: any) => {
+    const graphKey = String(req.params.graphKey ?? "");
+    const wanted = req.query?.version ? Number(req.query.version) : null;
+    try {
+      const { rows } = await pool.query(
+        `SELECT version, status, definition, checksum
+           FROM graph_definitions
+          WHERE graph_key = $1
+            AND ($2::int IS NULL OR version = $2::int)
+          ORDER BY (status = 'draft') DESC, version DESC
+          LIMIT 1`,
+        [graphKey, wanted],
+      );
+      const row = rows[0];
+      if (!row) {
+        return reply.code(404).send({ error: "workflow_not_found", graphKey });
+      }
+
+      if (graphKey.includes(".workflow")) {
+        return {
+          graphKey,
+          version: row.version,
+          status: row.status,
+          applicable: false,
+          reason:
+            "This is a runtime workflow key, seeded by migration. The go-live " +
+            "gate only judges authored workflows — it refuses these by design, " +
+            "so running it here would report failures that mean nothing.",
+          checks: [],
+        };
+      }
+
+      const artifactSource =
+        typeof row.definition === "string"
+          ? row.definition
+          : JSON.stringify(row.definition);
+
+      /**
+       * The index fact, read rather than assumed. When it cannot be read the
+       * gate is told nothing and reports "not checked" for it, which is the
+       * honest answer — the alternative is a check that passes because a query
+       * failed.
+       */
+      let oneActiveIndexPerGraphKey: boolean | undefined;
+      try {
+        const { rows: idx } = await pool.query(
+          `SELECT indexdef FROM pg_indexes
+            WHERE indexname = 'graph_definitions_one_active' LIMIT 1`,
+        );
+        if (idx[0]?.indexdef) {
+          oneActiveIndexPerGraphKey = oneActiveIndexIsPerGraphKey(
+            String(idx[0].indexdef),
+          );
+        }
+      } catch {
+        /* leave undefined — reported as not checked */
+      }
+
+      const evidence = await collectGateEvidence(pool, artifactSource, graphKey);
+
+      const gate = evaluateGoLiveGate({
+        artifactSource,
+        storedChecksum: row.checksum ?? "",
+        expectedGraphKey: graphKey,
+        // Gaps are acknowledged when go-live is REQUESTED, not while looking.
+        // Reporting the unacknowledged state is the point of looking early.
+        gapAck: null,
+        oneActiveIndexPerGraphKey,
+        ...evidence,
+      });
+
+      return {
+        graphKey,
+        version: row.version,
+        status: row.status,
+        applicable: true,
+        reason: null,
+        ok: gate.ok,
+        checks: gate.checks,
+      };
+    } catch (err: any) {
+      req.log?.error?.(err);
+      return reply
+        .code(500)
+        .send({ error: "checks_failed", message: String(err) });
+    }
+  });
+
   app.get("/workflows/:graphKey/chain", async (req: any, reply: any) => {
     const graphKey = String(req.params.graphKey ?? "");
     try {

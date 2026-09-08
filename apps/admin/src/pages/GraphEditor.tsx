@@ -33,7 +33,9 @@ import dagre from "dagre";
 import { token } from "../lib/tokens.js";
 import { NodeTestPanel } from "./node-test-panel";
 import {
+  GoLiveChecksRail,
   InsertableEdge,
+  WhatChangedRail,
   NodePicker,
   ValidationRail,
   rankCandidates,
@@ -66,6 +68,10 @@ import {
   type ChainNeighbours,
   type LoadedVersion,
   type RegistryNode,
+  loadGoLiveChecks,
+  loadDiff,
+  type GoLiveChecks,
+  type DiffResponse,
 } from "../api/editor";
 
 const NODE_W = 230;
@@ -592,6 +598,49 @@ export function GraphEditorPage() {
     setArranged(false);
     setRfNodes(nodes);
   }, [nodes, setRfNodes]);
+
+  /**
+   * What the release gate would say. Loaded once per version rather than on
+   * every edit: it judges the STORED draft, so re-asking after an unsaved
+   * change would answer about something the author is not looking at.
+   */
+  const [gateChecks, setGateChecks] = useState<GoLiveChecks | null>(null);
+  const [gateLoading, setGateLoading] = useState(true);
+
+  useEffect(() => {
+    let live = true;
+    setGateLoading(true);
+    void (async () => {
+      const res = await loadGoLiveChecks(graphKey, version);
+      if (!live) return;
+      setGateChecks(res.ok ? res.data : null);
+      setGateLoading(false);
+    })();
+    return () => {
+      live = false;
+    };
+  }, [graphKey, version, loaded?.version]);
+
+  /**
+   * What changed since the previous version. Like the gate checks, this reads
+   * the STORED versions — an unsaved edit is not a change to anything yet.
+   */
+  const [diff, setDiff] = useState<DiffResponse | null>(null);
+  const [diffLoading, setDiffLoading] = useState(true);
+
+  useEffect(() => {
+    let live = true;
+    setDiffLoading(true);
+    void (async () => {
+      const res = await loadDiff(graphKey, undefined, version);
+      if (!live) return;
+      setDiff(res.ok ? res.data : null);
+      setDiffLoading(false);
+    })();
+    return () => {
+      live = false;
+    };
+  }, [graphKey, version, loaded?.version]);
 
   const selectedNode = draft?.nodes.find((n) => n.id === selected) ?? null;
   const selectedContract = selectedNode ? contractFor(selectedNode.impl) : null;
@@ -1316,6 +1365,8 @@ export function GraphEditorPage() {
               <p className="wf-empty">Select a step to edit it.</p>
             )}
             <ValidationRail findings={findings} />
+            <GoLiveChecksRail checks={gateChecks} loading={gateLoading} />
+            <WhatChangedRail diff={diff} loading={diffLoading} />
           </aside>
         </div>
       ) : null}

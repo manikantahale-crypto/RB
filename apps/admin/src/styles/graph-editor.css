@@ -832,3 +832,21 @@
   color: var(--status-info-fg);
 }
 .ge-chain-arrow { color: var(--text-muted); }
+
+/* ── go-live checks rail ──────────────────────────────────────────────────
+   Reuses the validation rail's shape deliberately: same list, same marks, so
+   an author reads both the same way. What differs is the heading, because the
+   two answer different questions — validation asks whether this canvas is
+   coherent, these ask whether it may be released. */
+.ge-rail-note {
+  margin: 0;
+  font-size: var(--font-size-xs);
+  color: var(--text-secondary);
+  line-height: var(--line-height-normal);
+}
+.ge-rail-id {
+  display: block;
+  font-family: var(--font-family-mono);
+  font-size: var(--font-size-xs);
+  color: var(--text-muted);
+}

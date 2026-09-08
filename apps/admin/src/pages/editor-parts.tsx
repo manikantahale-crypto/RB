@@ -402,3 +402,202 @@ export function ValidationRail({ findings }: { findings: Finding[] }) {
     </section>
   );
 }
+
+/**
+ * Screen 9 — what the go-live gate would say, shown while there is still time.
+ *
+ * Sits below the editor's own validation because the two answer different
+ * questions and must not be mistaken for each other. Validation asks "is this
+ * canvas coherent" and runs in the browser on every keystroke. These are the
+ * release checks: they run on the server, against the stored draft and the
+ * node registry, and they are what actually refuses a release.
+ *
+ * An author used to meet them for the first time at the moment they were
+ * refused. Nothing about the checks changed — only when you can see them.
+ */
+export function GoLiveChecksRail({
+  checks,
+  loading,
+}: {
+  checks: import("../api/editor").GoLiveChecks | null;
+  loading: boolean;
+}) {
+  if (loading) {
+    return (
+      <section className="ge-rail" aria-label="Go-live checks">
+        <h3 className="ge-rail-title">
+          Go-live checks<span className="ge-muted">checking…</span>
+        </h3>
+      </section>
+    );
+  }
+  if (!checks) return null;
+
+  /**
+   * A runtime workflow key. The gate refuses these on purpose, so running it
+   * would produce a wall of failures that mean nothing about this workflow.
+   * Saying why beats showing them.
+   */
+  if (!checks.applicable) {
+    return (
+      <section className="ge-rail" aria-label="Go-live checks">
+        <h3 className="ge-rail-title">
+          Go-live checks<span className="ge-muted">not applicable</span>
+        </h3>
+        <p className="ge-rail-note">{checks.reason}</p>
+      </section>
+    );
+  }
+
+  const failed = checks.checks.filter((c) => !c.ok).length;
+  return (
+    <section className="ge-rail" aria-label="Go-live checks">
+      <h3 className="ge-rail-title">
+        Go-live checks
+        <span className="ge-muted">
+          {failed === 0
+            ? `all ${checks.checks.length} pass`
+            : `${failed} of ${checks.checks.length} would block`}
+        </span>
+      </h3>
+      <ul className="ge-rail-list">
+        {checks.checks.map((c) => (
+          <li
+            key={c.id}
+            className={`ge-rail-item ge-rail-item--${c.ok ? "ok" : "error"}`}
+          >
+            <span className="ge-rail-mark">{c.ok ? "✓" : "!"}</span>
+            <span>
+              <code className="ge-rail-id">{c.id}</code>
+              <span className="ge-rail-text">{c.message}</span>
+            </span>
+          </li>
+        ))}
+      </ul>
+    </section>
+  );
+}
+
+/**
+ * Screen 8 — what changed since the previous version.
+ *
+ * Field-level, not textual. The most common real change is one config value,
+ * and a text diff renders that as several changed lines somewhere inside a
+ * hundred unchanged ones, with the author left to find it.
+ *
+ * The summary line is written to be trusted: when it says "One setting
+ * changed: match.matchThreshold 60 → 92" that is the whole story, and nobody
+ * has to read the list underneath.
+ */
+export function WhatChangedRail({
+  diff,
+  loading,
+}: {
+  diff: import("../api/editor").DiffResponse | null;
+  loading: boolean;
+}) {
+  if (loading) {
+    return (
+      <section className="ge-rail" aria-label="What changed">
+        <h3 className="ge-rail-title">
+          What changed<span className="ge-muted">comparing…</span>
+        </h3>
+      </section>
+    );
+  }
+  if (!diff) return null;
+
+  if (!diff.diff) {
+    return (
+      <section className="ge-rail" aria-label="What changed">
+        <h3 className="ge-rail-title">
+          What changed<span className="ge-muted">first version</span>
+        </h3>
+        <p className="ge-rail-note">{diff.note}</p>
+      </section>
+    );
+  }
+
+  const d = diff.diff;
+  const val = (v: unknown) =>
+    v === undefined ? "unset" : typeof v === "string" ? v : JSON.stringify(v);
+
+  return (
+    <section className="ge-rail" aria-label="What changed">
+      <h3 className="ge-rail-title">
+        What changed
+        <span className="ge-muted">
+          v{diff.from} → v{diff.to}
+        </span>
+      </h3>
+
+      <p className="ge-rail-note">{d.summary}</p>
+
+      {d.identical ? null : (
+        <ul className="ge-rail-list">
+          {d.trigger.changed ? (
+            <li className="ge-rail-item ge-rail-item--warning">
+              <span className="ge-rail-mark">→</span>
+              <span>
+                <code className="ge-rail-id">trigger</code>
+                <span className="ge-rail-text">
+                  {d.trigger.from ?? "none"} → {d.trigger.to ?? "none"}
+                </span>
+              </span>
+            </li>
+          ) : null}
+
+          {d.nodes.map((n) => (
+            <li
+              key={n.id}
+              className={`ge-rail-item ge-rail-item--${
+                n.kind === "removed" ? "error" : n.kind === "added" ? "ok" : "warning"
+              }`}
+            >
+              <span className="ge-rail-mark">
+                {n.kind === "added" ? "+" : n.kind === "removed" ? "−" : "→"}
+              </span>
+              <span>
+                <code className="ge-rail-id">
+                  {n.id} · {n.impl}
+                </code>
+                {/* A step swapped for a different one is a bigger change than
+                    a setting, and reads as one. */}
+                {n.implFrom ? (
+                  <span className="ge-rail-text">
+                    step was {n.implFrom}
+                  </span>
+                ) : null}
+                {n.config.map((c) => (
+                  <span key={c.field} className="ge-rail-text">
+                    {c.field}: {val(c.from)} → {val(c.to)}
+                  </span>
+                ))}
+                {n.kind !== "changed" ? (
+                  <span className="ge-rail-text">
+                    {n.kind === "added" ? "added" : "removed"}
+                  </span>
+                ) : null}
+              </span>
+            </li>
+          ))}
+
+          {[...d.edgesRemoved.map((e) => ["−", e] as const),
+            ...d.edgesAdded.map((e) => ["+", e] as const)].map(([mark, e], i) => (
+            <li
+              key={`${mark}-${e[0]}-${e[1]}-${i}`}
+              className={`ge-rail-item ge-rail-item--${mark === "+" ? "ok" : "error"}`}
+            >
+              <span className="ge-rail-mark">{mark}</span>
+              <span>
+                <span className="ge-rail-text">
+                  {e[0]} → {e[1]}
+                </span>
+              </span>
+            </li>
+          ))}
+        </ul>
+      )}
+    </section>
+  );
+}
