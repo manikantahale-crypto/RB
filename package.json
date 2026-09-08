@@ -30,7 +30,8 @@
     "demo:verify": "node scripts/verify-workflow.mjs",
     "backfill:jd-parsed": "node scripts/backfill-jd-parsed.mjs",
     "orch:proof": "node scripts/orch-proof.mjs",
-    "check:embeddings": "node scripts/check-embeddings.mjs"
+    "check:embeddings": "node scripts/check-embeddings.mjs",
+    "check:platform": "tsx scripts/platform-checks.mjs"
   },
   "dependencies": {
     "@langchain/langgraph": "^1.4.9",
