@@ -18,18 +18,10 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import pg from "pg";
 import { MODULES } from "@tekisho/node-contract";
+import { planForEvent } from "../packages/orchestrator/src/routing/table.ts";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const root = dirname(here);
-
-/** Queues a worker actually serves — from packages/orchestrator's routing table. */
-const WORKED_QUEUES = [
-  "module.syntra.jd",
-  "module.design.resume",
-  "module.design.duplicate",
-  "module.syntra.match",
-  "module.orbit.bench",
-];
 
 function databaseUrl() {
   if (process.env.DATABASE_URL) return process.env.DATABASE_URL;
@@ -44,7 +36,7 @@ function databaseUrl() {
 }
 
 async function gather(pool) {
-  const [bindings, graphs, registry] = await Promise.all([
+  const [bindings, graphs, registry, queues] = await Promise.all([
     pool.query(
       `SELECT event_type, graph_key, module_queue
          FROM graph_event_bindings WHERE status = 'active'`,
@@ -53,11 +45,36 @@ async function gather(pool) {
       `SELECT graph_key, definition FROM graph_definitions WHERE status = 'active'`,
     ),
     pool.query(`SELECT key, module, shareable, emits FROM node_registry`),
+    /**
+     * What each queue is DOING, not what a constant says it should be.
+     *
+     * The first version of this compared bindings against a hardcoded list of
+     * five queue names copied out of the engine, and called five live bindings
+     * dead. All five were false — module.relay had completed a job sixteen
+     * seconds earlier. A list only ever says what somebody remembered to type,
+     * and it cannot know about a consumer living in another repository.
+     */
+    pool.query(`
+      SELECT name,
+             count(*) FILTER (WHERE state = 'created') AS waiting,
+             count(*) FILTER (WHERE state = 'active')  AS running,
+             EXTRACT(EPOCH FROM (now() - max(completed_on))) AS seconds_since
+        FROM pgboss.job
+       WHERE name LIKE 'module.%'
+       GROUP BY name`),
   ]);
 
   /**
-   * Handling is not a column yet. Passing null rather than an empty map is the
-   * difference between "not checked" and "every binding is wrong".
+   * How each event is handled.
+   *
+   * `event_schemas` has no `handling` column yet, so this reads the hardcoded
+   * `PLATFORM_EVENT_PLAN` — which is not a stand-in for the column, it is the
+   * thing the router actually consults. `planForEvent` runs in the ingress
+   * router BEFORE the binding is looked up, and anything it does not return
+   * `graph` for is acknowledged and dropped, active binding or not.
+   *
+   * So this check is answerable today, and it is the one that catches a
+   * workflow which is bound, valid, and can never run.
    */
   let handlingOf = null;
   try {
@@ -67,6 +84,11 @@ async function gather(pool) {
     handlingOf = new Map(h.rows.map((r) => [r.event_type, r.handling]));
   } catch {
     handlingOf = null;
+  }
+  if (!handlingOf || handlingOf.size === 0) {
+    handlingOf = new Map(
+      bindings.rows.map((r) => [r.event_type, planForEvent(r.event_type).kind]),
+    );
   }
 
   return {
@@ -88,7 +110,17 @@ async function gather(pool) {
       shareable: r.shareable === true,
       emits: Array.isArray(r.emits) ? r.emits : null,
     })),
-    workedQueues: new Set(WORKED_QUEUES),
+    queueActivity: new Map(
+      queues.rows.map((r) => [
+        r.name,
+        {
+          waiting: Number(r.waiting ?? 0),
+          running: Number(r.running ?? 0),
+          secondsSinceCompletion:
+            r.seconds_since === null ? null : Number(r.seconds_since),
+        },
+      ]),
+    ),
     /**
      * FROM THE MODULE REGISTRY IN GIT, NOT FROM `node_registry`.
      *

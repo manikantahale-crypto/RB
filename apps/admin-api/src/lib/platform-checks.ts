@@ -23,7 +23,7 @@ export type CheckStatus = "pass" | "fail" | "unchecked";
 
 export type CheckFinding = {
   id:
-    | "events_handled"
+    | "routing_hazards"
     | "bindings_routable"
     | "impls_permitted"
     | "emitted_events_answered";
@@ -46,6 +46,15 @@ export type ActiveGraphRow = {
   impls: readonly string[];
 };
 
+export type QueueActivity = {
+  /** Jobs sitting in `created`, waiting for somebody to take them. */
+  waiting: number;
+  /** Jobs currently being worked. Proof of a live consumer. */
+  running: number;
+  /** Seconds since the last completion on this queue, null if never. */
+  secondsSinceCompletion: number | null;
+};
+
 export type RegistryRow = {
   key: string;
   module: string;
@@ -58,8 +67,16 @@ export type PlatformFacts = {
   bindings: readonly BindingRow[];
   graphs: readonly ActiveGraphRow[];
   registry: readonly RegistryRow[];
-  /** Queues a worker actually serves. */
-  workedQueues: ReadonlySet<string>;
+  /**
+   * What each module queue is actually doing, from `pgboss.job`.
+   *
+   * NOT a list of queue names. This check used to compare bindings against a
+   * hardcoded array of five queues and reported five live bindings as dead —
+   * every one of them a false finding, because the queues were being consumed
+   * the whole time. A check that produces false findings is worse than no
+   * check: people learn to scroll past it.
+   */
+  queueActivity: ReadonlyMap<string, QueueActivity>;
   /** Applications the platform knows about. */
   modules: readonly string[];
   /**
@@ -72,80 +89,157 @@ export type PlatformFacts = {
 };
 
 /**
- * Check 1 — every active binding's event is declared as one that starts a graph.
+ * Check 1 — does anything about routing still surprise us?
  *
- * Unanswerable until `event_schemas` gains a `handling` column. Reported as not
- * checked, which is the honest state: seven events in the catalogue have no
- * handling at all and two of them carry live bindings, and none of that is
- * visible from here yet.
+ * THIS CHECK USED TO ASK SOMETHING ELSE, AND THAT QUESTION IS NOW ANSWERED IN
+ * THE CODE RATHER THAN HERE.
+ *
+ * It used to verify that every active binding's event was one the hardcoded
+ * `PLATFORM_EVENT_PLAN` would send to a graph — because if it was not, the
+ * event was acknowledged and dropped before the binding was ever read. Seven of
+ * twenty live bindings failed that, two of them SYNTRA's own.
+ *
+ * That fault is fixed at the source: the relay now sends a bound event to the
+ * ingress router whatever the map says, and the router resolves the binding
+ * before consulting the map at all. A bound workflow runs. Leaving the old
+ * assertion here would fail forever on a constraint that no longer exists,
+ * which is how a suite teaches people to ignore it.
+ *
+ * What is worth checking is the hazard the fix introduces. `resume` events are
+ * control-plane: `syntra.approval.decided` unparks a waiting human gate. Since
+ * a bound event now ALSO reaches the router, binding a workflow to one means
+ * two things happen — the thread resumes and a workflow starts. That is
+ * sometimes wanted and never obvious, so it is named.
  */
 export function checkEventsHandled(facts: PlatformFacts): CheckFinding {
   if (!facts.handlingOf) {
     return {
-      id: "events_handled",
+      id: "routing_hazards",
       status: "unchecked",
       message:
-        "Not checked — the event catalogue does not record how an event is " +
-        "handled, so there is nothing to compare a binding against.",
+        "Not checked — nothing supplied how each event is handled, so a " +
+        "control-plane collision cannot be spotted.",
       detail: [],
     };
   }
-  const bad = facts.bindings.filter(
-    (b) => facts.handlingOf!.get(b.eventType) !== "graph",
+
+  const resumeCollisions = facts.bindings.filter(
+    (b) => facts.handlingOf!.get(b.eventType) === "resume",
   );
-  return bad.length === 0
+
+  /**
+   * Reported, not failed: proof the fix is doing something. These are the
+   * bindings that would have been silently dropped under the old ordering.
+   */
+  const rescued = facts.bindings.filter((b) => {
+    const kind = facts.handlingOf!.get(b.eventType);
+    return kind !== undefined && kind !== "graph" && kind !== "resume";
+  });
+
+  const note = rescued.length
+    ? ` ${rescued.length} binding${rescued.length === 1 ? "" : "s"} run only because the binding now wins over the event map.`
+    : "";
+
+  return resumeCollisions.length === 0
     ? {
-        id: "events_handled",
+        id: "routing_hazards",
         status: "pass",
-        message: `All ${facts.bindings.length} active bindings start an event declared as handled by a graph.`,
-        detail: [],
+        message: `No routing hazards across ${facts.bindings.length} active bindings.${note}`,
+        detail: rescued.map(
+          (b) =>
+            `${b.eventType} → ${b.graphKey} (map says ${facts.handlingOf!.get(b.eventType)}; runs because it is bound)`,
+        ),
       }
     : {
-        id: "events_handled",
+        id: "routing_hazards",
         status: "fail",
-        message: `${bad.length} active binding${bad.length === 1 ? "" : "s"} name an event the catalogue does not say a graph handles.`,
-        detail: bad.map(
-          (b) =>
-            `${b.eventType} → ${b.graphKey} (handling: ${facts.handlingOf!.get(b.eventType) ?? "none"})`,
+        message:
+          `${resumeCollisions.length} binding${resumeCollisions.length === 1 ? "" : "s"} sit on a control-plane event. ` +
+          `Those events resume a parked run, and a bound workflow now starts as well — two things happen, and only one of them is obvious.`,
+        detail: resumeCollisions.map(
+          (b) => `${b.eventType} → ${b.graphKey} (resumes a parked thread AND starts this workflow)`,
         ),
       };
 }
 
 /**
- * Check 2 — every active binding sits on a queue a worker actually serves.
+ * Check 2 — is work piling up on a queue nobody is collecting?
  *
- * A binding naming an unworked queue is a door opening onto nothing. The event
- * is accepted by ingress, routed, and enqueued — and then nobody comes. There
- * is no error anywhere, because nothing failed; work simply stops.
+ * A binding whose queue has no consumer is a door opening onto nothing: the
+ * event is accepted by ingress, routed, stamped and enqueued, and then nobody
+ * comes. Nothing fails, so nothing is reported.
+ *
+ * THIS ASKED THE WRONG QUESTION FIRST TIME, AND THE MISTAKE IS WORTH KEEPING
+ * WRITTEN DOWN. It compared each binding's queue against a hardcoded array of
+ * five names copied out of the engine, and reported five live bindings as dead.
+ * All five were false: `module.relay` and `module.interview` were being
+ * consumed the entire time — relay had completed a job sixteen seconds before
+ * the check ran. The list was stale, and a list can only ever say what somebody
+ * remembered to type.
+ *
+ * So it measures the symptom instead. Work waiting, nothing running, and
+ * nothing completed for a long while is the shape of a queue with no consumer,
+ * and it is true whoever is doing the consuming — including a service outside
+ * this repository, which the hardcoded list could never have known about.
+ *
+ * A backlog on its own is NOT a fault. `module.syntra.match` had 1,688 jobs
+ * waiting while actively working through them.
  */
+const STALE_AFTER_SECONDS = 3600;
+
 export function checkBindingsRoutable(facts: PlatformFacts): CheckFinding {
-  if (facts.workedQueues.size === 0) {
+  if (facts.queueActivity.size === 0) {
     return {
       id: "bindings_routable",
       status: "unchecked",
-      message: "Not checked — no list of served queues was supplied.",
+      message:
+        "Not checked — no queue activity was supplied, so a queue with no " +
+        "consumer cannot be told apart from a quiet one.",
       detail: [],
     };
   }
-  const bad = facts.bindings.filter(
-    (b) => !b.moduleQueue || !facts.workedQueues.has(b.moduleQueue),
-  );
+
+  const bad: string[] = [];
+  for (const b of facts.bindings) {
+    if (!b.moduleQueue) {
+      bad.push(`${b.eventType} → ${b.graphKey} names no queue at all`);
+      continue;
+    }
+    const q = facts.queueActivity.get(b.moduleQueue);
+
+    // No row at all means the queue has never had a job. Nothing is stuck, so
+    // there is nothing to report — the first event will create it.
+    if (!q) continue;
+
+    const idle =
+      q.secondsSinceCompletion === null ||
+      q.secondsSinceCompletion > STALE_AFTER_SECONDS;
+
+    if (q.waiting > 0 && q.running === 0 && idle) {
+      bad.push(
+        `${b.eventType} → ${b.graphKey} on ${b.moduleQueue}: ${q.waiting} waiting, ` +
+          `none running, ` +
+          (q.secondsSinceCompletion === null
+            ? "nothing ever completed"
+            : `nothing completed for ${Math.round(q.secondsSinceCompletion / 60)} minutes`),
+      );
+    }
+  }
+
   return bad.length === 0
     ? {
         id: "bindings_routable",
         status: "pass",
-        message: `All ${facts.bindings.length} active bindings sit on a queue a worker serves.`,
+        message: `All ${facts.bindings.length} active bindings sit on a queue something is working.`,
         detail: [],
       }
     : {
         id: "bindings_routable",
         status: "fail",
         message:
-          `${bad.length} active binding${bad.length === 1 ? "" : "s"} route to a queue nothing serves. ` +
-          `Those events are accepted and then dropped, with no error.`,
-        detail: bad.map(
-          (b) => `${b.eventType} → ${b.graphKey} on ${b.moduleQueue ?? "(no queue)"}`,
-        ),
+          `${bad.length} active binding${bad.length === 1 ? "" : "s"} route to a queue with work piling up and nobody collecting it. ` +
+          `Those events are accepted and then sit, with no error.`,
+        detail: bad,
       };
 }
 
