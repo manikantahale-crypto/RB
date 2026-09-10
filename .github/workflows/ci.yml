@@ -134,6 +134,61 @@ jobs:
   #   packages/domain/events/platform-event.ts — generic index on EventPayloadMap
   #   packages/orchestrator/src/routing/table.ts — duplicate object literal keys
   # The worker inherits the engine's errors; fixing the engine fixes both.
+
+  # ─────────────────────────────────────────────────────────────────────────
+  # Can the database still be built from its migrations?
+  #
+  # Until 2026-09-09 the answer was no, and nobody knew: there was no
+  # flyway_schema_history in any schema, two files both claimed V11 with
+  # different primary key types, and eight versions existed twice under two
+  # naming conventions. The tables had been created by hand instead, and the
+  # files had quietly stopped describing the database.
+  #
+  # This applies every migration to an empty Postgres, in order. It does NOT
+  # diff against production — that needs credentials CI should not hold, and it
+  # stays a local command (scripts/rebuild-check.sh). What this catches is the
+  # half that breaks most often: a migration that cannot run at all, or two
+  # that claim the same version.
+  schema:
+    name: migrations build a database
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: pgvector/pgvector:pg17
+        env:
+          POSTGRES_PASSWORD: test
+          POSTGRES_DB: rebuild
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    steps:
+      - uses: actions/checkout@v4
+
+      # The failure that made the old folder unrunnable, caught before anything
+      # touches a database. Two files claiming one version is not a conflict
+      # Flyway resolves — it refuses the whole folder.
+      - name: no two migrations claim the same version
+        run: |
+          dupes=$(ls packages/db/migrations/V*.sql                   | sed 's|.*/V||; s|__.*||' | sort | uniq -d)
+          if [ -n "$dupes" ]; then
+            echo "Duplicate migration versions: $dupes"
+            exit 1
+          fi
+
+      - name: apply every migration to an empty database
+        env:
+          PGPASSWORD: test
+        run: |
+          for f in packages/db/migrations/V*.sql; do
+            echo "→ $(basename "$f")"
+            psql -h 127.0.0.1 -U postgres -d rebuild -v ON_ERROR_STOP=1 -q -f "$f" >/dev/null
+          done
+          echo "all migrations applied"
+
   known-debt:
     name: known debt (not blocking)
     runs-on: ubuntu-latest

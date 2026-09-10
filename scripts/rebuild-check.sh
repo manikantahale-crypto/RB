@@ -50,6 +50,14 @@ echo "→ dumping both"
 # Every schema this system owns. ADD NEW ONES HERE as the migration
 # proceeds — core, authoring — or the check silently stops covering them.
 SCHEMAS="--schema=app --schema=platform --schema=core --schema=authoring --schema=public --schema=syntra --schema=orch --schema=relay --schema=interview_agent"
+
+# Flyway's own bookkeeping. It exists in production because `flyway baseline`
+# created it, and never in a freshly built database until Flyway runs there
+# too. It is not part of the schema this repository describes, so comparing it
+# would report drift on every run. Excluded at the dump rather than filtered by
+# line, because the column definitions inside its CREATE TABLE do not mention
+# the table name.
+SCHEMAS="$SCHEMAS --exclude-table=public.flyway_schema_history"
 PGURL="$(cd "$REPO" && node -e "require('dotenv').config();process.stdout.write(process.env.DATABASE_URL||'')")"
 
 A="$(mktemp)"; B="$(mktemp)"
