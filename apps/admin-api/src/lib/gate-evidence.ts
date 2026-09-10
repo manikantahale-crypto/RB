@@ -51,7 +51,7 @@ export async function collectGateEvidence(
 
     const { rows } = await client.query(
       `SELECT key, module, shareable, input_schema
-         FROM node_registry WHERE key = ANY($1::text[])`,
+         FROM authoring.node_registry WHERE key = ANY($1::text[])`,
       [impls],
     );
 
@@ -82,7 +82,7 @@ export async function collectGateEvidence(
     /**
      * FROM THE MODULE REGISTRY, NOT FROM `node_registry`.
      *
-     * The obvious shortcut is `SELECT DISTINCT module FROM node_registry`, and
+     * The obvious shortcut is `SELECT DISTINCT module FROM authoring.node_registry`, and
      * it is wrong: that column names the module a NODE belongs to, so an
      * application with no declared nodes never appears. RELAY has none — so
      * relay would not have counted as an application, and the one real

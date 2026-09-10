@@ -153,7 +153,7 @@ async function bootstrapPgBoss(): Promise<void> {
       // would block waiting for this connection to be released.
       const { rows } = await db.query(
         `SELECT version
-           FROM graph_definitions
+           FROM public.graph_definitions
           WHERE graph_key = $1
             AND status = 'active'
             AND (org_id = $2 OR org_id IS NULL)

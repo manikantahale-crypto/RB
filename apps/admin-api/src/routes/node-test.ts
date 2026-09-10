@@ -88,41 +88,64 @@ type Scratch = {
   candidateId?: string;
 };
 
-async function provision(client: PoolClient, needs: Needs): Promise<Scratch> {
+async function provision(
+  client: PoolClient,
+  needs: Needs,
+  orgId: string,
+): Promise<Scratch> {
   const out: Scratch = {};
   if (needs.candidate) {
     const r = await client.query(
-      `INSERT INTO syntra.candidates (full_name, email, created_by)
-       VALUES ($1, 'jordan.fixture@example.invalid', NULL) RETURNING id::text`,
-      [`${SCRATCH_MARK} Jordan Fixture`],
+      // core, not syntra. The nodes under test read core; a fixture in the
+      // legacy shim would be invisible to the very thing it is provisioning
+      // for. org_id is derived on insert by app.core_org_from_creator.
+      `INSERT INTO core.people (org_id, full_name, email, created_by)
+       VALUES ($2::uuid, $1, 'jordan.fixture@example.invalid', NULL)
+       RETURNING id::text`,
+      [`${SCRATCH_MARK} Jordan Fixture`, orgId],
     );
     out.candidateId = r.rows[0].id;
   }
   if (needs.resume && out.candidateId) {
     const r = await client.query(
-      `INSERT INTO syntra.resumes (candidate_id, original_file_name, file_path, raw_text)
-       VALUES ($1, 'node-test-resume.txt', './uploads/node-test-resume.txt', $2)
-       RETURNING id::text`,
-      [out.candidateId, SCRATCH_RESUME],
+      // The file columns went to core.source_files; a resume row is the
+      // parsed profile, not the document.
+      `INSERT INTO core.resumes (org_id, person_id, summary)
+       VALUES ($3::uuid, $1, $2) RETURNING id::text`,
+      [out.candidateId, SCRATCH_RESUME, orgId],
     );
     out.resumeId = r.rows[0].id;
   }
   if (needs.job) {
     const r = await client.query(
-      `INSERT INTO syntra.jobs (title, original_file_name, raw_text, created_by)
-       VALUES ($1, 'node-test.txt', $2, NULL) RETURNING id::text`,
-      [SCRATCH_MARK, SCRATCH_JD],
+      `INSERT INTO core.requirements (org_id, title, summary, created_by)
+       VALUES ($3::uuid, $1, $2, NULL) RETURNING id::text`,
+      [SCRATCH_MARK, SCRATCH_JD, orgId],
     );
     out.jobId = r.rows[0].id;
   }
   return out;
 }
 
-/** Deletes everything provisioned, plus anything the run hung off it. */
+/**
+ * Deletes everything provisioned, plus anything the run hung off it.
+ *
+ * Both copies. A fixture is written to `core`, and the mirror in
+ * V20260909.27 puts a copy in the legacy shim -- but that mirror is AFTER
+ * INSERT OR UPDATE and has no DELETE, so removing the core row on its own
+ * would leave the shim copy behind for ever. A scratch row that does not go
+ * away is not scratch.
+ *
+ * Children before parents, or the foreign keys refuse the order.
+ */
 async function cleanup(client: PoolClient, s: Scratch): Promise<string[]> {
   const removed: string[] = [];
   const ids = [s.jobId, s.resumeId, s.candidateId].filter(Boolean) as string[];
   if (ids.length === 0) return removed;
+
+  const count = (label: string, n: number | null) => {
+    if (n) removed.push(`${label}:${n}`);
+  };
 
   const ml = await client.query(
     `DELETE FROM syntra.scoring_log
@@ -130,7 +153,7 @@ async function cleanup(client: PoolClient, s: Scratch): Promise<string[]> {
          OR candidate_id::text = ANY($1)`,
     [ids],
   );
-  if (ml.rowCount) removed.push(`scoring_log:${ml.rowCount}`);
+  count("scoring_log", ml.rowCount);
 
   const ob = await client.query(
     `DELETE FROM orch.event_outbox
@@ -138,29 +161,34 @@ async function cleanup(client: PoolClient, s: Scratch): Promise<string[]> {
         AND (${ids.map((_, i) => `payload_ref::text LIKE '%'||$${i + 1}||'%'`).join(" OR ")})`,
     ids,
   );
-  if (ob.rowCount) removed.push(`event_outbox:${ob.rowCount}`);
+  count("event_outbox", ob.rowCount);
 
-  const mt = await client.query(
-    `DELETE FROM syntra.matches
-      WHERE job_id::text = ANY($1) OR resume_id::text = ANY($1)
-         OR candidate_id::text = ANY($1)`,
-    [ids],
-  );
-  if (mt.rowCount) removed.push(`matches:${mt.rowCount}`);
-
-  if (s.jobId) {
-    const r = await client.query(`DELETE FROM syntra.jobs WHERE id = $1`, [s.jobId]);
-    if (r.rowCount) removed.push(`jobs:${r.rowCount}`);
+  for (const [label, table, cols] of [
+    ["matches", "core.matches", ["requirement_id", "person_id", "resume_id"]],
+    ["matches", "syntra.matches", ["job_id", "candidate_id", "resume_id"]],
+  ] as Array<[string, string, string[]]>) {
+    const where = cols.map((c) => `${c}::text = ANY($1)`).join(" OR ");
+    const r = await client.query(`DELETE FROM ${table} WHERE ${where}`, [ids]);
+    count(label, r.rowCount);
   }
+
   if (s.resumeId) {
-    const r = await client.query(`DELETE FROM syntra.resumes WHERE id = $1`, [s.resumeId]);
-    if (r.rowCount) removed.push(`resumes:${r.rowCount}`);
+    for (const table of ["core.resumes", "syntra.resumes"]) {
+      const r = await client.query(`DELETE FROM ${table} WHERE id = $1`, [s.resumeId]);
+      count("resumes", r.rowCount);
+    }
+  }
+  if (s.jobId) {
+    for (const table of ["core.requirements", "syntra.jobs"]) {
+      const r = await client.query(`DELETE FROM ${table} WHERE id = $1`, [s.jobId]);
+      count("jobs", r.rowCount);
+    }
   }
   if (s.candidateId) {
-    const r = await client.query(`DELETE FROM syntra.candidates WHERE id = $1`, [
-      s.candidateId,
-    ]);
-    if (r.rowCount) removed.push(`candidates:${r.rowCount}`);
+    for (const table of ["core.people", "syntra.candidates"]) {
+      const r = await client.query(`DELETE FROM ${table} WHERE id = $1`, [s.candidateId]);
+      count("candidates", r.rowCount);
+    }
   }
   return removed;
 }
@@ -209,7 +237,28 @@ export function registerNodeTestRoutes(app: FastifyLike, pool: Pool): void {
 
     try {
       const needs = needsOf(contract);
-      scratch = await provision(client, needs);
+
+      /**
+       * A real organisation. `core.people` and `core.requirements` have a
+       * foreign key onto platform.organizations, so the header's value is used
+       * only if it names one that exists -- the route's own fallback is a
+       * random uuid, which would be rejected.
+       */
+      const { rows: orgRows } = await client.query<{ id: string }>(
+        `SELECT id::text AS id FROM platform.organizations
+          WHERE id = $1::uuid
+          UNION ALL
+         SELECT id::text FROM platform.organizations ORDER BY 1 LIMIT 1`,
+        [String(req.headers["x-org-id"] ?? "00000000-0000-0000-0000-000000000000")],
+      );
+      if (!orgRows[0]) {
+        return reply.code(500).send({
+          error: "no_organisation",
+          message: "A node test provisions rows that must belong to an organisation, and there are none.",
+        });
+      }
+
+      scratch = await provision(client, needs, orgRows[0].id);
 
       // Scratch ids under every name the node might ask for; anything the
       // caller supplied wins, so a replayed input is used as given.

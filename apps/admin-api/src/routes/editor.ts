@@ -102,10 +102,10 @@ export function registerEditorRoutes(app: FastifyLike, pool: Pool): void {
     try {
       const { rows } = await pool.query(
         module
-          ? `SELECT * FROM node_registry
+          ? `SELECT * FROM authoring.node_registry
               WHERE module = $1 OR shareable = true
               ORDER BY (module = $1) DESC, module, key`
-          : `SELECT * FROM node_registry ORDER BY module, key`,
+          : `SELECT * FROM authoring.node_registry ORDER BY module, key`,
         module ? [module] : [],
       );
 

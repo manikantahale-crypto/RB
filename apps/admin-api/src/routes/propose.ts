@@ -822,7 +822,7 @@ export function registerProposeRoutes(
         const { rows: nodeRows } = await client.query(
           `SELECT key, title, description, side_effect, source, input_schema,
                   output_schema, config_schema, module, shareable
-             FROM node_registry
+             FROM authoring.node_registry
             ORDER BY (module = $1) DESC, module, key`,
           [module],
         );
@@ -1135,7 +1135,7 @@ export function registerProposeRoutes(
          * what the screen shows.
          */
         const { rows: ownerRows } = await client.query(
-          `SELECT key, module, shareable, emits FROM node_registry`,
+          `SELECT key, module, shareable, emits FROM authoring.node_registry`,
         );
         /**
          * What each node declared it may publish.
