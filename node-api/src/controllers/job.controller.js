@@ -12,6 +12,7 @@ async function uploadJob(req, res, next) {
       title: req.body.title,
       file: req.file,
       userId: req.userId,
+      orgId: req.orgId,
     });
     res.status(202).json({ jobId, status: "accepted" });
   } catch (err) {

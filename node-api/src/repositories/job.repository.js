@@ -2,12 +2,14 @@ const { pool } = require("../config/db");
 
 async function insertJob(
   client,
-  { title, originalFileName, filePath, mimeType, rawText, createdBy }
+  { title, originalFileName, filePath, mimeType, rawText, createdBy, orgId }
 ) {
+  // See insertCandidate: explicit when the session knows it, derived by the
+  // trigger when it does not.
   const sql = `
-    INSERT INTO syntra.jobs (title, original_file_name, file_path, mime_type, raw_text, uploaded_at, score_threshold, created_by, status)
-    VALUES ($1, $2, $3, $4, $5, now(), 50, $6, 'Staging')
-    RETURNING id, title, original_file_name, file_path, uploaded_at, created_by
+    INSERT INTO syntra.jobs (title, original_file_name, file_path, mime_type, raw_text, uploaded_at, score_threshold, created_by, org_id, status)
+    VALUES ($1, $2, $3, $4, $5, now(), 50, $6, $7, 'Staging')
+    RETURNING id, title, original_file_name, file_path, uploaded_at, created_by, org_id
   `;
   const { rows } = await client.query(sql, [
     title || null,
@@ -16,6 +18,7 @@ async function insertJob(
     mimeType || null,
     rawText,
     createdBy || null,
+    orgId || null,
   ]);
   return rows[0];
 }

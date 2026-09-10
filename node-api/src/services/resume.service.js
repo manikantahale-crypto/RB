@@ -10,7 +10,7 @@ const platformEvents = require("./platformEvents.service");
 /**
  * Extract text → insert candidate+resume with raw_text → enqueue resume.uploaded.
  */
-async function createResume({ fullName, email, phone, file, userId }) {
+async function createResume({ fullName, email, phone, file, userId, orgId }) {
   const rawText = await extractText(file.path);
 
   const dupCheck = await checkDuplicateResume(rawText, userId);
@@ -63,6 +63,7 @@ async function createResume({ fullName, email, phone, file, userId }) {
       email,
       phone,
       createdBy: userId,
+      orgId,
     });
 
     const resume = await resumeRepo.insertResume(client, {

@@ -13,6 +13,7 @@ async function uploadResume(req, res, next) {
       phone: req.body.phone,
       file: req.file,
       userId: req.userId,
+      orgId: req.orgId,
     });
 
     if (result.status === "duplicate") {

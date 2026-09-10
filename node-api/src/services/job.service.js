@@ -9,7 +9,7 @@ const platformEvents = require("./platformEvents.service");
  * Extract text → insert job with raw_text → enqueue jd.uploaded.
  * Returns jobId for the 202 response (processing continues in pg-boss).
  */
-async function createJob({ title, file, userId }) {
+async function createJob({ title, file, userId, orgId }) {
   const rawText = await extractText(file.path);
 
   const job = await withTransaction(async (client) => {
@@ -20,6 +20,7 @@ async function createJob({ title, file, userId }) {
       mimeType: file.mimetype,
       rawText,
       createdBy: userId,
+      orgId,
     });
   });
 

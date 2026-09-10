@@ -1,16 +1,20 @@
 const { pool } = require("../config/db");
 
-async function insertCandidate(client, { fullName, email, phone, createdBy }) {
+async function insertCandidate(client, { fullName, email, phone, createdBy, orgId }) {
+  // org_id is passed explicitly rather than left to the trigger, so the row
+  // records the organisation the SESSION was acting for. Null is accepted and
+  // the trigger derives it from created_by — see V20260909.13.
   const sql = `
-    INSERT INTO syntra.candidates (full_name, email, phone, created_by, status)
-    VALUES ($1, $2, $3, $4, 'Staging')
-    RETURNING id, full_name, created_at, created_by
+    INSERT INTO syntra.candidates (full_name, email, phone, created_by, org_id, status)
+    VALUES ($1, $2, $3, $4, $5, 'Staging')
+    RETURNING id, full_name, created_at, created_by, org_id
   `;
   const { rows } = await client.query(sql, [
     fullName || null,
     email || null,
     phone || null,
     createdBy || null,
+    orgId || null,
   ]);
   return rows[0];
 }
