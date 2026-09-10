@@ -11,7 +11,7 @@ async function insertCandidate(client, { fullName, email, phone, createdBy, orgI
   // records the organisation the SESSION was acting for. Null is accepted and
   // the trigger derives it from created_by — see V20260909.13.
   const sql = `
-    INSERT INTO syntra.candidates (full_name, email, phone, created_by, org_id, status)
+    INSERT INTO core.people (full_name, email, phone, created_by, org_id, status)
     VALUES ($1, $2, $3, $4, $5, 'Staging')
     RETURNING id, full_name, created_at, created_by, org_id
   `;
@@ -241,7 +241,7 @@ async function saveProfileFields(
   }
 ) {
   await pool.query(
-    `UPDATE syntra.candidates SET
+    `UPDATE core.people SET
        full_name = CASE
          WHEN btrim($2) <> '' THEN $2
          ELSE full_name
@@ -312,7 +312,7 @@ async function updateCandidate(candidateId, updates = {}, userId = null) {
   }
 
   const sql = `
-    UPDATE syntra.candidates
+    UPDATE core.people
        SET ${setClauses.join(", ")}
      ${whereClause}
      RETURNING id, full_name, email, phone, location, immigration_status, status, updated_at;
@@ -343,13 +343,18 @@ async function saveCandidatesBulk(candidateIds, userId) {
   }
 
   const { rowCount } = await pool.query(
-    `UPDATE syntra.candidates c
-        SET status = 'Active'
-       FROM ${CORE_RESUMES} r
-      WHERE r.candidate_id = c.id
+    `UPDATE core.people c
+        SET status = 'Active', updated_at = now()
+       FROM core.resumes r
+      WHERE r.person_id = c.id
         AND c.id = ANY($1)
-        AND r.processed_at IS NOT NULL
-        AND r.processing_failed_at IS NULL
+        -- "Processed and not failed" is what the extract stage recorded, not
+        -- two columns on the resume any more.
+        AND EXISTS (
+          SELECT 1 FROM core.processing_jobs p
+           WHERE p.subject_type = 'resume' AND p.subject_id = r.id
+             AND p.stage = 'extract'
+             AND p.finished_at IS NOT NULL AND p.failed_at IS NULL)
         ${userCondition}`,
     params
   );

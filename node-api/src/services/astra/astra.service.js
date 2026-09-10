@@ -259,7 +259,7 @@ async function ingestRequirement(payload = {}) {
       if (sourceUrl) {
         try {
           await pool.query(
-            "UPDATE syntra.jobs SET source_url = $2 WHERE id = $1 AND source_url IS NULL",
+            "UPDATE core.requirements SET source_url = $2 WHERE id = $1 AND source_url IS NULL",
             [existingByMessageId.id, sourceUrl]
           );
         } catch (err) {
@@ -270,7 +270,7 @@ async function ingestRequirement(payload = {}) {
       if (incomingCreatedBy) {
         try {
           await pool.query(
-            "UPDATE syntra.jobs SET created_by = $2 WHERE id = $1 AND created_by IS NULL",
+            "UPDATE core.requirements SET created_by = $2 WHERE id = $1 AND created_by IS NULL",
             [existingByMessageId.id, incomingCreatedBy]
           );
         } catch (err) {
@@ -302,7 +302,7 @@ async function ingestRequirement(payload = {}) {
     if (sourceUrl) {
       try {
         await pool.query(
-          "UPDATE syntra.jobs SET source_url = $2 WHERE id = $1 AND source_url IS NULL",
+          "UPDATE core.requirements SET source_url = $2 WHERE id = $1 AND source_url IS NULL",
           [existingByHash.id, sourceUrl]
         );
       } catch (err) {
@@ -313,7 +313,7 @@ async function ingestRequirement(payload = {}) {
     if (incomingCreatedBy) {
       try {
         await pool.query(
-          "UPDATE syntra.jobs SET created_by = $2 WHERE id = $1 AND created_by IS NULL",
+          "UPDATE core.requirements SET created_by = $2 WHERE id = $1 AND created_by IS NULL",
           [existingByHash.id, incomingCreatedBy]
         );
       } catch (err) {
@@ -372,7 +372,7 @@ async function ingestRequirement(payload = {}) {
     createdBy: payload.createdBy || payload.created_by || payload.userId || null,
   };
 
-  // 5. Persist in syntra.jobs via astra.repository.js and write platform event to event_outbox
+  // 5. Persist in core.requirements via astra.repository.js and write the platform event to event_outbox
   const newJob = await withTransaction(async (client) => {
     const job = await astraRepo.insertRequirement(client, requirementData);
 

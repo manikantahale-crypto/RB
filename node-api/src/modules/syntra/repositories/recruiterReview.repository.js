@@ -118,7 +118,7 @@ async function markDecided(id, { userId, status, note }) {
 async function resolveCandidateOwner(candidateId) {
   if (!candidateId) return null;
   const { rows } = await pool.query(
-    `SELECT created_by::text AS user_id FROM syntra.candidates WHERE id = $1`,
+    `SELECT created_by::text AS user_id FROM core.people WHERE id = $1`,
     [candidateId],
   );
   return rows[0]?.user_id || null;

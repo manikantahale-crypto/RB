@@ -1,4 +1,5 @@
 const { pool } = require("../config/db");
+const { CORE_RESUMES, CORE_PEOPLE } = require("../repositories/core-views");
 
 /**
  * Checks if a resume with the exact same raw_text already exists for the given user.
@@ -17,8 +18,8 @@ async function checkDuplicateResume(rawText, userId) {
   // PostgreSQL is highly optimized to check text equality, even for large texts.
   const { rows } = await pool.query(
     `SELECT r.id, r.candidate_id, c.status AS candidate_status, r.processing_status 
-     FROM syntra.resumes r
-     JOIN syntra.candidates c ON r.candidate_id = c.id
+     FROM ${CORE_RESUMES} r
+     JOIN ${CORE_PEOPLE} c ON r.candidate_id = c.id
      WHERE r.raw_text = $1 AND c.created_by = $2
      ORDER BY r.created_at DESC
      LIMIT 1`,

@@ -79,7 +79,7 @@ router.post("/internal/candidates/:id/duplicates/detect", async (req, res) => {
   try {
     const { rows: baseRows } = await pool.query(
       `SELECT c.id, c.full_name, c.email, c.created_by::text AS created_by
-         FROM syntra.candidates c
+         FROM core.people c
         WHERE c.id = $1`,
       [candidateId],
     );
@@ -91,7 +91,7 @@ router.post("/internal/candidates/:id/duplicates/detect", async (req, res) => {
     const namePart = (base.full_name || "").trim().split(/\s+/)[0];
     const { rows: matches } = await pool.query(
       `SELECT c.id, c.full_name, c.email
-         FROM syntra.candidates c
+         FROM core.people c
         WHERE c.id <> $1
           AND c.created_by IS NOT DISTINCT FROM $2
           AND (

@@ -1,4 +1,5 @@
 const { pool } = require("../config/db");
+const { CORE_REQUIREMENTS } = require("./core-views");
 
 const ALLOWED_EMPLOYMENT_TYPES = new Set(["W2", "C2C", "1099"]);
 
@@ -9,7 +10,7 @@ function sanitizeEmploymentType(type) {
 }
 
 /**
- * Inserts an ASTRA-ingested requirement record into syntra.jobs.
+ * Inserts an ASTRA-ingested requirement into core.requirements.
  * Uses client for transactional execution.
  *
  * Initial lifecycle defaults:
@@ -26,13 +27,11 @@ async function insertRequirement(client, data = {}) {
   const dbClient = client || pool;
 
   const sql = `
-    INSERT INTO syntra.jobs (
+    INSERT INTO core.requirements (
       title,
       company_name,
-      original_file_name,
-      file_path,
-      mime_type,
-      raw_text,
+      -- The document itself becomes a source_files row below; only how the
+      -- requirement ARRIVED belongs on the requirement.
       source_email,
       source_url,
       message_id,
@@ -42,15 +41,14 @@ async function insertRequirement(client, data = {}) {
       visa_requirement,
       employment_type,
       remote_policy,
-      summary_hash,
       status,
-      processing_status,
+      origin,
       score_threshold,
       uploaded_at,
       created_by
     ) VALUES (
-      $1, $2, $3, $4, $5, $6, $7, $8, $9, $10,
-      $11, $12, $13, $14, $15, $16, $17, $18, 50, now(), $19
+      $1, $2, $7, $8, $9, $10,
+      $11, $12, $13, $14, $15, $17, 'astra', 50, now(), $19
     )
     RETURNING
       id,
@@ -60,7 +58,6 @@ async function insertRequirement(client, data = {}) {
       source_url,
       message_id,
       status,
-      processing_status,
       uploaded_at,
       created_by;
   `;
@@ -97,9 +94,12 @@ async function insertRequirement(client, data = {}) {
 async function findRequirementByMessageId(messageId) {
   if (!messageId || !messageId.trim()) return null;
   const sql = `
-    SELECT id, title, source_email, message_id, summary_hash, status, processing_status, uploaded_at, created_by
-      FROM syntra.jobs
-     WHERE message_id = $1
+    SELECT q.id, q.title, q.source_email, q.message_id,
+           f.content_hash AS summary_hash, q.status, q.uploaded_at, q.created_by
+      FROM core.requirements q
+      LEFT JOIN core.source_files f
+        ON f.subject_type = 'requirement' AND f.subject_id = q.id
+     WHERE q.message_id = $1
      LIMIT 1;
   `;
   const { rows } = await pool.query(sql, [messageId.trim()]);
@@ -112,9 +112,12 @@ async function findRequirementByMessageId(messageId) {
 async function findRequirementBySummaryHash(summaryHash) {
   if (!summaryHash || !summaryHash.trim()) return null;
   const sql = `
-    SELECT id, title, source_email, message_id, summary_hash, status, processing_status, uploaded_at, created_by
-      FROM syntra.jobs
-     WHERE summary_hash = $1
+    SELECT q.id, q.title, q.source_email, q.message_id,
+           f.content_hash AS summary_hash, q.status, q.uploaded_at, q.created_by
+      FROM core.source_files f
+      JOIN core.requirements q
+        ON q.id = f.subject_id AND f.subject_type = 'requirement'
+     WHERE f.content_hash = $1
      LIMIT 1;
   `;
   const { rows } = await pool.query(sql, [summaryHash.trim()]);
@@ -135,11 +138,12 @@ async function getRequirementById(id, userId = null) {
   const sql = `
     SELECT id, title, company_name, original_file_name, file_path, mime_type,
            raw_text, jd_summary, required_skills, primary_role, summary_hash,
-           source_email, source_url, message_id, score_threshold, status, processing_status,
+           source_email, source_url, message_id, score_threshold, status,
+           processing_status,
            location, min_experience, max_experience, visa_requirement,
            employment_type, remote_policy, uploaded_at, processed_at,
            created_by, created_at, updated_at
-      FROM syntra.jobs
+      FROM ${CORE_REQUIREMENTS}
      WHERE id = $1${extraWhere};
   `;
   const { rows } = await pool.query(sql, params);
@@ -159,7 +163,7 @@ async function updateEnrichedRequirement(jobId, enrichedData = {}, client = null
   const dbClient = client || pool;
 
   const sql = `
-    UPDATE syntra.jobs
+    UPDATE core.requirements
        SET title = COALESCE($2, title),
            company_name = COALESCE($3, company_name),
            location = COALESCE($4, location),
@@ -170,9 +174,7 @@ async function updateEnrichedRequirement(jobId, enrichedData = {}, client = null
            remote_policy = COALESCE($9, remote_policy),
            required_skills = $10::jsonb,
            primary_role = $11,
-           jd_summary = $12,
-           processed_at = now(),
-           processing_status = 'processed',
+           summary = $12,
            processing_failed_at = NULL,
            processing_error = NULL
      WHERE id = $1

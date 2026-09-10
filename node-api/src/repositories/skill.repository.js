@@ -13,7 +13,7 @@ async function listTopSkills({ userId = null, limit = 10 } = {}) {
 
   const { rows } = await pool.query(
     `SELECT trim(skill) AS skill, COUNT(*)::int AS count
-       FROM syntra.jobs j,
+       FROM core.requirements j,
             LATERAL jsonb_array_elements_text(
               COALESCE(j.required_skills, '[]'::jsonb)
             ) AS skill

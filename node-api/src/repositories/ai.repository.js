@@ -5,6 +5,8 @@ const {
   CORE_REQUIREMENTS,
   CORE_RESUMES,
 } = require("./core-views");
+const { setProcessing, setContentHash } = require("./core-writes");
+const { withTransaction } = require("../config/db");
 
 // Job Repositories
 async function getJob(jobId) {
@@ -16,39 +18,43 @@ async function getJob(jobId) {
 }
 
 async function markJobProcessing(jobId) {
-  await pool.query(
-    "UPDATE syntra.jobs SET processing_started_at = now() WHERE id = $1",
-    [jobId]
-  );
+  await setProcessing(pool, {
+    subjectType: "requirement", subjectId: jobId,
+    status: "running", startedAt: new Date(),
+  });
 }
 
 async function saveJobSummary(jobId, summary) {
-  await pool.query(
-    `UPDATE syntra.jobs
-        SET jd_summary = $2, processed_at = now()
-      WHERE id = $1`,
-    [jobId, summary]
-  );
+  await withTransaction(async (client) => {
+    await client.query(
+      `UPDATE core.requirements SET summary = $2, updated_at = now() WHERE id = $1`,
+      [jobId, summary],
+    );
+    await setProcessing(client, {
+      subjectType: "requirement", subjectId: jobId,
+      status: "succeeded", finishedAt: new Date(),
+    });
+  });
 }
 
 async function saveJobExtraction(jobId, requiredSkills, primaryRole, summaryHash) {
   await pool.query(
-    `UPDATE syntra.jobs
-        SET required_skills = $2::jsonb,
-            primary_role = $3,
-            summary_hash = $4
+    `UPDATE core.requirements
+        SET required_skills = $2::jsonb, primary_role = $3, updated_at = now()
       WHERE id = $1`,
-    [jobId, JSON.stringify(requiredSkills), primaryRole, summaryHash]
+    [jobId, JSON.stringify(requiredSkills), primaryRole]
   );
+  // The hash describes the document, not the requirement.
+  await setContentHash(pool, {
+    subjectType: "requirement", subjectId: jobId, hash: summaryHash,
+  });
 }
 
 async function markJobFailed(jobId, error) {
-  await pool.query(
-    `UPDATE syntra.jobs
-        SET processing_failed_at = now(), processing_error = $2
-      WHERE id = $1`,
-    [jobId, error]
-  );
+  await setProcessing(pool, {
+    subjectType: "requirement", subjectId: jobId,
+    status: "failed", failedAt: new Date(), error,
+  });
 }
 
 // Resume Repositories
@@ -61,37 +67,29 @@ async function getResume(resumeId) {
 }
 
 async function markResumeProcessing(resumeId) {
-  await pool.query(
-    `UPDATE syntra.resumes
-        SET processing_started_at = now(),
-            processing_failed_at = NULL,
-            processing_error = NULL
-      WHERE id = $1`,
-    [resumeId]
-  );
+  await setProcessing(pool, {
+    subjectType: "resume", subjectId: resumeId,
+    status: "running", startedAt: new Date(), error: null,
+  });
 }
 
 async function saveResumeSummary(resumeId, summary) {
   await pool.query(
-    `UPDATE syntra.resumes
-        SET resume_summary = $2,
-            processed_at = now(),
-            processing_failed_at = NULL,
-            processing_error = NULL
-      WHERE id = $1`,
+    `UPDATE core.resumes SET summary = $2, updated_at = now() WHERE id = $1`,
     [resumeId, summary]
   );
 }
 
 async function saveResumeExtraction(resumeId, skills, primaryRole, summaryHash) {
   await pool.query(
-    `UPDATE syntra.resumes
-        SET skills = $2::jsonb,
-            primary_role = $3,
-            summary_hash = $4
+    `UPDATE core.resumes
+        SET skills = $2::jsonb, primary_role = $3, updated_at = now()
       WHERE id = $1`,
-    [resumeId, JSON.stringify(skills), primaryRole, summaryHash]
+    [resumeId, JSON.stringify(skills), primaryRole]
   );
+  await setContentHash(pool, {
+    subjectType: "resume", subjectId: resumeId, hash: summaryHash,
+  });
 }
 
 async function saveProfile(resumeId, profileData) {
@@ -106,13 +104,13 @@ async function saveProfile(resumeId, profileData) {
   } = profileData;
 
   await pool.query(
-    `UPDATE syntra.resumes SET
+    `UPDATE core.resumes SET
         min_rate = NULLIF(btrim($2), ''),
         education = $3::jsonb,
         experience = $4::jsonb,
         total_experience = NULLIF(btrim($5), ''),
         current_company = NULLIF(btrim($6), ''),
-        "current_role" = NULLIF(btrim($7), ''),
+        current_role_title = NULLIF(btrim($7), ''),
         profile_summary = NULLIF(btrim($8), ''),
         updated_at = now()
       WHERE id = $1`,
@@ -130,33 +128,39 @@ async function saveProfile(resumeId, profileData) {
 }
 
 async function markResumeFailed(resumeId, error) {
-  await pool.query(
-    `UPDATE syntra.resumes
-        SET processing_failed_at = now(), processing_error = $2
-      WHERE id = $1`,
-    [resumeId, error]
-  );
+  await setProcessing(pool, {
+    subjectType: "resume", subjectId: resumeId,
+    status: "failed", failedAt: new Date(), error,
+  });
 }
 
 // Match Repositories
 async function markMatching(jobId, resumeId) {
-  await pool.query(
-    `UPDATE syntra.matches
-        SET match_status = 'processing', matching_started_at = now()
-      WHERE job_id = $1 AND resume_id = $2`,
+  const { rows } = await pool.query(
+    `UPDATE core.matches SET status = 'processing', updated_at = now()
+      WHERE requirement_id = $1 AND resume_id = $2 RETURNING id`,
     [jobId, resumeId]
   );
+  if (rows[0]) {
+    await setProcessing(pool, {
+      subjectType: "match", subjectId: rows[0].id, stage: "score",
+      status: "running", startedAt: new Date(),
+    });
+  }
 }
 
 async function markMatchFailed(jobId, resumeId, error) {
-  await pool.query(
-    `UPDATE syntra.matches
-        SET match_status = 'failed',
-            matching_failed_at = now(),
-            matching_error = $3
-      WHERE job_id = $1 AND resume_id = $2`,
-    [jobId, resumeId, error]
+  const { rows } = await pool.query(
+    `UPDATE core.matches SET status = 'failed', updated_at = now()
+      WHERE requirement_id = $1 AND resume_id = $2 RETURNING id`,
+    [jobId, resumeId]
   );
+  if (rows[0]) {
+    await setProcessing(pool, {
+      subjectType: "match", subjectId: rows[0].id, stage: "score",
+      status: "failed", failedAt: new Date(), error,
+    });
+  }
 }
 
 module.exports = {

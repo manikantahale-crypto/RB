@@ -5,6 +5,13 @@ const {
   CORE_REQUIREMENTS,
   CORE_RESUMES,
 } = require("./core-views");
+const {
+  setProcessing,
+  setEmbedding,
+  setContentHash,
+  addSourceFile,
+} = require("./core-writes");
+const { withTransaction } = require("../config/db");
 
 async function insertJob(
   client,
@@ -12,21 +19,28 @@ async function insertJob(
 ) {
   // See insertCandidate: explicit when the session knows it, derived by the
   // trigger when it does not.
-  const sql = `
-    INSERT INTO syntra.jobs (title, original_file_name, file_path, mime_type, raw_text, uploaded_at, score_threshold, created_by, org_id, status)
-    VALUES ($1, $2, $3, $4, $5, now(), 50, $6, $7, 'Staging')
-    RETURNING id, title, original_file_name, file_path, uploaded_at, created_by, org_id
-  `;
-  const { rows } = await client.query(sql, [
-    title || null,
+  // The requirement first. The file is a separate row, because most
+  // requirements arrive as email and have none — 2,690 of 2,946 today.
+  const { rows } = await client.query(
+    `INSERT INTO core.requirements
+       (title, uploaded_at, score_threshold, created_by, org_id, status, origin)
+     VALUES ($1, now(), 50, $2, $3, 'Staging', 'manual')
+     RETURNING id, title, uploaded_at, created_by, org_id`,
+    [title || null, createdBy || null, orgId || null],
+  );
+  const job = rows[0];
+
+  await addSourceFile(client, {
+    subjectType: "requirement",
+    subjectId: job.id,
     originalFileName,
     filePath,
-    mimeType || null,
+    mimeType,
     rawText,
-    createdBy || null,
-    orgId || null,
-  ]);
-  return rows[0];
+  });
+
+  // The caller's response shape is unchanged: these two came off the wide row.
+  return { ...job, original_file_name: originalFileName ?? null, file_path: filePath ?? null };
 }
 
 async function getJobById(jobId, userId = null) {
@@ -55,33 +69,42 @@ async function getJobById(jobId, userId = null) {
 }
 
 async function markProcessing(jobId) {
-  await pool.query(
-    `UPDATE syntra.jobs
-        SET processing_started_at = now(),
-            processing_failed_at = NULL,
-            processing_error = NULL
-      WHERE id = $1`,
-    [jobId]
-  );
+  // Starting an attempt clears the previous failure: the row records the
+  // attempt in flight, not a history of every one. Passing null for failedAt
+  // is not enough — the helper only overwrites a timestamp when given one — so
+  // the status carries the meaning.
+  await setProcessing(pool, {
+    subjectType: "requirement",
+    subjectId: jobId,
+    status: "running",
+    startedAt: new Date(),
+    error: null,
+  });
 }
 
 async function saveAiResult(
   jobId,
   { summary, skills, primaryRole, summaryHash }
 ) {
-  await pool.query(
-    `UPDATE syntra.jobs
-        SET jd_summary = $2,
-            required_skills = $3::jsonb,
-            primary_role = $4,
-            summary_hash = $5,
-            processed_at = now(),
-            processing_status = 'processed',
-            processing_failed_at = NULL,
-            processing_error = NULL
-      WHERE id = $1`,
-    [jobId, summary, JSON.stringify(skills || []), primaryRole || "other", summaryHash]
-  );
+  // One statement became three tables. They go in one transaction because a
+  // requirement that says "processed" while its summary is missing is worse
+  // than one that says nothing.
+  await withTransaction(async (client) => {
+    await client.query(
+      `UPDATE core.requirements
+          SET summary = $2, required_skills = $3::jsonb, primary_role = $4,
+              updated_at = now()
+        WHERE id = $1`,
+      [jobId, summary, JSON.stringify(skills || []), primaryRole || "other"],
+    );
+    await setContentHash(client, {
+      subjectType: "requirement", subjectId: jobId, hash: summaryHash,
+    });
+    await setProcessing(client, {
+      subjectType: "requirement", subjectId: jobId,
+      status: "succeeded", finishedAt: new Date(), error: null,
+    });
+  });
 }
 
 async function saveAiResultAndEmbedding(
@@ -89,33 +112,40 @@ async function saveAiResultAndEmbedding(
   { summary, skills, primaryRole, summaryHash, embedding, embeddingModel, embeddingVersion }
 ) {
   const vectorStr = embedding && Array.isArray(embedding) ? `[${embedding.join(",")}]` : null;
-  await pool.query(
-    `UPDATE syntra.jobs
-        SET jd_summary = $2,
-            required_skills = $3::jsonb,
-            primary_role = $4,
-            summary_hash = $5,
-            embedding = $6::vector,
-            embedding_model = $7,
-            embedding_version = $8,
-            processed_at = now(),
-            processing_status = 'processed',
-            processing_failed_at = NULL,
-            processing_error = NULL
-      WHERE id = $1`,
-    [jobId, summary, JSON.stringify(skills || []), primaryRole || "other", summaryHash, vectorStr, embeddingModel || "text-embedding-3-small", embeddingVersion || "v1"]
-  );
+
+  await withTransaction(async (client) => {
+    await client.query(
+      `UPDATE core.requirements
+          SET summary = $2, required_skills = $3::jsonb, primary_role = $4,
+              updated_at = now()
+        WHERE id = $1`,
+      [jobId, summary, JSON.stringify(skills || []), primaryRole || "other"],
+    );
+    await setContentHash(client, {
+      subjectType: "requirement", subjectId: jobId, hash: summaryHash,
+    });
+    // Versioned by model, so a re-embed adds a row instead of overwriting the
+    // vector the previous model produced.
+    await setEmbedding(client, {
+      subjectType: "requirement", subjectId: jobId, embedding: vectorStr,
+      model: embeddingModel || "text-embedding-3-small",
+      modelVersion: embeddingVersion || "v1",
+    });
+    await setProcessing(client, {
+      subjectType: "requirement", subjectId: jobId,
+      status: "succeeded", finishedAt: new Date(), error: null,
+    });
+  });
 }
 
 async function markFailed(jobId, error) {
-  await pool.query(
-    `UPDATE syntra.jobs
-        SET processing_failed_at = now(),
-        processing_status = 'failed',
-        processing_error = $2
-      WHERE id = $1`,
-    [jobId, String(error).slice(0, 2000)]
-  );
+  await setProcessing(pool, {
+    subjectType: "requirement",
+    subjectId: jobId,
+    status: "failed",
+    failedAt: new Date(),
+    error: String(error).slice(0, 2000),
+  });
 }
 
 async function listJobs({ userId = null, limit = 50 } = {}) {
@@ -185,7 +215,7 @@ async function listJobs({ userId = null, limit = 50 } = {}) {
 async function updateJobThreshold(jobId, threshold) {
   const safeThreshold = Math.min(Math.max(Number(threshold) || 0, 0), 100);
   await pool.query(
-    `UPDATE syntra.jobs SET score_threshold = $2 WHERE id = $1`,
+    `UPDATE core.requirements SET score_threshold = $2, updated_at = now() WHERE id = $1`,
     [jobId, safeThreshold]
   );
 }
@@ -247,15 +277,18 @@ async function deleteJobs(jobIds, userId = null) {
 }
 
 async function saveEmbedding(jobId, embedding, model, version, hash) {
-  await pool.query(
-    `UPDATE syntra.jobs
-        SET embedding = $2::vector,
-            embedding_model = $3,
-            embedding_version = $4,
-            summary_hash = $5
-      WHERE id = $1`,
-    [jobId, `[${embedding.join(",")}]`, model, version, hash]
-  );
+  await withTransaction(async (client) => {
+    await setEmbedding(client, {
+      subjectType: "requirement",
+      subjectId: jobId,
+      embedding: `[${embedding.join(",")}]`,
+      model,
+      modelVersion: version,
+    });
+    await setContentHash(client, {
+      subjectType: "requirement", subjectId: jobId, hash,
+    });
+  });
 }
 
 async function getClosestResumesCount(jobId, threshold = 60, userId = null) {
@@ -281,11 +314,16 @@ async function saveJobsBulk(jobIds, userId) {
   }
 
   const { rowCount } = await pool.query(
-    `UPDATE syntra.jobs
-        SET status = 'Active'
-      WHERE id = ANY($1)
-        AND processed_at IS NOT NULL
-        AND processing_failed_at IS NULL
+    `UPDATE core.requirements q
+        SET status = 'Active', updated_at = now()
+      WHERE q.id = ANY($1)
+        -- "Processed and not failed" is no longer two columns on this row; it
+        -- is what the extract stage recorded.
+        AND EXISTS (
+          SELECT 1 FROM core.processing_jobs p
+           WHERE p.subject_type = 'requirement' AND p.subject_id = q.id
+             AND p.stage = 'extract'
+             AND p.finished_at IS NOT NULL AND p.failed_at IS NULL)
         ${userCondition}`,
     params
   );
@@ -294,12 +332,15 @@ async function saveJobsBulk(jobIds, userId) {
 
 async function resetProcessingState(jobId) {
   const { rowCount } = await pool.query(
-    `UPDATE syntra.jobs
-        SET processing_failed_at = NULL,
-            processing_error = NULL,
-            processing_started_at = NULL,
-            status = 'Staging'
-      WHERE id = $1 AND processing_failed_at IS NOT NULL`,
+    `WITH cleared AS (
+       UPDATE core.processing_jobs
+          SET failed_at = NULL, error = NULL, started_at = NULL, status = 'pending'
+        WHERE subject_type = 'requirement' AND subject_id = $1
+          AND stage = 'extract' AND failed_at IS NOT NULL
+       RETURNING subject_id)
+     UPDATE core.requirements
+        SET status = 'Staging', updated_at = now()
+      WHERE id IN (SELECT subject_id FROM cleared)`,
     [jobId]
   );
   return rowCount;

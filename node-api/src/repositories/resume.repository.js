@@ -5,26 +5,43 @@ const {
   CORE_REQUIREMENTS,
   CORE_RESUMES,
 } = require("./core-views");
+const {
+  setProcessing,
+  setEmbedding,
+  setContentHash,
+  addSourceFile,
+} = require("./core-writes");
+const { withTransaction } = require("../config/db");
 
 async function insertResume(
   client,
   { candidateId, originalFileName, filePath, mimeType, rawText }
 ) {
   const sql = `
-    INSERT INTO syntra.resumes
-      (candidate_id, original_file_name, file_path, mime_type, raw_text,
-       version_number, is_current, uploaded_at)
-    VALUES ($1, $2, $3, $4, $5, 1, true, now())
-    RETURNING id, candidate_id, file_path, version_number, is_current, uploaded_at
+    INSERT INTO core.resumes
+      (person_id, version_number, is_current, uploaded_at)
+    VALUES ($1, 1, true, now())
+    RETURNING id, person_id AS candidate_id, version_number, is_current, uploaded_at
   `;
-  const { rows } = await client.query(sql, [
-    candidateId,
+  // Only the person is a parameter now. The file's details are not columns on
+  // this row any more; they are passed to addSourceFile below.
+  const { rows } = await client.query(sql, [candidateId]);
+
+  const resume = rows[0];
+
+  // The document is a row of its own now. A resume without one is possible —
+  // core.source_files exists only where there is a file — so the caller's
+  // shape is preserved explicitly rather than read back.
+  await addSourceFile(client, {
+    subjectType: "resume",
+    subjectId: resume.id,
     originalFileName,
     filePath,
-    mimeType || null,
+    mimeType,
     rawText,
-  ]);
-  return rows[0];
+  });
+
+  return { ...resume, file_path: filePath ?? null };
 }
 
 async function getResumeById(resumeId) {
@@ -41,14 +58,13 @@ async function getResumeById(resumeId) {
 }
 
 async function markProcessing(resumeId) {
-  await pool.query(
-    `UPDATE syntra.resumes
-        SET processing_started_at = now(),
-            processing_failed_at = NULL,
-            processing_error = NULL
-      WHERE id = $1`,
-    [resumeId]
-  );
+  await setProcessing(pool, {
+    subjectType: "resume",
+    subjectId: resumeId,
+    status: "running",
+    startedAt: new Date(),
+    error: null,
+  });
 }
 
 async function saveAiResult(
@@ -67,40 +83,36 @@ async function saveAiResult(
     profileSummary,
   }
 ) {
-  await pool.query(
-    `UPDATE syntra.resumes
-        SET resume_summary = $2,
-            skills = $3::jsonb,
-            primary_role = $4,
-            summary_hash = $5,
-            min_rate = NULLIF(btrim($6), ''),
-            education = $7::jsonb,
-            experience = $8::jsonb,
-            total_experience = NULLIF(btrim($9), ''),
-            current_company = NULLIF(btrim($10), ''),
-            "current_role" = NULLIF(btrim($11), ''),
-            profile_summary = NULLIF(btrim($12), ''),
-            processed_at = now(),
-            processing_status = 'processed',
-            processing_failed_at = NULL,
-            processing_error = NULL,
-            updated_at = now()
-      WHERE id = $1`,
-    [
-      resumeId,
-      summary,
-      JSON.stringify(skills || []),
-      primaryRole || "other",
-      summaryHash,
-      minRate || "",
-      JSON.stringify(education || []),
-      JSON.stringify(experience || []),
-      totalExperience || "",
-      currentCompany || "",
-      currentRole || "",
-      profileSummary || "",
-    ]
-  );
+  await withTransaction(async (client) => {
+    await client.query(
+      `UPDATE core.resumes
+          SET summary = $2,
+              skills = $3::jsonb,
+              primary_role = $4,
+              min_rate = NULLIF(btrim($5), ''),
+              education = $6::jsonb,
+              experience = $7::jsonb,
+              total_experience = NULLIF(btrim($8), ''),
+              current_company = NULLIF(btrim($9), ''),
+              current_role_title = NULLIF(btrim($10), ''),
+              profile_summary = NULLIF(btrim($11), ''),
+              updated_at = now()
+        WHERE id = $1`,
+      [
+        resumeId, summary, JSON.stringify(skills || []), primaryRole || "other",
+        minRate || "", JSON.stringify(education || []),
+        JSON.stringify(experience || []), totalExperience || "",
+        currentCompany || "", currentRole || "", profileSummary || "",
+      ],
+    );
+    await setContentHash(client, {
+      subjectType: "resume", subjectId: resumeId, hash: summaryHash,
+    });
+    await setProcessing(client, {
+      subjectType: "resume", subjectId: resumeId,
+      status: "succeeded", finishedAt: new Date(), error: null,
+    });
+  });
 }
 
 async function saveAiResultAndEmbedding(
@@ -123,69 +135,64 @@ async function saveAiResultAndEmbedding(
   }
 ) {
   const vectorStr = embedding && Array.isArray(embedding) ? `[${embedding.join(",")}]` : null;
-  await pool.query(
-    `UPDATE syntra.resumes
-        SET resume_summary = $2,
-            skills = $3::jsonb,
-            primary_role = $4,
-            summary_hash = $5,
-            min_rate = NULLIF(btrim($6), ''),
-            education = $7::jsonb,
-            experience = $8::jsonb,
-            total_experience = NULLIF(btrim($9), ''),
-            current_company = NULLIF(btrim($10), ''),
-            "current_role" = NULLIF(btrim($11), ''),
-            profile_summary = NULLIF(btrim($12), ''),
-            embedding = $13::vector,
-            embedding_model = $14,
-            embedding_version = $15,
-            processed_at = now(),
-            processing_status = 'processed',
-            processing_failed_at = NULL,
-            processing_error = NULL,
-            updated_at = now()
-      WHERE id = $1`,
-    [
-      resumeId,
-      summary,
-      JSON.stringify(skills || []),
-      primaryRole || "other",
-      summaryHash,
-      minRate || "",
-      JSON.stringify(education || []),
-      JSON.stringify(experience || []),
-      totalExperience || "",
-      currentCompany || "",
-      currentRole || "",
-      profileSummary || "",
-      vectorStr,
-      embeddingModel || "text-embedding-3-small",
-      embeddingVersion || "v1"
-    ]
-  );
+  await withTransaction(async (client) => {
+    await client.query(
+      `UPDATE core.resumes
+          SET summary = $2,
+              skills = $3::jsonb,
+              primary_role = $4,
+              min_rate = NULLIF(btrim($5), ''),
+              education = $6::jsonb,
+              experience = $7::jsonb,
+              total_experience = NULLIF(btrim($8), ''),
+              current_company = NULLIF(btrim($9), ''),
+              current_role_title = NULLIF(btrim($10), ''),
+              profile_summary = NULLIF(btrim($11), ''),
+              updated_at = now()
+        WHERE id = $1`,
+      [
+        resumeId, summary, JSON.stringify(skills || []), primaryRole || "other",
+        minRate || "", JSON.stringify(education || []),
+        JSON.stringify(experience || []), totalExperience || "",
+        currentCompany || "", currentRole || "", profileSummary || "",
+      ],
+    );
+    await setContentHash(client, {
+      subjectType: "resume", subjectId: resumeId, hash: summaryHash,
+    });
+    await setEmbedding(client, {
+      subjectType: "resume", subjectId: resumeId,
+      embedding: embedding && Array.isArray(embedding) ? `[${embedding.join(",")}]` : null,
+      model: embeddingModel || "text-embedding-3-small",
+      modelVersion: embeddingVersion || "v1",
+    });
+    await setProcessing(client, {
+      subjectType: "resume", subjectId: resumeId,
+      status: "succeeded", finishedAt: new Date(), error: null,
+    });
+  });
 }
 
 async function markFailed(resumeId, error) {
-  await pool.query(
-    `UPDATE syntra.resumes
-        SET processing_failed_at = now(),
-            processing_status = 'failed',
-            processing_error = $2
-      WHERE id = $1`,
-    [resumeId, String(error).slice(0, 2000)]
-  );
+  await setProcessing(pool, {
+    subjectType: "resume",
+    subjectId: resumeId,
+    status: "failed",
+    failedAt: new Date(),
+    error: String(error).slice(0, 2000),
+  });
 }
 
 async function saveEmbedding(resumeId, embedding, model, version, hash) {
-  await pool.query(
-    `UPDATE syntra.resumes
-        SET embedding = $2::vector,
-            embedding_model = $3,
-            embedding_version = $4,
-            summary_hash = $5
-      WHERE id = $1`,
-    [resumeId, `[${embedding.join(",")}]`, model, version, hash]
-  );
+  await withTransaction(async (client) => {
+    await setEmbedding(client, {
+      subjectType: "resume", subjectId: resumeId,
+      embedding: `[${embedding.join(",")}]`, model, modelVersion: version,
+    });
+    await setContentHash(client, {
+      subjectType: "resume", subjectId: resumeId, hash,
+    });
+  });
 }
 
 async function getResumeWithCandidate(resumeId, userId) {
@@ -200,13 +207,14 @@ async function getResumeWithCandidate(resumeId, userId) {
 }
 async function resetProcessingState(resumeId) {
   const { rowCount } = await pool.query(
-    `UPDATE syntra.resumes
-        SET processing_failed_at = NULL,
-            processing_error = NULL,
-            processing_started_at = NULL,
-            processed_at = NULL,
-            processing_status = 'uploaded'
-      WHERE id = $1 AND processing_status = 'failed'`,
+    // Every column this used to clear now lives on the processing record.
+    // Clearing them there is the same act; the resume row itself never held
+    // the state, it just carried the columns.
+    `UPDATE core.processing_jobs
+        SET failed_at = NULL, error = NULL, started_at = NULL,
+            finished_at = NULL, status = 'pending'
+      WHERE subject_type = 'resume' AND subject_id = $1
+        AND stage = 'extract' AND status = 'failed'`,
     [resumeId]
   );
   return rowCount;

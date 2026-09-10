@@ -79,7 +79,7 @@ const { match: matchStatus } = require("../constants/statuses");
 async function getJobForMatching(jobId) {
   const { rows } = await pool.query(
     `SELECT id, primary_role, required_skills, processed_at
-       FROM syntra.jobs
+       FROM ${CORE_REQUIREMENTS}
       WHERE id = $1`,
     [jobId]
   );
@@ -89,7 +89,7 @@ async function getJobForMatching(jobId) {
 async function getResumeForMatching(resumeId) {
   const { rows } = await pool.query(
     `SELECT id, candidate_id, primary_role, skills, processed_at, is_current
-       FROM syntra.resumes
+       FROM ${CORE_RESUMES}
       WHERE id = $1`,
     [resumeId]
   );
@@ -200,13 +200,13 @@ async function insertShortlistRow(
   { jobId, candidateId, resumeId, skillMatchScore }
 ) {
   const sql = `
-    INSERT INTO syntra.matches (
-      job_id, candidate_id, resume_id,
-      match_status, skill_match_score,
-      match_requested_at, created_at
+    INSERT INTO core.matches (
+      requirement_id, person_id, resume_id,
+      status, skill_match_score,
+      requested_at, created_at
     )
     VALUES ($1, $2, $3, $4, $5, now(), now())
-    ON CONFLICT (job_id, resume_id) DO NOTHING
+    ON CONFLICT (org_id, requirement_id, resume_id) DO NOTHING
     RETURNING id
   `;
   const { rows } = await client.query(sql, [
@@ -221,7 +221,7 @@ async function insertShortlistRow(
 
 async function findMatchIdByJobResume(jobId, resumeId) {
   const { rows } = await pool.query(
-    `SELECT id FROM syntra.matches WHERE job_id = $1 AND resume_id = $2`,
+    `SELECT id FROM core.matches WHERE requirement_id = $1 AND resume_id = $2`,
     [jobId, resumeId]
   );
   return rows[0]?.id || null;
@@ -447,15 +447,25 @@ async function dailyActivity({ userId = null, days = 7 } = {}) {
 }
 
 async function markMatching(jobId, resumeId) {
-  await pool.query(
-    `UPDATE syntra.matches
-        SET match_status = $3,
-            matching_started_at = now(),
-            matching_failed_at = NULL,
-            matching_error = NULL
-      WHERE job_id = $1 AND resume_id = $2`,
+  const { rows } = await pool.query(
+    `UPDATE core.matches
+        SET status = $3, updated_at = now()
+      WHERE requirement_id = $1 AND resume_id = $2
+  RETURNING id`,
     [jobId, resumeId, matchStatus.PROCESSING]
   );
+
+  // The attempt itself is a processing record, at stage 'score'.
+  if (rows[0]) {
+    await setProcessing(pool, {
+      subjectType: "match",
+      subjectId: rows[0].id,
+      stage: "score",
+      status: "running",
+      startedAt: new Date(),
+      error: null,
+    });
+  }
 }
 
 async function saveScoreResult(
@@ -476,7 +486,7 @@ async function saveScoreResult(
   }
 ) {
   const { rows } = await pool.query(
-    `UPDATE syntra.matches
+    `UPDATE core.matches
         SET score = $3,
             tier = $4,
             reasoning = $5,
@@ -487,14 +497,12 @@ async function saveScoreResult(
             confidence_score = $10,
             breakdown = $11::jsonb,
             evidence = $12::jsonb,
-            match_status = $13,
+            status = $13,
             matched_at = now(),
-            matching_failed_at = NULL,
-            matching_error = NULL,
             model_name = $14,
             prompt_version = 'v2',
             updated_at = now()
-      WHERE job_id = $1 AND resume_id = $2
+      WHERE requirement_id = $1 AND resume_id = $2
   RETURNING id`,
     [
       jobId,
@@ -513,18 +521,38 @@ async function saveScoreResult(
       modelName || null,
     ]
   );
+  if (rows[0]) {
+    await setProcessing(pool, {
+      subjectType: "match",
+      subjectId: rows[0].id,
+      stage: "score",
+      status: "succeeded",
+      finishedAt: new Date(),
+      error: null,
+    });
+  }
   return rows[0] || null;
 }
 
 async function markFailed(jobId, resumeId, error) {
-  await pool.query(
-    `UPDATE syntra.matches
-        SET match_status = $3,
-            matching_failed_at = now(),
-            matching_error = $4
-      WHERE job_id = $1 AND resume_id = $2`,
-    [jobId, resumeId, matchStatus.FAILED, String(error).slice(0, 2000)]
+  const { rows } = await pool.query(
+    `UPDATE core.matches
+        SET status = $3, updated_at = now()
+      WHERE requirement_id = $1 AND resume_id = $2
+  RETURNING id`,
+    [jobId, resumeId, matchStatus.FAILED]
   );
+
+  if (rows[0]) {
+    await setProcessing(pool, {
+      subjectType: "match",
+      subjectId: rows[0].id,
+      stage: "score",
+      status: "failed",
+      failedAt: new Date(),
+      error: String(error).slice(0, 2000),
+    });
+  }
 }
 
 async function getSummariesForScoring(jobId, resumeId) {
@@ -568,7 +596,7 @@ module.exports = {
 async function findTopJobsByVector(resumeId, limit = 50) {
   // Retrieve resume embedding
   const { rows: resumeRows } = await pool.query(
-    `SELECT embedding FROM syntra.resumes WHERE id = $1`, 
+    `SELECT embedding FROM ${CORE_RESUMES} WHERE id = $1`, 
     [resumeId]
   );
   const resumeEmbedding = resumeRows[0]?.embedding;
@@ -604,7 +632,7 @@ module.exports.findTopJobsByVector = findTopJobsByVector;
 async function findTopCandidatesByVector(jobId, limit = 50) {
   // Retrieve job embedding
   const { rows: jobRows } = await pool.query(
-    `SELECT embedding FROM syntra.jobs WHERE id = $1`, 
+    `SELECT embedding FROM ${CORE_REQUIREMENTS} WHERE id = $1`, 
     [jobId]
   );
   const jobEmbedding = jobRows[0]?.embedding;
