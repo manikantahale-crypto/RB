@@ -1,4 +1,10 @@
 const { pool } = require("../config/db");
+const {
+  CORE_MATCHES,
+  CORE_PEOPLE,
+  CORE_REQUIREMENTS,
+  CORE_RESUMES,
+} = require("./core-views");
 
 async function insertResume(
   client,
@@ -27,7 +33,7 @@ async function getResumeById(resumeId) {
             resume_summary, skills, primary_role, summary_hash,
             processed_at, processing_failed_at, processing_status, processing_error,
             embedding, is_current
-       FROM syntra.resumes
+       FROM ${CORE_RESUMES}
       WHERE id = $1`,
     [resumeId]
   );
@@ -185,8 +191,8 @@ async function saveEmbedding(resumeId, embedding, model, version, hash) {
 async function getResumeWithCandidate(resumeId, userId) {
   const { rows } = await pool.query(
     `SELECT r.id, r.candidate_id, r.file_path, r.processing_status
-     FROM syntra.resumes r
-     JOIN syntra.candidates c ON r.candidate_id = c.id
+     FROM ${CORE_RESUMES} r
+     JOIN ${CORE_PEOPLE} c ON r.candidate_id = c.id
      WHERE r.id = $1 AND (c.created_by = $2 OR c.created_by IS NULL)`,
     [resumeId, userId]
   );

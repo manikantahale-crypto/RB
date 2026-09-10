@@ -1,9 +1,15 @@
 const { pool } = require("../config/db");
+const {
+  CORE_MATCHES,
+  CORE_PEOPLE,
+  CORE_REQUIREMENTS,
+  CORE_RESUMES,
+} = require("./core-views");
 
 // Job Repositories
 async function getJob(jobId) {
   const { rows } = await pool.query(
-    "SELECT id, file_path, jd_summary FROM syntra.jobs WHERE id = $1",
+    `SELECT id, file_path, jd_summary FROM ${CORE_REQUIREMENTS} WHERE id = $1`,
     [jobId]
   );
   return rows[0];
@@ -48,7 +54,7 @@ async function markJobFailed(jobId, error) {
 // Resume Repositories
 async function getResume(resumeId) {
   const { rows } = await pool.query(
-    "SELECT id, candidate_id, file_path, resume_summary FROM syntra.resumes WHERE id = $1",
+    `SELECT id, candidate_id, file_path, resume_summary FROM ${CORE_RESUMES} WHERE id = $1`,
     [resumeId]
   );
   return rows[0];

@@ -37,6 +37,11 @@ for _ in $(seq 1 40); do
 done
 sleep 1
 
+# The migration files are UTF-8. Without this psql uses the client's locale,
+# and on Windows that turns an em dash in a comment into mojibake — which
+# then shows up as drift against production, where it applied correctly.
+export PGCLIENTENCODING=UTF8
+
 echo "→ applying migrations"
 APPLIED=0
 for f in "$REPO"/packages/db/migrations/V*.sql; do

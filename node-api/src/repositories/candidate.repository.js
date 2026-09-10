@@ -1,4 +1,10 @@
 const { pool } = require("../config/db");
+const {
+  CORE_MATCHES,
+  CORE_PEOPLE,
+  CORE_REQUIREMENTS,
+  CORE_RESUMES,
+} = require("./core-views");
 
 async function insertCandidate(client, { fullName, email, phone, createdBy, orgId }) {
   // org_id is passed explicitly rather than left to the trigger, so the row
@@ -56,8 +62,8 @@ async function getCandidateWithCurrentResume(candidateId, userId = null) {
             r.processing_error AS resume_processing_error,
             r.embedding,
             r.is_current
-       FROM syntra.candidates c
-       LEFT JOIN syntra.resumes r
+       FROM ${CORE_PEOPLE} c
+       LEFT JOIN ${CORE_RESUMES} r
          ON r.candidate_id = c.id AND r.is_current = true
       WHERE c.id = $1${extraWhere}`,
     params
@@ -108,12 +114,12 @@ async function listCandidates({ userId = null, limit = 50 } = {}) {
              ELSE 'processed'
            END AS processing_status,
            COALESCE(mc.match_count, 0)::int AS match_count
-      FROM syntra.candidates c
-      JOIN syntra.resumes r
+      FROM ${CORE_PEOPLE} c
+      JOIN ${CORE_RESUMES} r
         ON r.candidate_id = c.id AND r.is_current = true
       LEFT JOIN (
         SELECT candidate_id, COUNT(*)::int AS match_count
-          FROM syntra.matches
+          FROM ${CORE_MATCHES}
          GROUP BY candidate_id
       ) mc ON mc.candidate_id = c.id
      ${whereClause}
@@ -122,8 +128,8 @@ async function listCandidates({ userId = null, limit = 50 } = {}) {
 
   const countSql = `
     SELECT COUNT(*)::int AS total 
-      FROM syntra.candidates c
-      JOIN syntra.resumes r
+      FROM ${CORE_PEOPLE} c
+      JOIN ${CORE_RESUMES} r
         ON r.candidate_id = c.id AND r.is_current = true
      ${countWhere}`;
 
@@ -140,8 +146,8 @@ async function deleteCandidate(candidateId, userId = null) {
   try {
     await client.query("BEGIN");
     const checkSql = userId
-      ? `SELECT id FROM syntra.candidates WHERE id = $1 AND created_by = $2`
-      : `SELECT id FROM syntra.candidates WHERE id = $1`;
+      ? `SELECT id FROM ${CORE_PEOPLE} WHERE id = $1 AND created_by = $2`
+      : `SELECT id FROM ${CORE_PEOPLE} WHERE id = $1`;
     const checkParams = userId ? [candidateId, userId] : [candidateId];
     const existing = await client.query(checkSql, checkParams);
     if (!existing.rows[0]) {
@@ -149,18 +155,18 @@ async function deleteCandidate(candidateId, userId = null) {
       return false;
     }
     const resumes = await client.query(
-      `SELECT id FROM syntra.resumes WHERE candidate_id = $1`,
+      `SELECT id FROM ${CORE_RESUMES} WHERE candidate_id = $1`,
       [candidateId]
     );
     const resumeIds = resumes.rows.map((r) => r.id);
-    await client.query(`DELETE FROM syntra.matches WHERE candidate_id = $1`, [candidateId]);
+    await client.query(`DELETE FROM ${CORE_MATCHES} WHERE candidate_id = $1`, [candidateId]);
     if (resumeIds.length) {
-      await client.query(`DELETE FROM syntra.matches WHERE resume_id = ANY($1::uuid[])`, [
+      await client.query(`DELETE FROM ${CORE_MATCHES} WHERE resume_id = ANY($1::uuid[])`, [
         resumeIds,
       ]);
     }
-    await client.query(`DELETE FROM syntra.resumes WHERE candidate_id = $1`, [candidateId]);
-    await client.query(`DELETE FROM syntra.candidates WHERE id = $1`, [candidateId]);
+    await client.query(`DELETE FROM ${CORE_RESUMES} WHERE candidate_id = $1`, [candidateId]);
+    await client.query(`DELETE FROM ${CORE_PEOPLE} WHERE id = $1`, [candidateId]);
     await client.query("COMMIT");
     return true;
   } catch (err) {
@@ -178,8 +184,8 @@ async function deleteCandidates(candidateIds, userId = null) {
   try {
     await client.query("BEGIN");
     const selectSql = userId
-      ? `SELECT id FROM syntra.candidates WHERE id = ANY($1::uuid[]) AND created_by = $2`
-      : `SELECT id FROM syntra.candidates WHERE id = ANY($1::uuid[])`;
+      ? `SELECT id FROM ${CORE_PEOPLE} WHERE id = ANY($1::uuid[]) AND created_by = $2`
+      : `SELECT id FROM ${CORE_PEOPLE} WHERE id = ANY($1::uuid[])`;
     const selectParams = userId ? [ids, userId] : [ids];
     const ownedRows = await client.query(selectSql, selectParams);
     const ownedIds = ownedRows.rows.map((r) => r.id);
@@ -188,24 +194,24 @@ async function deleteCandidates(candidateIds, userId = null) {
       return { deleted: 0 };
     }
     const resumes = await client.query(
-      `SELECT id FROM syntra.resumes WHERE candidate_id = ANY($1::uuid[])`,
+      `SELECT id FROM ${CORE_RESUMES} WHERE candidate_id = ANY($1::uuid[])`,
       [ownedIds]
     );
     const resumeIds = resumes.rows.map((r) => r.id);
     await client.query(
-      `DELETE FROM syntra.matches WHERE candidate_id = ANY($1::uuid[])`,
+      `DELETE FROM ${CORE_MATCHES} WHERE candidate_id = ANY($1::uuid[])`,
       [ownedIds]
     );
     if (resumeIds.length) {
-      await client.query(`DELETE FROM syntra.matches WHERE resume_id = ANY($1::uuid[])`, [
+      await client.query(`DELETE FROM ${CORE_MATCHES} WHERE resume_id = ANY($1::uuid[])`, [
         resumeIds,
       ]);
     }
-    await client.query(`DELETE FROM syntra.resumes WHERE candidate_id = ANY($1::uuid[])`, [
+    await client.query(`DELETE FROM ${CORE_RESUMES} WHERE candidate_id = ANY($1::uuid[])`, [
       ownedIds,
     ]);
     const { rowCount } = await client.query(
-      `DELETE FROM syntra.candidates WHERE id = ANY($1::uuid[])`,
+      `DELETE FROM ${CORE_PEOPLE} WHERE id = ANY($1::uuid[])`,
       [ownedIds]
     );
     await client.query("COMMIT");
@@ -319,7 +325,7 @@ async function getClosestJdsCount(candidateId, threshold = 60, userId = null) {
   const safeThreshold = Math.min(Math.max(Number(threshold) || 0, 0), 100);
   const { rows } = await pool.query(
     `SELECT COUNT(*)::int AS count
-       FROM syntra.matches
+       FROM ${CORE_MATCHES}
       WHERE candidate_id = $1
         AND COALESCE(score, skill_match_score, 0) >= $2`,
     [candidateId, safeThreshold]
@@ -339,7 +345,7 @@ async function saveCandidatesBulk(candidateIds, userId) {
   const { rowCount } = await pool.query(
     `UPDATE syntra.candidates c
         SET status = 'Active'
-       FROM syntra.resumes r
+       FROM ${CORE_RESUMES} r
       WHERE r.candidate_id = c.id
         AND c.id = ANY($1)
         AND r.processed_at IS NOT NULL
@@ -359,8 +365,8 @@ async function getCurrentResumeId(candidateId, userId = null) {
   }
   const { rows } = await pool.query(
     `SELECT r.id
-       FROM syntra.resumes r
-       JOIN syntra.candidates c ON c.id = r.candidate_id
+       FROM ${CORE_RESUMES} r
+       JOIN ${CORE_PEOPLE} c ON c.id = r.candidate_id
       WHERE r.candidate_id = $1
         AND r.is_current = true
         AND r.processed_at IS NOT NULL${extra}

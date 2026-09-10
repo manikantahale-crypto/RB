@@ -1,4 +1,10 @@
 const { pool } = require("../config/db");
+const {
+  CORE_MATCHES,
+  CORE_PEOPLE,
+  CORE_REQUIREMENTS,
+  CORE_RESUMES,
+} = require("./core-views");
 
 async function insertJob(
   client,
@@ -41,7 +47,7 @@ async function getJobById(jobId, userId = null) {
             company_name, source_email, source_url, message_id,
             employment_type, visa_requirement, remote_policy,
             min_experience, max_experience
-       FROM syntra.jobs
+       FROM ${CORE_REQUIREMENTS}
       WHERE id = $1${extraWhere}`,
     params
   );
@@ -149,7 +155,7 @@ async function listJobs({ userId = null, limit = 50 } = {}) {
            j.processing_status,
            COALESCE(mc.match_count, 0)::int AS match_count,
            mc.match_scores
-      FROM syntra.jobs j
+      FROM ${CORE_REQUIREMENTS} j
       LEFT JOIN LATERAL (
         SELECT 
           COUNT(*)::int AS match_count,
@@ -159,14 +165,14 @@ async function listJobs({ userId = null, limit = 50 } = {}) {
             ), 
             '[]'::json
           ) AS match_scores
-          FROM syntra.matches m
+          FROM ${CORE_MATCHES} m
          WHERE m.job_id = j.id
       ) mc ON true
      ${whereClause}
      ORDER BY j.uploaded_at DESC NULLS LAST
      LIMIT $${queryParams.length}`;
 
-  const countSql = `SELECT COUNT(*)::int AS total FROM syntra.jobs ${countWhere}`;
+  const countSql = `SELECT COUNT(*)::int AS total FROM ${CORE_REQUIREMENTS} ${countWhere}`;
 
   const listResult = await pool.query(listSql, queryParams);
   const countResult = await pool.query(countSql, countParams);
@@ -189,16 +195,16 @@ async function deleteJob(jobId, userId = null) {
   try {
     await client.query("BEGIN");
     const checkSql = userId
-      ? `SELECT id FROM syntra.jobs WHERE id = $1 AND created_by = $2`
-      : `SELECT id FROM syntra.jobs WHERE id = $1`;
+      ? `SELECT id FROM ${CORE_REQUIREMENTS} WHERE id = $1 AND created_by = $2`
+      : `SELECT id FROM ${CORE_REQUIREMENTS} WHERE id = $1`;
     const checkParams = userId ? [jobId, userId] : [jobId];
     const existing = await client.query(checkSql, checkParams);
     if (!existing.rows[0]) {
       await client.query("ROLLBACK");
       return false;
     }
-    await client.query(`DELETE FROM syntra.matches WHERE job_id = $1`, [jobId]);
-    await client.query(`DELETE FROM syntra.jobs WHERE id = $1`, [jobId]);
+    await client.query(`DELETE FROM ${CORE_MATCHES} WHERE job_id = $1`, [jobId]);
+    await client.query(`DELETE FROM ${CORE_REQUIREMENTS} WHERE id = $1`, [jobId]);
     await client.query("COMMIT");
     return true;
   } catch (err) {
@@ -216,8 +222,8 @@ async function deleteJobs(jobIds, userId = null) {
   try {
     await client.query("BEGIN");
     const selectSql = userId
-      ? `SELECT id FROM syntra.jobs WHERE id = ANY($1::uuid[]) AND created_by = $2`
-      : `SELECT id FROM syntra.jobs WHERE id = ANY($1::uuid[])`;
+      ? `SELECT id FROM ${CORE_REQUIREMENTS} WHERE id = ANY($1::uuid[]) AND created_by = $2`
+      : `SELECT id FROM ${CORE_REQUIREMENTS} WHERE id = ANY($1::uuid[])`;
     const selectParams = userId ? [ids, userId] : [ids];
     const ownedRows = await client.query(selectSql, selectParams);
     const ownedIds = ownedRows.rows.map(r => r.id);
@@ -225,9 +231,9 @@ async function deleteJobs(jobIds, userId = null) {
       await client.query("ROLLBACK");
       return { deleted: 0 };
     }
-    await client.query(`DELETE FROM syntra.matches WHERE job_id = ANY($1::uuid[])`, [ownedIds]);
+    await client.query(`DELETE FROM ${CORE_MATCHES} WHERE job_id = ANY($1::uuid[])`, [ownedIds]);
     const { rowCount } = await client.query(
-      `DELETE FROM syntra.jobs WHERE id = ANY($1::uuid[])`,
+      `DELETE FROM ${CORE_REQUIREMENTS} WHERE id = ANY($1::uuid[])`,
       [ownedIds]
     );
     await client.query("COMMIT");
@@ -256,7 +262,7 @@ async function getClosestResumesCount(jobId, threshold = 60, userId = null) {
   const safeThreshold = Math.min(Math.max(Number(threshold) || 0, 0), 100);
   const { rows } = await pool.query(
     `SELECT COUNT(*)::int AS count
-       FROM syntra.matches
+       FROM ${CORE_MATCHES}
       WHERE job_id = $1
         AND COALESCE(score, skill_match_score, 0) >= $2`,
     [jobId, safeThreshold]
