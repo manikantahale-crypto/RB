@@ -6,7 +6,7 @@ let schemaReady = null;
 async function ensureSchema() {
   if (schemaReady) return schemaReady;
   schemaReady = pool.query(`
-    CREATE TABLE IF NOT EXISTS syntra.recruiter_review_items (
+    CREATE TABLE IF NOT EXISTS syntra.review_queue (
       id              uuid PRIMARY KEY DEFAULT gen_random_uuid(),
       user_id         uuid,
       organization_id uuid,
@@ -24,10 +24,10 @@ async function ensureSchema() {
       decision_note   text
     );
     CREATE INDEX IF NOT EXISTS recruiter_review_pending_user_idx
-      ON syntra.recruiter_review_items (user_id, status, created_at DESC)
+      ON syntra.review_queue (user_id, status, created_at DESC)
       WHERE status = 'pending';
     CREATE INDEX IF NOT EXISTS recruiter_review_source_event_idx
-      ON syntra.recruiter_review_items (source_event_id)
+      ON syntra.review_queue (source_event_id)
       WHERE source_event_id IS NOT NULL;
   `);
   return schemaReady;
@@ -35,7 +35,7 @@ async function ensureSchema() {
 
 async function findExistingBySourceEvent(sourceEventId) {
   const { rows } = await pool.query(
-    `SELECT id::text FROM syntra.recruiter_review_items WHERE source_event_id = $1 LIMIT 1`,
+    `SELECT id::text FROM syntra.review_queue WHERE source_event_id = $1 LIMIT 1`,
     [sourceEventId],
   );
   return rows[0]?.id || null;
@@ -53,7 +53,7 @@ async function insertItem({
 }) {
   const id = crypto.randomUUID();
   await pool.query(
-    `INSERT INTO syntra.recruiter_review_items (
+    `INSERT INTO syntra.review_queue (
        id, user_id, organization_id, action_type, title, message,
        payload, source_event_type, source_event_id
      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
@@ -77,7 +77,7 @@ async function listPendingForUser({ userId, organizationId, limit = 30 }) {
     `SELECT id::text, user_id::text, organization_id::text, action_type, status,
             title, message, payload, source_event_type, source_event_id::text,
             created_at
-       FROM syntra.recruiter_review_items
+       FROM syntra.review_queue
       WHERE status = 'pending'
         AND (
           user_id = $1
@@ -95,7 +95,7 @@ async function getByIdForUser(id, userId) {
     `SELECT id::text, user_id::text, organization_id::text, action_type, status,
             title, message, payload, source_event_type, source_event_id::text,
             created_at
-       FROM syntra.recruiter_review_items
+       FROM syntra.review_queue
       WHERE id = $1 AND (user_id = $2 OR user_id IS NULL)`,
     [id, userId],
   );
@@ -104,7 +104,7 @@ async function getByIdForUser(id, userId) {
 
 async function markDecided(id, { userId, status, note }) {
   const { rowCount } = await pool.query(
-    `UPDATE syntra.recruiter_review_items
+    `UPDATE syntra.review_queue
         SET status = $3,
             decided_at = now(),
             decided_by = $2,

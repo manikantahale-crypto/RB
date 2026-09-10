@@ -125,12 +125,12 @@ async function cleanup(client: PoolClient, s: Scratch): Promise<string[]> {
   if (ids.length === 0) return removed;
 
   const ml = await client.query(
-    `DELETE FROM syntra.ml_scoring_log
+    `DELETE FROM syntra.scoring_log
       WHERE job_id::text = ANY($1) OR resume_id::text = ANY($1)
          OR candidate_id::text = ANY($1)`,
     [ids],
   );
-  if (ml.rowCount) removed.push(`ml_scoring_log:${ml.rowCount}`);
+  if (ml.rowCount) removed.push(`scoring_log:${ml.rowCount}`);
 
   const ob = await client.query(
     `DELETE FROM event_outbox
