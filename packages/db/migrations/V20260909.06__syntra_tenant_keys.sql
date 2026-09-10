@@ -114,9 +114,9 @@ END $$;
 --
 -- NOT VALID means: enforced from now on, existing rows not checked.
 --
--- This is the whole tenant boundary for the candidate side. Without it, the
--- matching engine's missing WHERE org_id = ... produces a row that looks
--- perfectly normal. With it, that row is refused by the database.
+-- This is the whole tenant boundary for the candidate side. It is what would
+-- have refused the 2026-09-03 reorganisation described in V20260909.05 at the
+-- moment it happened, rather than leaving 263 inconsistent rows behind.
 DO $$
 BEGIN
   IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'matches_candidate_org_fk') THEN

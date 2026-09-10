@@ -29,13 +29,31 @@
 --
 -- THIS IS NOT THEORETICAL HERE. 263 of the 5,384 matches in this database
 -- today join a job and a candidate belonging to different organisations, in
--- both directions, created between 2026-08-31 and 2026-09-07. The matching
--- engine has no tenant filter. Those rows are test data; the missing filter is
--- a defect that would leak one agency's candidates into another's results.
+-- both directions, created between 2026-08-31 and 2026-09-07.
 --
--- The application still needs fixing — the database refusing a write is a last
--- line, not a substitute for not attempting it. But after step 4 the failure is
--- loud and immediate instead of a wrong answer nobody notices.
+-- WHY THOSE ROWS EXIST — CORRECTED
+--
+-- The first reading of this was that the matching engine had no tenant filter.
+-- That is wrong, and the code says so: every path that inserts a match joins
+-- `c.created_by = j.created_by`, and the HTTP route that creates one directly
+-- is behind requireAuth, which sets req.userId.
+--
+-- What actually happened is that 33 user rows had their organization_id
+-- rewritten in a single bulk update on 2026-09-03 10:20:44, across two
+-- organisations. Eight candidates exist whose created_at precedes their
+-- creator's user row, so user rows were reassigned or recreated too.
+--
+-- So these matches were consistent when they were written — same creator on
+-- both sides — and became cross-tenant retroactively when the mapping beneath
+-- them changed.
+--
+-- WHAT IS STILL WRONG, AND WHY THESE KEYS STILL MATTER
+--
+-- Isolation is by USER, not by ORGANISATION. Two recruiters at one agency
+-- cannot see each other's candidates, and a person moving between agencies
+-- silently reclassifies everything they ever touched. The composite keys below
+-- would have refused the reorganisation at the moment it happened, instead of
+-- leaving 263 rows to be found eleven days later.
 --
 -- Step 4 will report those 263 rather than migrate them. That is the schema
 -- telling the truth about data that was never valid.

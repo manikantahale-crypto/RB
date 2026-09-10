@@ -205,10 +205,16 @@ BEGIN
   -- THE FINDING THAT MATTERS MORE THAN THE ROWS.
   --
   -- A match whose job and candidate belong to different organisations means
-  -- matching ran across a tenant boundary. In a real deployment that is one
-  -- agency's candidates being scored against another agency's requirements —
-  -- a data leak, not an untidy row. These rows are test data; the missing
-  -- tenant filter in the matching engine is not.
+  -- the two sides disagree about who owns them. The cause here was NOT the
+  -- matcher: every path that inserts a match joins c.created_by = j.created_by,
+  -- so these rows were consistent when they were written. 33 users then had
+  -- their organization_id rewritten in a single update on 2026-09-03, and the
+  -- mapping underneath them changed.
+  --
+  -- What that exposes is still real: isolation is by USER, not by
+  -- ORGANISATION. Two recruiters at one agency cannot see each other's
+  -- candidates, and a person moving between agencies silently reclassifies
+  -- everything they ever touched.
   SELECT count(*) INTO crossed
     FROM syntra.matches m
     JOIN syntra.jobs j       ON j.id = m.job_id
@@ -217,7 +223,8 @@ BEGIN
 
   IF crossed > 0 THEN
     RAISE WARNING 'CROSS-TENANT: % matches join a job and a candidate from different organisations.', crossed;
-    RAISE WARNING '              They carry the JOB''s organisation. The matching engine is not';
-    RAISE WARNING '              filtering by tenant — fix that before this data is real.';
+    RAISE WARNING '              They carry the JOB''s organisation. Cause: 33 users had their';
+    RAISE WARNING '              organization_id rewritten in one update on 2026-09-03, so rows';
+    RAISE WARNING '              consistent when written became inconsistent afterwards.';
   END IF;
 END $$;
