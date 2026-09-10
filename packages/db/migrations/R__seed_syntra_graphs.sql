@@ -20,12 +20,13 @@
 -- NOTHING covers all three ways a row can already be there: the same id, the
 -- same key and version, or another version of that key already active.
 
-INSERT INTO graph_definitions (
-  id, org_id, graph_key, version, definition, checksum, status, created_by, activated_at
-) VALUES
+-- The recipe is two rows now, because a workflow's identity and its versions
+-- are two tables. The seed values are staged once and used for both.
+WITH seed (id, org_id, graph_key, version, definition, checksum, status, created_by, activated_at) AS (
+  VALUES
 (
   'graph_syntra_jd_v1',
-  NULL,
+  NULL::uuid,
   'syntra.jd.workflow',
   1,
   '{
@@ -58,7 +59,7 @@ INSERT INTO graph_definitions (
 ),
 (
   'graph_syntra_match_v1',
-  NULL,
+  NULL::uuid,
   'syntra.match.workflow',
   1,
   '{
@@ -91,7 +92,7 @@ INSERT INTO graph_definitions (
 ),
 (
   'graph_resume_intake_v1',
-  NULL,
+  NULL::uuid,
   'resume.intake',
   1,
   '{
@@ -126,7 +127,7 @@ INSERT INTO graph_definitions (
 ),
 (
   'graph_duplicate_review_v1',
-  NULL,
+  NULL::uuid,
   'duplicate.review',
   1,
   '{
@@ -160,7 +161,7 @@ INSERT INTO graph_definitions (
 ),
 (
   'graph_syntra_continuous_match_v1',
-  NULL,
+  NULL::uuid,
   'syntra.continuous.match',
   1,
   '{
@@ -193,7 +194,7 @@ INSERT INTO graph_definitions (
 ),
 (
   'graph_syntra_duplicate_detect_v1',
-  NULL,
+  NULL::uuid,
   'syntra.duplicate.detect',
   1,
   '{
@@ -226,7 +227,7 @@ INSERT INTO graph_definitions (
 ),
 (
   'graph_orbit_lifecycle_v1',
-  NULL,
+  NULL::uuid,
   'orbit.lifecycle.workflow',
   1,
   '{
@@ -270,7 +271,7 @@ INSERT INTO graph_definitions (
 ),
 (
   'graph_orbit_placement_v1',
-  NULL,
+  NULL::uuid,
   'orbit.placement.workflow',
   1,
   '{
@@ -314,7 +315,7 @@ INSERT INTO graph_definitions (
 ),
 (
   'graph_orbit_revenue_v1',
-  NULL,
+  NULL::uuid,
   'orbit.revenue.workflow',
   1,
   '{
@@ -347,7 +348,7 @@ INSERT INTO graph_definitions (
 ),
 (
   'graph_orbit_activity_v1',
-  NULL,
+  NULL::uuid,
   'orbit.activity.workflow',
   1,
   '{
@@ -378,4 +379,32 @@ INSERT INTO graph_definitions (
   'def.ts',
   now()
 )
+), graph AS (
+  INSERT INTO authoring.graphs
+    (org_id, graph_key, application, title, status, created_by_label)
+  SELECT s.org_id::uuid, s.graph_key,
+         (SELECT a.key FROM platform.applications a
+           WHERE a.key = split_part(s.graph_key, '.', 1)),
+         s.graph_key,
+         CASE WHEN s.status = 'active' THEN 'active' ELSE 'draft' END,
+         s.created_by
+    FROM seed s
+  -- The index is on an expression, because a global workflow's org is NULL
+  -- and NULL is not equal to itself.
+  ON CONFLICT (coalesce(org_id::text, '~global~'), graph_key)
+    DO UPDATE SET updated_at = now()
+  RETURNING id, graph_key
+)
+INSERT INTO authoring.graph_versions
+  (graph_id, org_id, version, definition, checksum, status,
+   compiled_by_label, compiled_at)
+SELECT g.id, s.org_id::uuid, s.version, s.definition, s.checksum,
+       CASE WHEN s.status = 'active' THEN 'live' ELSE 'compiled' END,
+       s.created_by, coalesce(s.activated_at, now())
+  FROM seed s
+  JOIN graph g ON g.graph_key = s.graph_key
+-- No conflict target, deliberately: this must do nothing whether the clash is
+-- the same (graph_id, version) or the partial index that allows one live
+-- version per workflow. Either way something is already there and this file
+-- does not get to overwrite it.
 ON CONFLICT DO NOTHING;

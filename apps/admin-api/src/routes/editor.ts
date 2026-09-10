@@ -24,6 +24,7 @@ import { deriveChain } from "../lib/derive-chain.js";
 import { collectGateEvidence } from "../lib/gate-evidence.js";
 import { diffGraphs } from "../lib/diff-graphs.js";
 import { EVENT_SCHEMAS, GRAPH_DEFINITIONS, GRAPH_EVENT_BINDINGS } from "../lib/authoring-views.js";
+import { activateVersion, saveDraft } from "../lib/authoring-writes.js";
 import {
   evaluateGoLiveGate,
   oneActiveIndexIsPerGraphKey,
@@ -228,19 +229,13 @@ export function registerEditorRoutes(app: FastifyLike, pool: Pool): void {
         const version = 0;
         const definition = source.rows[0].definition;
 
-        await client.query(
-          `INSERT INTO graph_definitions
-             (id, org_id, graph_key, version, definition, checksum, status, created_by)
-           VALUES ($1, NULL, $2, $3, $4::jsonb, $5, 'draft', $6)`,
-          [
-            `${graphKey}@draft`,
-            graphKey,
-            version,
-            JSON.stringify(definition),
-            checksumOf(definition),
-            req.headers["x-admin-id"] ?? "admin-local",
-          ],
-        );
+        await saveDraft(client, {
+          graphKey,
+          orgId: null,
+          definition,
+          checksum: checksumOf(definition),
+          by: String(req.headers["x-admin-id"] ?? "admin-local"),
+        });
 
         return {
           graphKey,
@@ -508,7 +503,7 @@ export function registerEditorRoutes(app: FastifyLike, pool: Pool): void {
    * at routing time — so rolling back means changing WHICH version is active,
    * not re-pointing the binding.
    *
-   * One transaction, because `graph_definitions_one_active` permits exactly one
+   * One transaction, because `graph_versions_one_live_idx` permits exactly one
    * active version per key: retiring the current one and activating the target
    * must happen together or the workflow is briefly unroutable.
    *
@@ -569,16 +564,14 @@ export function registerEditorRoutes(app: FastifyLike, pool: Pool): void {
       }
 
       await client.query("BEGIN");
-      await client.query(
-        `UPDATE graph_definitions SET status = 'retired'
-          WHERE graph_key = $1 AND status = 'active'`,
-        [graphKey],
-      );
-      await client.query(
-        `UPDATE graph_definitions SET status = 'active', activated_at = now()
-          WHERE graph_key = $1 AND version = $2`,
-        [graphKey, target.version],
-      );
+      // Retiring the live one and promoting the target are one act, not two:
+      // `graph_versions_one_live_idx` refuses a second live version, so the
+      // order matters and both belong in the same transaction.
+      await activateVersion(client, {
+        graphKey,
+        orgId: null,
+        version: Number(target.version),
+      });
       await client.query("COMMIT");
 
       return {
@@ -711,7 +704,7 @@ export function registerEditorRoutes(app: FastifyLike, pool: Pool): void {
       try {
         const { rows: idx } = await pool.query(
           `SELECT indexdef FROM pg_indexes
-            WHERE indexname = 'graph_definitions_one_active' LIMIT 1`,
+            WHERE indexname = 'graph_versions_one_live_idx' LIMIT 1`,
         );
         if (idx[0]?.indexdef) {
           oneActiveIndexPerGraphKey = oneActiveIndexIsPerGraphKey(
@@ -850,12 +843,13 @@ export function registerEditorRoutes(app: FastifyLike, pool: Pool): void {
 
           const definition = parsed.data;
           const checksum = checksumOf(definition);
-          await client.query(
-            `UPDATE graph_definitions
-                SET definition = $3::jsonb, checksum = $4
-              WHERE graph_key = $1 AND version = $2 AND org_id IS NULL`,
-            [graphKey, version, JSON.stringify(definition), checksum],
-          );
+          await saveDraft(client, {
+            graphKey,
+            orgId: null,
+            definition,
+            checksum,
+            by: String(req.headers["x-admin-id"] ?? "admin-local"),
+          });
 
           return { graphKey, version, checksum, saved: true };
         });

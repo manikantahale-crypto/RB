@@ -45,7 +45,17 @@ export const GRAPH_DEFINITIONS = `(
          v.version,
          v.definition,
          v.checksum,
-         CASE v.status WHEN 'live' THEN 'active' ELSE 'retired' END AS status,
+         -- Three statuses become three, not two. 'compiled' is a numbered
+         -- build that has not gone live: the old table called that 'draft'
+         -- and used the same word for the working copy, which is how a
+         -- workflow ended up with 123 versions. Mapping it to 'retired' would
+         -- be worse still — it would show a build waiting for review as
+         -- something already taken off the air.
+         CASE v.status
+           WHEN 'live'     THEN 'active'
+           WHEN 'compiled' THEN 'draft'
+           ELSE 'retired'
+         END AS status,
          -- created_by held two different kinds of thing: a few real user ids
          -- and several hundred deployment labels like 'stage-v31-relay'. Both
          -- are provenance and both come back out here.

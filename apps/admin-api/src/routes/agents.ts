@@ -37,6 +37,11 @@ import { withOrgScope, type DbQueryable } from "../with-org-scope.js";
 import { collectGateEvidence } from "../lib/gate-evidence.js";
 
 import { GRAPH_DEFINITIONS, GRAPH_EVENT_BINDINGS } from "../lib/authoring-views.js";
+import {
+  activateVersion,
+  compileVersion,
+  retireActive,
+} from "../lib/authoring-writes.js";
 type FastifyLike = {
   get: (path: string, handler: any) => void;
   put: (path: string, handler: any) => void;
@@ -1359,7 +1364,7 @@ export function registerAgentRoutes(
       try {
         const idx = await client.query(
           `SELECT indexdef FROM pg_indexes
-            WHERE indexname = 'graph_definitions_one_active'
+            WHERE indexname = 'graph_versions_one_live_idx'
             LIMIT 1`,
         );
         oneActiveIndexPerGraphKey = oneActiveIndexIsPerGraphKey(
@@ -1977,47 +1982,20 @@ export function registerAgentRoutes(
       const safeKey = graphKey.replace(/[^a-zA-Z0-9_\\-]/g, "_");
       const graphId = `graph_${safeKey}_v${latest.version}_${scopeText ?? "global"}`;
 
-      await client.query(
-        `INSERT INTO graph_definitions
-           (id, org_id, graph_key, version, definition, checksum, status, created_by, activated_at)
-         VALUES
-           ($1, $2, $3, $4, $5::jsonb, $6, 'draft', $7, NULL)
-         ON CONFLICT (id) DO UPDATE
-           SET org_id = EXCLUDED.org_id,
-               graph_key = EXCLUDED.graph_key,
-               version = EXCLUDED.version,
-               definition = EXCLUDED.definition,
-               checksum = EXCLUDED.checksum,
-               status = 'draft',
-               created_by = EXCLUDED.created_by,
-               activated_at = NULL`,
-        [
-          graphId,
-          scopeText,
-          graphKey,
-          latest.version,
-          JSON.stringify(parsedGraph),
-          latest.checksum,
-          adminId,
-        ],
-      );
-
-      // Persist compile history (mirrors agent_versions on the graph side).
-      await client.query(
-        `INSERT INTO graph_versions
-           (org_id, graph_id, graph_key, version, definition, checksum, status, compiled_by, compiled_at)
-         VALUES
-           ($1, $2, $3, $4, $5::jsonb, $6, 'compiled', $7, now())`,
-        [
-          scopeText,
-          graphId,
-          graphKey,
-          latest.version,
-          JSON.stringify(parsedGraph),
-          latest.checksum,
-          adminId,
-        ],
-      );
+      /**
+       * Compile files the topology under the policy's version number, not
+       * live. It used to write this fact twice — a `graph_definitions` row
+       * with status 'draft' and a `graph_versions` row with status 'compiled'
+       * — which is precisely the split the authoring layer makes properly.
+       */
+      await compileVersion(client, {
+        graphKey,
+        orgId,
+        version: latest.version,
+        definition: parsedGraph,
+        checksum: latest.checksum,
+        by: adminId,
+      });
 
       await client.query(
         `UPDATE agent_policies
@@ -2267,39 +2245,28 @@ export function registerAgentRoutes(
       const safeKey = graphKey.replace(/[^a-zA-Z0-9_\\-]/g, "_");
       const graphId = `graph_${safeKey}_v${latest.version}_${scopeText ?? "global"}`;
 
-      // 1) Retire ALL previous active under THIS graph_key only (never other keys).
-      await client.query(
-        `UPDATE graph_definitions
-            SET status = 'retired'
-          WHERE graph_key = $1
-            AND status = 'active'
-            AND org_id IS NOT DISTINCT FROM $2::text`,
-        [graphKey, scopeText],
-      );
-
-      // 2) Activate target authored definition by primary key (same id Compile wrote).
-      let activated = await client.query(
-        `UPDATE graph_definitions
-            SET status = 'active',
-                activated_at = now()
-          WHERE id = $1
-            AND graph_key = $2
-          RETURNING id, graph_key, version, status`,
-        [graphId, graphKey],
-      );
-
-      if ((activated.rowCount ?? 0) === 0) {
-        activated = await client.query(
-          `UPDATE graph_definitions
-              SET status = 'active',
-                  activated_at = now()
-            WHERE graph_key = $1
-              AND version = $2
-              AND org_id IS NOT DISTINCT FROM $3::text
-            RETURNING id, graph_key, version, status`,
-          [graphKey, latest.version, scopeText],
-        );
-      }
+      /**
+       * Retire whatever is live for THIS workflow and put the target version
+       * on the air. One call, because it is one act: `graph_versions_one_live_idx`
+       * allows a single live version per workflow, so doing it as two
+       * statements in the wrong order is a constraint violation rather than a
+       * bug you find later.
+       *
+       * The id dance this replaced — `graph_<safeKey>_v<N>_<scope>`, with a
+       * fallback to (graph_key, version) when it missed — existed only because
+       * the old table had no other way to name one workflow's one version.
+       */
+      const promoted = await activateVersion(client, {
+        graphKey,
+        orgId,
+        version: latest.version,
+      });
+      const activated = {
+        rowCount: promoted ? 1 : 0,
+        rows: promoted
+          ? [{ id: graphId, graph_key: graphKey, version: promoted.version, status: "active" }]
+          : [],
+      };
 
       if ((activated.rowCount ?? 0) === 0 || activated.rows[0]?.status !== "active") {
         return reply.code(404).send({
@@ -2579,41 +2546,20 @@ export function registerAgentRoutes(
         });
       }
 
-      // Retire current active under THIS authored key only.
-      const safeKey = graphKey.replace(/[^a-zA-Z0-9_\\-]/g, "_");
+      // Retire current live under THIS authored key only, and promote the
+      // chosen version. Same single act as the path above.
+      const safeKey = graphKey.replace(/[^a-zA-Z0-9_\-]/g, "_");
       const graphId = `graph_${safeKey}_v${targetVersion}_${scopeText ?? "global"}`;
 
-      await client.query(
-        `UPDATE graph_definitions
-            SET status = 'retired'
-          WHERE graph_key = $1
-            AND status = 'active'
-            AND org_id IS NOT DISTINCT FROM $2::text`,
-        [graphKey, scopeText],
-      );
-
-      let activated = await client.query(
-        `UPDATE graph_definitions
-            SET status = 'active',
-                activated_at = now()
-          WHERE id = $1
-            AND graph_key = $2
-          RETURNING id, status`,
-        [graphId, graphKey],
-      );
-
-      if ((activated.rowCount ?? 0) === 0) {
-        activated = await client.query(
-          `UPDATE graph_definitions
-              SET status = 'active',
-                  activated_at = now()
-            WHERE graph_key = $1
-              AND version = $2
-              AND org_id IS NOT DISTINCT FROM $3::text
-            RETURNING id, status`,
-          [graphKey, targetVersion, scopeText],
-        );
-      }
+      const promoted = await activateVersion(client, {
+        graphKey,
+        orgId,
+        version: targetVersion,
+      });
+      const activated = {
+        rowCount: promoted ? 1 : 0,
+        rows: promoted ? [{ id: graphId, status: "active" }] : [],
+      };
 
       if ((activated.rowCount ?? 0) === 0 || activated.rows[0]?.status !== "active") {
         return reply.code(404).send({
@@ -2820,14 +2766,7 @@ export function registerAgentRoutes(
               AND b.status = 'active'`,
           [graphKey],
         );
-        await client.query(
-          `UPDATE graph_definitions
-              SET status = 'retired'
-            WHERE graph_key = $1
-              AND status = 'active'
-              AND org_id IS NOT DISTINCT FROM $2::text`,
-          [graphKey, scopeText],
-        );
+        await retireActive(client, { graphKey, orgId });
         if (orgId === null) {
           await client.query(
             `UPDATE agent_policies

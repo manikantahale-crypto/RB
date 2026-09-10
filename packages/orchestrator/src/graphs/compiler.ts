@@ -111,7 +111,7 @@ function resolveActionClass(
 }
 
 /**
- * Loads inert JSON topology from graph_definitions and hydrates it with
+ * Loads inert JSON topology from authoring.graph_versions and hydrates it with
  * nodeRegistry implementations (design §7).
  *
  * Matches the live design-doc schema: org_id (text), id (text).
@@ -171,13 +171,15 @@ export class GraphCompiler {
   async ensureSchemaAndSeed(): Promise<void> {
     const { rows } = await this.pool.query<{ missing: string | null }>(
       `SELECT CASE
-                WHEN to_regclass('public.graph_definitions') IS NULL
-                  THEN 'graph_definitions'
+                WHEN to_regclass('authoring.graphs') IS NULL
+                  THEN 'authoring.graphs'
+                WHEN to_regclass('authoring.graph_versions') IS NULL
+                  THEN 'authoring.graph_versions'
                 WHEN NOT EXISTS (
                   SELECT 1 FROM pg_indexes
-                   WHERE tablename = 'graph_definitions'
-                     AND indexname = 'graph_definitions_one_active')
-                  THEN 'graph_definitions_one_active'
+                   WHERE schemaname = 'authoring'
+                     AND indexname = 'graph_versions_one_live_idx')
+                  THEN 'graph_versions_one_live_idx'
                 ELSE NULL
               END AS missing`,
     );
@@ -192,7 +194,7 @@ export class GraphCompiler {
     }
 
     console.log(
-      "[GraphCompiler] graph_definitions ready (built by migration, not at boot)",
+      "[GraphCompiler] authoring.graph_versions ready (built by migration, not at boot)",
     );
   }
 
@@ -207,8 +209,8 @@ export class GraphCompiler {
     if (!row) {
       throw new Error(
         pinnedVersion != null
-          ? `DEFINITION_INVALID: no graph_definitions for ${graphKey} version ${pinnedVersion}`
-          : `DEFINITION_INVALID: no active graph_definitions for ${graphKey}`
+          ? `DEFINITION_INVALID: no version ${pinnedVersion} of ${graphKey}`
+          : `DEFINITION_INVALID: no live version of ${graphKey}`
       );
     }
 
@@ -230,12 +232,12 @@ export class GraphCompiler {
   ): Promise<number> {
     const row = await this.loadActive(graphKey, organizationId ?? null);
     if (!row) {
-      throw new Error(`DEFINITION_INVALID: no active graph_definitions for ${graphKey}`);
+      throw new Error(`DEFINITION_INVALID: no live version of ${graphKey}`);
     }
     return row.version;
   }
 
-  /** True when an active graph_definitions row exists for this key (+ org). */
+  /** True when a live version exists for this key (+ org). */
   async hasActiveDefinition(
     graphKey: string,
     organizationId?: string | null,
@@ -256,7 +258,7 @@ export class GraphCompiler {
         : await this.loadActive(graphKey, organizationId ?? null);
     if (!row) {
       throw new Error(
-        `DEFINITION_INVALID: no graph_definitions for ${graphKey}`,
+        `DEFINITION_INVALID: no definition for ${graphKey}`,
       );
     }
     const def = GraphDefinitionSchema.parse(row.definition);
@@ -264,17 +266,26 @@ export class GraphCompiler {
     return def;
   }
 
+  /**
+   * The two reads on the run path, against authoring.
+   *
+   * A workflow's identity and its versions are separate rows now, so both go
+   * through the same join. The org rule is unchanged: prefer the tenant's own
+   * workflow, fall back to the global one, which is what `ORDER BY org_id
+   * NULLS LAST` has always meant here.
+   */
   private async loadActive(
     graphKey: string,
     organizationId: string | null
   ): Promise<{ version: number; checksum: string; definition: unknown } | null> {
     const { rows } = await this.pool.query(
-      `SELECT version, checksum, definition
-       FROM graph_definitions
-       WHERE graph_key = $1
-         AND status = 'active'
-         AND (org_id = $2 OR org_id IS NULL)
-       ORDER BY org_id NULLS LAST
+      `SELECT v.version, v.checksum, v.definition
+       FROM authoring.graph_versions v
+       JOIN authoring.graphs g ON g.id = v.graph_id
+       WHERE g.graph_key = $1
+         AND v.status = 'live'
+         AND (g.org_id = $2 OR g.org_id IS NULL)
+       ORDER BY g.org_id NULLS LAST
        LIMIT 1`,
       [graphKey, organizationId]
     );
@@ -286,13 +297,17 @@ export class GraphCompiler {
     organizationId: string | null,
     version: number
   ): Promise<{ version: number; checksum: string; definition: unknown } | null> {
+    // No status filter, deliberately. A run pinned to a version must be able
+    // to read it back after that version has been retired — that is the whole
+    // point of pinning, and of versions being immutable.
     const { rows } = await this.pool.query(
-      `SELECT version, checksum, definition
-       FROM graph_definitions
-       WHERE graph_key = $1
-         AND version = $3
-         AND (org_id = $2 OR org_id IS NULL)
-       ORDER BY org_id NULLS LAST
+      `SELECT v.version, v.checksum, v.definition
+       FROM authoring.graph_versions v
+       JOIN authoring.graphs g ON g.id = v.graph_id
+       WHERE g.graph_key = $1
+         AND v.version = $3
+         AND (g.org_id = $2 OR g.org_id IS NULL)
+       ORDER BY g.org_id NULLS LAST
        LIMIT 1`,
       [graphKey, organizationId, version]
     );

@@ -60,15 +60,26 @@ WITH definitions(graph_key, definition) AS (
     }'::jsonb
   )
 )
-INSERT INTO graph_definitions (id, graph_key, version, definition, checksum, status, created_by, activated_at)
-SELECT
-  gen_random_uuid() as id,
-  d.graph_key,
-  1 as version,
-  d.definition,
-  md5(d.definition::text) as checksum,
-  'active' as status,
-  'R__seed_graph_definitions' as created_by,
-  now() as activated_at
+, graph AS (
+  INSERT INTO authoring.graphs
+    (org_id, graph_key, application, title, status, created_by_label)
+  SELECT NULL, d.graph_key,
+         (SELECT a.key FROM platform.applications a
+           WHERE a.key = split_part(d.graph_key, '.', 1)),
+         d.graph_key, 'active', 'R__seed_graph_definitions'
+    FROM definitions d
+  ON CONFLICT (coalesce(org_id::text, '~global~'), graph_key)
+    DO UPDATE SET updated_at = now()
+  RETURNING id, graph_key
+)
+INSERT INTO authoring.graph_versions
+  (graph_id, org_id, version, definition, checksum, status,
+   compiled_by_label, compiled_at)
+SELECT g.id, NULL, 1, d.definition, md5(d.definition::text),
+       'live', 'R__seed_graph_definitions', now()
 FROM definitions d
+JOIN graph g ON g.graph_key = d.graph_key
+-- No conflict target: this does nothing whether the clash is the same
+-- (graph_id, version) or the partial index that allows one live version per
+-- workflow. Either way this file does not get to overwrite what is there.
 ON CONFLICT DO NOTHING;

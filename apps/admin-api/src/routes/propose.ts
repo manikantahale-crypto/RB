@@ -83,6 +83,7 @@ import {
 } from "../lib/split-cross-module.js";
 import { checksumOf } from "@tekisho/graph-contract";
 import { EVENT_SCHEMAS, GRAPH_DEFINITIONS, GRAPH_EVENT_BINDINGS } from "../lib/authoring-views.js";
+import { saveDraft } from "../lib/authoring-writes.js";
 import {
   GenerationFailedError,
   generateGraphFromLlm,
@@ -1965,18 +1966,13 @@ export function registerProposeRoutes(
               edges,
             };
 
-            await client.query(
-              `INSERT INTO graph_definitions
-                 (id, org_id, graph_key, version, definition, checksum, status, created_by)
-               VALUES ($1, NULL, $2, 1, $3::jsonb, $4, 'draft', $5)`,
-              [
-                `${graphKey}@1`,
-                graphKey,
-                JSON.stringify(definition),
-                checksumOf(definition),
-                req.headers["x-admin-id"] ?? "admin-local",
-              ],
-            );
+            await saveDraft(client, {
+              graphKey,
+              orgId: null,
+              definition,
+              checksum: checksumOf(definition),
+              by: String(req.headers["x-admin-id"] ?? "admin-local"),
+            });
             created.push({ graphKey, module: String(link.module ?? "") });
           }
 
@@ -2064,22 +2060,25 @@ export function registerProposeRoutes(
           edges,
         };
 
-        await client.query(
-          `INSERT INTO graph_definitions
-             (id, org_id, graph_key, version, definition, checksum, status, created_by)
-           VALUES ($1, NULL, $2, 1, $3::jsonb, $4, 'draft', $5)`,
-          [
-            `${graphKey}@1`,
-            graphKey,
-            JSON.stringify(definition),
-            checksumOf(definition),
-            req.headers["x-admin-id"] ?? "admin-local",
-          ],
-        );
+        await saveDraft(client, {
+          graphKey,
+          orgId: null,
+          definition,
+          checksum: checksumOf(definition),
+          by: String(req.headers["x-admin-id"] ?? "admin-local"),
+        });
 
         return {
           graphKey,
-          version: 1,
+          /**
+           * 0, not 1. A draft is not a version — it is the working copy, and
+           * `authoring.graph_drafts` holds exactly one per workflow with no
+           * version column at all. The number is allocated at go-live, which
+           * is the only moment it means anything: it is what a run pins and
+           * what a rollback goes back to. Saying 1 here would be contradicted
+           * by the very next read.
+           */
+          version: 0,
           status: "draft",
           triggerEventType,
           bindingCreated: false,

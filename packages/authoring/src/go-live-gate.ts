@@ -582,15 +582,25 @@ export function readGapAckFromMeta(meta: unknown): GoLiveGateInput["gapAck"] {
 }
 
 /**
- * True when pg index `graph_definitions_one_active` is unique on graph_key
- * (and org scope) — authored activate cannot retire a different key.
+ * True when the database itself guarantees one live version per workflow, so
+ * activating one cannot quietly retire a different workflow's.
+ *
+ * Two index shapes satisfy that, and both are accepted:
+ *
+ *   graph_definitions_one_active  UNIQUE (graph_key, org scope) WHERE active
+ *   graph_versions_one_live_idx   UNIQUE (graph_id)             WHERE live
+ *
+ * The second is the stronger of the two, not a weaker substitute. `graph_id`
+ * is the workflow's primary key, and `graphs_key_per_org_idx` already makes
+ * (org, graph_key) unique — so one live per graph_id IS one live per graph_key
+ * per org, enforced one join closer to the thing it is about.
  */
 export function oneActiveIndexIsPerGraphKey(indexDef: string | null | undefined): boolean {
   if (!indexDef) return false;
   const d = indexDef.toLowerCase();
   return (
     d.includes("unique") &&
-    d.includes("graph_key") &&
-    (d.includes("status") || d.includes("active"))
+    (d.includes("graph_key") || d.includes("graph_id")) &&
+    (d.includes("status") || d.includes("active") || d.includes("live"))
   );
 }
