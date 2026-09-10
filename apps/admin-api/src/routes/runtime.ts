@@ -4,6 +4,7 @@
  */
 import type { Pool } from "pg";
 
+import { GRAPH_DEFINITIONS, GRAPH_EVENT_BINDINGS } from "../lib/authoring-views.js";
 type FastifyLike = {
   get: (path: string, handler: any) => void;
   post: (path: string, handler: any) => void;
@@ -153,7 +154,7 @@ export function registerRuntimeRoutes(app: FastifyLike, pool: Pool): void {
 
       const bindings = await pool.query(
         `SELECT event_type, graph_key, version, status, source, updated_at
-           FROM graph_event_bindings
+           FROM ${GRAPH_EVENT_BINDINGS}
           WHERE agent_id = $1::uuid
           ORDER BY updated_at DESC NULLS LAST
           LIMIT 20`,
@@ -631,12 +632,12 @@ export function registerRuntimeRoutes(app: FastifyLike, pool: Pool): void {
           WHERE status IN ('generated', 'pending_go_live', 'compiled', 'published', 'active')`,
       );
       const graphsActive = await pool.query(
-        `SELECT count(*)::int AS n FROM graph_definitions WHERE status = 'active'`,
+        `SELECT count(*)::int AS n FROM ${GRAPH_DEFINITIONS} WHERE status = 'active'`,
       );
       const bindings = await pool.query(
         `SELECT event_type, graph_key, version, agent_id::text AS agent_id,
                 module_queue, source, status
-           FROM graph_event_bindings
+           FROM ${GRAPH_EVENT_BINDINGS}
           WHERE status = 'active'
           ORDER BY event_type`,
       );

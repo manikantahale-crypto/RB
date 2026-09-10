@@ -20,6 +20,7 @@
  */
 import type { Pool } from "pg";
 
+import { EVENT_SCHEMAS, GRAPH_DEFINITIONS, GRAPH_EVENT_BINDINGS } from "../lib/authoring-views.js";
 type FastifyLike = {
   get: (path: string, handler: (req: any, reply: any) => unknown) => unknown;
   post: (path: string, handler: (req: any, reply: any) => unknown) => unknown;
@@ -59,7 +60,7 @@ export function registerLiveTestRoutes(app: FastifyLike, pool: Pool): void {
     const graphKey = String(req.params.graphKey ?? "");
     try {
       const { rows: defs } = await pool.query(
-        `SELECT version, status, definition FROM graph_definitions
+        `SELECT version, status, definition FROM ${GRAPH_DEFINITIONS}
           WHERE graph_key = $1
           ORDER BY (status = 'active') DESC, version DESC
           LIMIT 1`,
@@ -71,7 +72,7 @@ export function registerLiveTestRoutes(app: FastifyLike, pool: Pool): void {
       }
 
       const { rows: bound } = await pool.query(
-        `SELECT event_type FROM graph_event_bindings
+        `SELECT event_type FROM ${GRAPH_EVENT_BINDINGS}
           WHERE graph_key = $1 AND status = 'active'`,
         [graphKey],
       );
@@ -86,7 +87,7 @@ export function registerLiveTestRoutes(app: FastifyLike, pool: Pool): void {
       let payloadSchema: any = null;
       if (eventType) {
         const { rows } = await pool.query(
-          `SELECT payload_schema FROM event_schemas
+          `SELECT payload_schema FROM ${EVENT_SCHEMAS}
             WHERE event_type = $1 LIMIT 1`,
           [eventType],
         );

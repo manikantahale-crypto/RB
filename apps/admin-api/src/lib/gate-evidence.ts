@@ -20,6 +20,7 @@
  */
 import { MODULES } from "@tekisho/node-contract";
 
+import { EVENT_SCHEMAS } from "./authoring-views.js";
 export async function collectGateEvidence(
   client: { query: (t: string, p?: unknown[]) => Promise<{ rows: any[] }> },
   artifactSource: string,
@@ -98,7 +99,7 @@ export async function collectGateEvidence(
     let triggerDeclared = false;
     if (def.entryInput) {
       const ev = await client.query(
-        `SELECT payload_schema FROM event_schemas WHERE event_type = $1 LIMIT 1`,
+        `SELECT payload_schema FROM ${EVENT_SCHEMAS} WHERE event_type = $1 LIMIT 1`,
         [def.entryInput],
       );
       const props = ev.rows[0]?.payload_schema?.properties;

@@ -19,6 +19,7 @@
 import type { Pool } from "pg";
 import { withOrgScope } from "../with-org-scope.js";
 
+import { GRAPH_DEFINITIONS, GRAPH_EVENT_BINDINGS } from "../lib/authoring-views.js";
 type FastifyLike = {
   get: (path: string, handler: any) => void;
 };
@@ -131,7 +132,7 @@ export function registerWorkflowRoutes(app: FastifyLike, pool: Pool): void {
             count(*)                                    AS version_count,
             (
               SELECT coalesce(array_agg(DISTINCT b.event_type), '{}')
-              FROM graph_event_bindings b
+              FROM ${GRAPH_EVENT_BINDINGS} b
               WHERE b.graph_key = d.graph_key AND b.status = 'active'
             ) AS triggers,
             (
@@ -155,7 +156,7 @@ export function registerWorkflowRoutes(app: FastifyLike, pool: Pool): void {
               SELECT max(r.created_at) FROM orch.runs r
               WHERE r.graph_key = d.graph_key
             ) AS last_run_at
-          FROM graph_definitions d
+          FROM ${GRAPH_DEFINITIONS} d
           GROUP BY d.graph_key
           ORDER BY runs_24h DESC, d.graph_key ASC
           `,
@@ -256,9 +257,9 @@ export function registerWorkflowRoutes(app: FastifyLike, pool: Pool): void {
             r.completed_at,
             r.error,
             (SELECT count(*) FROM orch.steps s WHERE s.run_id = r.id) AS step_count,
-            (SELECT count(*) FROM graph_definitions d
+            (SELECT count(*) FROM ${GRAPH_DEFINITIONS} d
               WHERE d.graph_key = r.graph_key) AS graph_version_count,
-            (SELECT min(d.version) FROM graph_definitions d
+            (SELECT min(d.version) FROM ${GRAPH_DEFINITIONS} d
               WHERE d.graph_key = r.graph_key) AS only_version
           FROM orch.runs r
           LEFT JOIN event_outbox o ON o.event_id = r.trigger_event_id

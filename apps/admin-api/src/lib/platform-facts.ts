@@ -11,6 +11,7 @@
 import { MODULES } from "@tekisho/node-contract";
 import type { PlatformFacts } from "./platform-checks.js";
 
+import { EVENT_SCHEMAS, GRAPH_DEFINITIONS, GRAPH_EVENT_BINDINGS } from "./authoring-views.js";
 type Queryable = {
   query: (
     text: string,
@@ -40,10 +41,10 @@ export async function gatherPlatformFacts(
   const [bindings, graphs, registry, queues] = await Promise.all([
     pool.query(
       `SELECT event_type, graph_key, module_queue
-         FROM graph_event_bindings WHERE status = 'active'`,
+         FROM ${GRAPH_EVENT_BINDINGS} WHERE status = 'active'`,
     ),
     pool.query(
-      `SELECT graph_key, definition FROM graph_definitions WHERE status = 'active'`,
+      `SELECT graph_key, definition FROM ${GRAPH_DEFINITIONS} WHERE status = 'active'`,
     ),
     pool.query(`SELECT key, module, shareable, emits FROM node_registry`),
     /**
@@ -76,7 +77,7 @@ export async function gatherPlatformFacts(
   let handlingOf: Map<string, string> | null = null;
   try {
     const h = await pool.query(
-      `SELECT event_type, handling FROM event_schemas WHERE handling IS NOT NULL`,
+      `SELECT event_type, handling FROM ${EVENT_SCHEMAS} WHERE handling IS NOT NULL`,
     );
     handlingOf = new Map(h.rows.map((r: any) => [r.event_type, r.handling]));
   } catch {

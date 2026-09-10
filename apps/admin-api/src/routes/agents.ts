@@ -36,6 +36,7 @@ import { canEditAgent, editableAgentIds } from "../entitlement.js";
 import { withOrgScope, type DbQueryable } from "../with-org-scope.js";
 import { collectGateEvidence } from "../lib/gate-evidence.js";
 
+import { GRAPH_DEFINITIONS, GRAPH_EVENT_BINDINGS } from "../lib/authoring-views.js";
 type FastifyLike = {
   get: (path: string, handler: any) => void;
   put: (path: string, handler: any) => void;
@@ -412,7 +413,7 @@ export function registerAgentRoutes(
         ) g ON true
         LEFT JOIN LATERAL (
           SELECT event_type, graph_key, version, source
-            FROM graph_event_bindings
+            FROM ${GRAPH_EVENT_BINDINGS}
            WHERE agent_id = d.id
              AND status = 'active'
            ORDER BY updated_at DESC
@@ -572,7 +573,7 @@ export function registerAgentRoutes(
 
       const runtimeBinding = await client.query(
         `SELECT event_type, graph_key, module_queue, version, source, status
-           FROM graph_event_bindings
+           FROM ${GRAPH_EVENT_BINDINGS}
           WHERE agent_id = $1::uuid
             AND status = 'active'
           ORDER BY updated_at DESC
@@ -602,13 +603,13 @@ export function registerAgentRoutes(
         const gRows = await client.query(
           orgId === null
             ? `SELECT graph_key, version, checksum, status
-                 FROM graph_definitions
+                 FROM ${GRAPH_DEFINITIONS}
                 WHERE graph_key = $1
                   AND org_id IS NULL
                   AND status = 'active'
                 LIMIT 1`
             : `SELECT graph_key, version, checksum, status
-                 FROM graph_definitions
+                 FROM ${GRAPH_DEFINITIONS}
                 WHERE graph_key = $1
                   AND (org_id = $2 OR org_id IS NULL)
                   AND status = 'active'
@@ -1487,7 +1488,7 @@ export function registerAgentRoutes(
     const graphKey = `${prep.agentKey}.authored`;
     const activeCount = await withOrgScope(pool, orgId, async (client) => {
       const { rows } = await client.query(
-        `SELECT count(*)::int AS n FROM graph_definitions
+        `SELECT count(*)::int AS n FROM ${GRAPH_DEFINITIONS}
           WHERE graph_key = $1
             AND status = 'active'
             AND org_id IS NOT DISTINCT FROM $2::text`,

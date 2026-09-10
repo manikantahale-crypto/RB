@@ -24,6 +24,7 @@
 import type { Pool } from "pg";
 import { withOrgScope } from "../with-org-scope.js";
 
+import { EVENT_SCHEMAS, GRAPH_EVENT_BINDINGS } from "../lib/authoring-views.js";
 type FastifyLike = {
   get: (path: string, handler: any) => void;
   post: (path: string, handler: any) => void;
@@ -90,10 +91,10 @@ export function registerEventCatalogRoutes(app: FastifyLike, pool: Pool): void {
               SELECT coalesce(
                 jsonb_agg(jsonb_build_object(
                   'graphKey', b.graph_key, 'moduleQueue', b.module_queue)), '[]'::jsonb)
-              FROM graph_event_bindings b
+              FROM ${GRAPH_EVENT_BINDINGS} b
               WHERE b.event_type = s.event_type AND b.status = 'active'
             ) AS consumed_by
-          FROM event_schemas s
+          FROM ${EVENT_SCHEMAS} s
           ORDER BY s.event_type
         `);
 
@@ -179,7 +180,7 @@ export function registerEventCatalogRoutes(app: FastifyLike, pool: Pool): void {
     try {
       return await withOrgScope(pool, readOrgId(req.headers), async (client) => {
         const exists = await client.query(
-          `SELECT 1 FROM event_schemas WHERE event_type = $1`,
+          `SELECT 1 FROM ${EVENT_SCHEMAS} WHERE event_type = $1`,
           [eventType],
         );
         if (exists.rowCount) {

@@ -82,6 +82,7 @@ import {
   type ModuleFacts,
 } from "../lib/split-cross-module.js";
 import { checksumOf } from "@tekisho/graph-contract";
+import { EVENT_SCHEMAS, GRAPH_DEFINITIONS, GRAPH_EVENT_BINDINGS } from "../lib/authoring-views.js";
 import {
   GenerationFailedError,
   generateGraphFromLlm,
@@ -752,7 +753,7 @@ export function registerProposeRoutes(
                   s.produced_when,
                   s.payload_schema,
                   coalesce(p.n, 0)::int AS publish_count
-             FROM event_schemas s
+             FROM ${EVENT_SCHEMAS} s
              LEFT JOIN (
                SELECT event_type, count(*) AS n
                  FROM event_outbox
@@ -827,7 +828,7 @@ export function registerProposeRoutes(
         // ── routing: what already answers this event ────────────────────
         const routing = best
           ? await client.query(
-              `SELECT graph_key, module_queue, status FROM graph_event_bindings
+              `SELECT graph_key, module_queue, status FROM ${GRAPH_EVENT_BINDINGS}
                 WHERE event_type = $1 AND status = 'active'`,
               [best.eventType],
             )
@@ -938,8 +939,8 @@ export function registerProposeRoutes(
         if (best?.eventType) {
           const { rows: boundRows } = await client.query(
             `SELECT b.graph_key, d.version, d.definition
-               FROM graph_event_bindings b
-               JOIN graph_definitions d
+               FROM ${GRAPH_EVENT_BINDINGS} b
+               JOIN ${GRAPH_DEFINITIONS} d
                  ON d.graph_key = b.graph_key AND d.status = 'active'
               WHERE b.event_type = $1 AND b.status = 'active'
               LIMIT 1`,
@@ -1161,7 +1162,7 @@ export function registerProposeRoutes(
         );
 
         const { rows: activeBindings } = await client.query(
-          `SELECT event_type, graph_key, module_queue FROM graph_event_bindings
+          `SELECT event_type, graph_key, module_queue FROM ${GRAPH_EVENT_BINDINGS}
             WHERE status = 'active'`,
         );
         const boundTo = new Map<string, string>(
@@ -1180,7 +1181,7 @@ export function registerProposeRoutes(
          * a retired one runs for nobody.
          */
         const { rows: activeDefs } = await client.query(
-          `SELECT graph_key, version, definition FROM graph_definitions
+          `SELECT graph_key, version, definition FROM ${GRAPH_DEFINITIONS}
             WHERE status = 'active'`,
         );
         const versionOf = new Map<string, number>(
@@ -1895,7 +1896,7 @@ export function registerProposeRoutes(
           const taken: string[] = [];
           for (const link of links) {
             const exists = await client.query(
-              `SELECT 1 FROM graph_definitions WHERE graph_key = $1 LIMIT 1`,
+              `SELECT 1 FROM ${GRAPH_DEFINITIONS} WHERE graph_key = $1 LIMIT 1`,
               [String(link.graphKey)],
             );
             if (exists.rowCount) taken.push(String(link.graphKey));
@@ -1926,7 +1927,7 @@ export function registerProposeRoutes(
              */
             if (link.registerTrigger === true) {
               const already = await client.query(
-                `SELECT 1 FROM event_schemas WHERE event_type = $1 LIMIT 1`,
+                `SELECT 1 FROM ${EVENT_SCHEMAS} WHERE event_type = $1 LIMIT 1`,
                 [trigger],
               );
               if (!already.rowCount) {
@@ -1938,7 +1939,7 @@ export function registerProposeRoutes(
                    SELECT $1, '1.0', $2,
                      '{"type":"object","additionalProperties":true}'::jsonb,
                      e.envelope_fields, $3, $4, 'ACTIVE'
-                   FROM event_schemas e WHERE e.schema_version = '1.0' LIMIT 1`,
+                   FROM ${EVENT_SCHEMAS} e WHERE e.schema_version = '1.0' LIMIT 1`,
                   [
                     trigger,
                     `Handoff from ${String(link.fromModule ?? "one application")} to ${String(link.module ?? "another")}, created with a workflow chain.`,
@@ -2042,7 +2043,7 @@ export function registerProposeRoutes(
     try {
       return await withOrgScope(pool, readOrgId(req.headers), async (client) => {
         const exists = await client.query(
-          `SELECT 1 FROM graph_definitions WHERE graph_key = $1 LIMIT 1`,
+          `SELECT 1 FROM ${GRAPH_DEFINITIONS} WHERE graph_key = $1 LIMIT 1`,
           [graphKey],
         );
         if (exists.rowCount) {

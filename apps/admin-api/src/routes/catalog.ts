@@ -7,6 +7,7 @@ import {
 } from "@tekisho/authoring";
 import { withOrgScope } from "../with-org-scope.js";
 
+import { EVENT_SCHEMAS } from "../lib/authoring-views.js";
 type FastifyLike = {
   get: (path: string, handler: any) => void;
   post: (path: string, handler: any) => void;
@@ -84,7 +85,7 @@ export function registerCatalogAndCreateRoutes(
         description: string | null;
       }>(
         `SELECT event_type, description
-           FROM event_schemas
+           FROM ${EVENT_SCHEMAS}
           WHERE schema_version = '1.0'
           ORDER BY event_type`,
       );

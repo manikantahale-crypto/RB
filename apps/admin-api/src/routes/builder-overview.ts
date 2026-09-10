@@ -8,6 +8,7 @@ import {
 } from "@tekisho/authoring";
 import { withOrgScope } from "../with-org-scope.js";
 
+import { GRAPH_EVENT_BINDINGS } from "../lib/authoring-views.js";
 type FastifyLike = {
   get: (path: string, handler: any) => void;
 };
@@ -78,7 +79,7 @@ export function registerBuilderOverviewRoutes(app: FastifyLike, pool: Pool): voi
         ) v ON true
         LEFT JOIN LATERAL (
           SELECT event_type, graph_key, version, module_queue, source
-            FROM graph_event_bindings
+            FROM ${GRAPH_EVENT_BINDINGS}
            WHERE agent_id = d.id AND status = 'active'
            ORDER BY updated_at DESC LIMIT 1
         ) geb ON true

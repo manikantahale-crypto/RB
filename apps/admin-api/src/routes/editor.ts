@@ -23,6 +23,7 @@ import { withOrgScope } from "../with-org-scope.js";
 import { deriveChain } from "../lib/derive-chain.js";
 import { collectGateEvidence } from "../lib/gate-evidence.js";
 import { diffGraphs } from "../lib/diff-graphs.js";
+import { EVENT_SCHEMAS, GRAPH_DEFINITIONS, GRAPH_EVENT_BINDINGS } from "../lib/authoring-views.js";
 import {
   evaluateGoLiveGate,
   oneActiveIndexIsPerGraphKey,
@@ -179,7 +180,7 @@ export function registerEditorRoutes(app: FastifyLike, pool: Pool): void {
         // version 0 (see below), so ordering by version would keep returning a
         // stale draft from before that change.
         const existing = await client.query(
-          `SELECT version FROM graph_definitions
+          `SELECT version FROM ${GRAPH_DEFINITIONS}
             WHERE graph_key = $1 AND status = 'draft' AND org_id IS NULL
             ORDER BY created_at DESC LIMIT 1`,
           [graphKey],
@@ -194,7 +195,7 @@ export function registerEditorRoutes(app: FastifyLike, pool: Pool): void {
         }
 
         const source = await client.query(
-          `SELECT version, definition FROM graph_definitions
+          `SELECT version, definition FROM ${GRAPH_DEFINITIONS}
             WHERE graph_key = $1 AND status = 'active' AND org_id IS NULL
             LIMIT 1`,
           [graphKey],
@@ -271,7 +272,7 @@ export function registerEditorRoutes(app: FastifyLike, pool: Pool): void {
         return await withOrgScope(pool, orgId, async (client) => {
           const { rows } = await client.query(
             `SELECT version, status, definition, checksum, created_by, created_at
-               FROM graph_definitions
+               FROM ${GRAPH_DEFINITIONS}
               WHERE graph_key = $1 AND version = $2 AND org_id IS NULL`,
             [graphKey, version],
           );
@@ -283,7 +284,7 @@ export function registerEditorRoutes(app: FastifyLike, pool: Pool): void {
           }
 
           const triggers = await client.query(
-            `SELECT event_type FROM graph_event_bindings
+            `SELECT event_type FROM ${GRAPH_EVENT_BINDINGS}
               WHERE graph_key = $1 AND status = 'active'`,
             [graphKey],
           );
@@ -330,7 +331,7 @@ export function registerEditorRoutes(app: FastifyLike, pool: Pool): void {
           let triggerDeclared = false;
           if (chosen) {
             const ev = await client.query(
-              `SELECT payload_schema FROM event_schemas
+              `SELECT payload_schema FROM ${EVENT_SCHEMAS}
                 WHERE event_type = $1 LIMIT 1`,
               [chosen],
             );
@@ -450,7 +451,7 @@ export function registerEditorRoutes(app: FastifyLike, pool: Pool): void {
 
     try {
       const { rows: bindings } = await pool.query(
-        `SELECT event_type, module_queue FROM graph_event_bindings
+        `SELECT event_type, module_queue FROM ${GRAPH_EVENT_BINDINGS}
           WHERE graph_key = $1 AND status = 'active'`,
         [graphKey],
       );
@@ -519,7 +520,7 @@ export function registerEditorRoutes(app: FastifyLike, pool: Pool): void {
     const client = await pool.connect();
     try {
       const { rows: versions } = await client.query(
-        `SELECT version, status FROM graph_definitions
+        `SELECT version, status FROM ${GRAPH_DEFINITIONS}
           WHERE graph_key = $1 ORDER BY version DESC`,
         [graphKey],
       );
@@ -602,7 +603,7 @@ export function registerEditorRoutes(app: FastifyLike, pool: Pool): void {
     const toQ = req.query?.to ? Number(req.query.to) : null;
     try {
       const { rows } = await pool.query(
-        `SELECT version, status, definition FROM graph_definitions
+        `SELECT version, status, definition FROM ${GRAPH_DEFINITIONS}
           WHERE graph_key = $1 ORDER BY version DESC`,
         [graphKey],
       );
@@ -666,7 +667,7 @@ export function registerEditorRoutes(app: FastifyLike, pool: Pool): void {
     try {
       const { rows } = await pool.query(
         `SELECT version, status, definition, checksum
-           FROM graph_definitions
+           FROM ${GRAPH_DEFINITIONS}
           WHERE graph_key = $1
             AND ($2::int IS NULL OR version = $2::int)
           ORDER BY (status = 'draft') DESC, version DESC
@@ -752,7 +753,7 @@ export function registerEditorRoutes(app: FastifyLike, pool: Pool): void {
     const graphKey = String(req.params.graphKey ?? "");
     try {
       const { rows: bindings } = await pool.query(
-        `SELECT event_type, graph_key FROM graph_event_bindings
+        `SELECT event_type, graph_key FROM ${GRAPH_EVENT_BINDINGS}
           WHERE status = 'active'`,
       );
       // Drafts too: a chain accepted a minute ago has no bindings yet, and a
@@ -760,7 +761,7 @@ export function registerEditorRoutes(app: FastifyLike, pool: Pool): void {
       // somebody is checking their work.
       const { rows: graphs } = await pool.query(
         `SELECT DISTINCT ON (graph_key) graph_key, definition
-           FROM graph_definitions
+           FROM ${GRAPH_DEFINITIONS}
           WHERE status IN ('active', 'draft')
           ORDER BY graph_key, (status = 'active') DESC, version DESC`,
       );
@@ -824,7 +825,7 @@ export function registerEditorRoutes(app: FastifyLike, pool: Pool): void {
       try {
         return await withOrgScope(pool, orgId, async (client) => {
           const current = await client.query(
-            `SELECT status FROM graph_definitions
+            `SELECT status FROM ${GRAPH_DEFINITIONS}
               WHERE graph_key = $1 AND version = $2 AND org_id IS NULL`,
             [graphKey, version],
           );
