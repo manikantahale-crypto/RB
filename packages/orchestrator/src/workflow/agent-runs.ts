@@ -1,11 +1,10 @@
 /**
  * Run audit spine:
  * 1. orchestration_runs / orchestration_steps — always writable by migrator (demo)
- * 2. agent_runs / agent_steps — design tables (fail-open on GRANT / RLS)
+ * 2. agent_runs / agent_steps — RETIRED. See the note in startAgentRun.
  */
 import { randomUUID } from 'node:crypto';
 import type { Pool } from 'pg';
-import { withOrgConnection } from '../db/with-org-connection.js';
 
 export type AgentRunStatus =
   | 'QUEUED'
@@ -29,63 +28,27 @@ let auditTablesReady: Promise<void> | null = null;
 export async function ensureOrchAuditTables(pool: Pool): Promise<void> {
   if (!auditTablesReady) {
     auditTablesReady = (async () => {
-      await pool.query(`CREATE SCHEMA IF NOT EXISTS orch`);
-      await pool.query(`
-        CREATE TABLE IF NOT EXISTS orch.runs (
-          id                   uuid PRIMARY KEY,
-          organization_id      uuid NOT NULL,
-          agent_name           text NOT NULL,
-          trigger_event_id     uuid,
-          graph_key            text NOT NULL,
-          status               text NOT NULL,
-          langgraph_thread_id  text,
-          input_ref            jsonb NOT NULL DEFAULT '{}',
-          error                jsonb,
-          started_at           timestamptz,
-          completed_at         timestamptz,
-          created_at           timestamptz NOT NULL DEFAULT now()
-        )
-      `);
-      /**
-       * The version this run is pinned to.
-       *
-       * Added after the fact, which is why it is an ALTER rather than part of
-       * the CREATE above — existing databases already have this table and
-       * there is no migration runner in this repository.
-       *
-       * It matters more than a display column: a run finishes on the version
-       * it started with, and run detail is required to draw the topology of
-       * THAT version rather than whatever is active now. Without this stored,
-       * a v3 run gets redrawn as v5 the moment v5 ships, and the audit trail
-       * quietly describes something that never happened. The runtime already
-       * knew the number — it pinned it to compile the graph — and then threw
-       * it away.
-       *
-       * Null on rows written before this existed. Nothing back-fills them;
-       * the version they ran is genuinely not recoverable.
-       */
-      await pool.query(`
-        ALTER TABLE orch.runs ADD COLUMN IF NOT EXISTS graph_version int
-      `);
-      await pool.query(`
-        CREATE INDEX IF NOT EXISTS orch_runs_trigger_idx
-          ON orch.runs (trigger_event_id)
-      `);
-      await pool.query(`
-        CREATE TABLE IF NOT EXISTS orch.steps (
-          id          uuid PRIMARY KEY,
-          run_id      uuid NOT NULL REFERENCES orch.runs (id) ON DELETE CASCADE,
-          seq         int  NOT NULL,
-          node        text NOT NULL,
-          tool_name   text,
-          input       jsonb,
-          output_ref  jsonb,
-          latency_ms  int,
-          status      text NOT NULL,
-          created_at  timestamptz NOT NULL DEFAULT now(),
-          UNIQUE (run_id, seq)
-        )
-      `);
+      // The schema and its tables are built by packages/db/migrations, not
+      // here. This used to CREATE SCHEMA and CREATE TABLE IF NOT EXISTS on
+      // every worker boot, which made the engine an author of the schema
+      // alongside the migrations — and they had already drifted: orch.steps
+      // gained org_id and attempt in V20260909.12, which this definition never
+      // knew about. A boot against a fresh database would have created the
+      // older shape, silently, and everything after would have been wrong.
+      const { rows } = await pool.query<{ missing: string | null }>(
+        `SELECT CASE
+                  WHEN to_regnamespace('orch') IS NULL     THEN 'schema orch'
+                  WHEN to_regclass('orch.runs')  IS NULL   THEN 'orch.runs'
+                  WHEN to_regclass('orch.steps') IS NULL   THEN 'orch.steps'
+                  ELSE NULL
+                END AS missing`,
+      );
+      if (rows[0]?.missing) {
+        throw new Error(
+          `[orch] ${rows[0].missing} is missing. Apply packages/db/migrations ` +
+            `before starting the worker; verify with scripts/rebuild-check.sh.`,
+        );
+      }
     })().catch((err) => {
       auditTablesReady = null;
       throw err;
@@ -209,54 +172,20 @@ export async function startAgentRun(args: {
     );
   }
 
-  // Best-effort design table (often GRANT-denied on shared Supabase).
-  if (defId) {
-    try {
-      await withOrgConnection(args.pool, args.organizationId, async (client) => {
-        const existing = await client.query<{ id: string }>(
-          `SELECT id::text AS id FROM agent_runs
-           WHERE agent_definition_id = $1 AND trigger_event_id = $2
-           LIMIT 1`,
-          [defId, args.triggerEventId],
-        );
-        if (existing.rows[0]?.id) {
-          await client.query(
-            `UPDATE agent_runs
-             SET status = 'RUNNING', started_at = COALESCE(started_at, now()),
-                 updated_at = now()
-             WHERE id = $1`,
-            [existing.rows[0].id],
-          );
-          return;
-        }
-        const agentRunId = randomUUID();
-        await client.query(
-          `INSERT INTO agent_runs (
-             id, organization_id, agent_definition_id, trigger_type,
-             trigger_event_id, input_ref, status, thread_id, started_at
-           ) VALUES (
-             $1, $2, $3, 'EVENT', $4, $5::jsonb, 'RUNNING', $6, now()
-           )`,
-          [
-            agentRunId,
-            args.organizationId,
-            defId,
-            args.triggerEventId,
-            JSON.stringify({ ...JSON.parse(inputJson), orch_run_id: runId }),
-            `${args.organizationId}:${agentRunId}`,
-          ],
-        );
-        console.log(
-          `[agent_runs] STARTED run=${agentRunId} agent=${args.agentName}`,
-        );
-      });
-    } catch (err) {
-      console.warn(
-        `[agent_runs] start failed (fail-open):`,
-        err instanceof Error ? err.message : err,
-      );
-    }
-  }
+  // THE DUAL WRITE IS GONE.
+  //
+  // Every run used to be written twice: to orch.runs above, and to agent_runs
+  // here. This half was wrapped in try/catch and logged "(fail-open)", so a
+  // failure was invisible — and it had already lost rows. 9,965 runs in
+  // orch.runs against 9,929 in agent_runs, with nothing to say which 36 were
+  // missing or when.
+  //
+  // Of the six columns agent_runs had that orch.runs did not, five carried
+  // nothing: cost was `{}` on every row, trigger_type the constant 'EVENT',
+  // triggered_by always null, thread_id derived from two other columns, and
+  // updated_at bookkeeping. Only agent_definition_id was real, and
+  // V20260909.30 moved it onto orch.runs — which is why `defId` is still
+  // resolved above and written there.
 
   return runId;
 }
@@ -297,32 +226,6 @@ export async function finishAgentRun(args: {
     );
   }
 
-  try {
-    await withOrgConnection(args.pool, args.organizationId, async (client) => {
-      await client.query(
-        `UPDATE agent_runs
-         SET status = $2,
-             completed_at = CASE WHEN $2 IN ('COMPLETED','FAILED','CANCELLED','EXPIRED')
-               THEN now() ELSE completed_at END,
-             error = CASE WHEN $3::jsonb IS NULL THEN error ELSE $3::jsonb END,
-             updated_at = now()
-         WHERE organization_id = $4
-           AND (
-             id = $1
-             OR input_ref->>'orch_run_id' = $1::text
-             OR trigger_event_id IN (
-               SELECT trigger_event_id FROM orch.runs WHERE id = $1
-             )
-           )`,
-        [args.runId, args.status, errJson, args.organizationId],
-      );
-    });
-  } catch (err) {
-    console.warn(
-      `[agent_runs] finish failed (fail-open):`,
-      err instanceof Error ? err.message : err,
-    );
-  }
 }
 
 export async function recordAgentStep(args: {

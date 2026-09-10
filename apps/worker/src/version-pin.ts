@@ -13,15 +13,26 @@ export type GraphPin = {
 
 const PIN_TABLE = "orchestration_job_pins";
 
+/**
+ * Check the pin table is there. It is built by packages/db/migrations.
+ *
+ * This table exists only because a run could not name the version it was
+ * running. `orch.runs.graph_version_id` (V20260909.12) is that link done
+ * properly, and this table is superseded — but it cannot simply be dropped
+ * while this code still reads it, and it keys on boss_job_id so its 9,962 rows
+ * cannot be joined to a run to migrate them. It goes when the worker stamps
+ * the version onto the run instead.
+ */
 export async function ensureJobPinTable(db: DbQueryable): Promise<void> {
-  await db.query(`
-    CREATE TABLE IF NOT EXISTS ${PIN_TABLE} (
-      boss_job_id   text PRIMARY KEY,
-      graph_key     text NOT NULL,
-      graph_version int  NOT NULL,
-      created_at    timestamptz NOT NULL DEFAULT now()
-    )
-  `);
+  const { rows } = await db.query<{ present: boolean }>(
+    `SELECT to_regclass('public.${PIN_TABLE}') IS NOT NULL AS present`,
+  );
+  if (!rows[0]?.present) {
+    throw new Error(
+      `[worker] ${PIN_TABLE} is missing. Apply packages/db/migrations before ` +
+        `starting the worker.`,
+    );
+  }
 }
 
 /**

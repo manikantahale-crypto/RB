@@ -25,6 +25,23 @@ export type EventBindingRow = {
  * Prefers org-scoped row, else global (org_id IS NULL).
  * Returns null when nothing is active — caller must NOT fall back to code.
  */
+/**
+ * STILL READS public.graph_event_bindings, ON PURPOSE.
+ *
+ * Every other read in admin-api moved to authoring.event_bindings. This one
+ * cannot yet: it returns `agent_id`, and `upsertActiveEventBinding` below uses
+ * it for the rule that lets an agent replace its own binding without a
+ * confirmation. authoring.event_bindings has no such column, deliberately —
+ * agent_id belongs to the older agent_* model, which is parked rather than
+ * migrated, and adding it here would drag that model into the new schema.
+ *
+ * The router does not depend on this path any more: it resolves through
+ * authoring.event_bindings via the routing table, and falls back here only
+ * when that table has not loaded. So this is a fallback reading the old
+ * source, which is the right way round.
+ *
+ * It moves when the agent_* question is answered.
+ */
 export async function resolveActiveEventBinding(
   db: DbQueryable,
   eventType: string,
@@ -275,34 +292,28 @@ export async function upsertActiveEventBinding(
   return normalize(inserted.rows[0]!);
 }
 
-/** Ensure table + seed day-1 bindings (local boot without Flyway). */
+/**
+ * Check the bindings table is there, then seed day-1 bindings.
+ *
+ * It used to create the table and its indexes too, for a local boot without
+ * Flyway. That is exactly the drift this codebase has been unwinding: the
+ * one-active index decides what routes, so a second definition of it is a
+ * second definition of the routing rule.
+ */
 export async function ensureEventBindingsSchema(pool: Pool): Promise<void> {
-  await pool.query(`
-    CREATE TABLE IF NOT EXISTS graph_event_bindings (
-      id            uuid PRIMARY KEY DEFAULT gen_random_uuid(),
-      event_type    text NOT NULL,
-      org_id        uuid,
-      graph_key     text NOT NULL,
-      module_queue  text NOT NULL,
-      agent_id      uuid,
-      version       int,
-      status        text NOT NULL DEFAULT 'active'
-                    CHECK (status IN ('active', 'retired')),
-      source        text NOT NULL DEFAULT 'authoring'
-                    CHECK (source IN ('seed', 'authoring')),
-      created_at    timestamptz NOT NULL DEFAULT now(),
-      updated_at    timestamptz NOT NULL DEFAULT now()
-    )
-  `);
-  await pool.query(`
-    CREATE UNIQUE INDEX IF NOT EXISTS graph_event_bindings_one_active
-      ON graph_event_bindings (event_type, COALESCE(org_id::text, '~global~'))
-      WHERE status = 'active'
-  `);
-  await pool.query(`
-    CREATE INDEX IF NOT EXISTS graph_event_bindings_lookup
-      ON graph_event_bindings (event_type, status)
-  `);
+  // Built by packages/db/migrations. Creating it here would make this a
+  // second author of the schema — and this table in particular carries the
+  // one-active index that decides what routes, so two definitions of it is
+  // two definitions of the routing rule.
+  const { rows } = await pool.query<{ present: boolean }>(
+    `SELECT to_regclass('public.graph_event_bindings') IS NOT NULL AS present`,
+  );
+  if (!rows[0]?.present) {
+    throw new Error(
+      "[authoring] graph_event_bindings is missing. Apply " +
+        "packages/db/migrations before starting.",
+    );
+  }
 
   const seeds: Array<{
     eventType: string;

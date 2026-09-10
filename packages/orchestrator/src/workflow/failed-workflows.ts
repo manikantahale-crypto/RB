@@ -17,26 +17,19 @@ export type FailedWorkflowRow = {
 export async function ensureFailedWorkflowsTable(
   client: Pool | PoolClient,
 ): Promise<void> {
-  await client.query(`
-    CREATE TABLE IF NOT EXISTS failed_workflows (
-      id               text PRIMARY KEY,
-      organization_id  text NOT NULL,
-      event_id         text NOT NULL,
-      thread_id        text NOT NULL,
-      graph_key        text NOT NULL,
-      graph_version    int,
-      queue            text NOT NULL,
-      error_class      text NOT NULL,
-      error_message    text NOT NULL,
-      pinned_payload   jsonb NOT NULL,
-      created_at       timestamptz NOT NULL DEFAULT now(),
-      replayed_at      timestamptz
-    )
-  `);
-  await client.query(`
-    CREATE INDEX IF NOT EXISTS failed_workflows_org_created_idx
-      ON failed_workflows (organization_id, created_at DESC)
-  `);
+  // Built by packages/db/migrations. See the note in agent-runs.ts: a
+  // process that creates its own tables is a second author of the schema, and
+  // the two drift without either side noticing.
+  const { rows } = await client.query<{ present: boolean }>(
+    `SELECT to_regclass('public.failed_workflows') IS NOT NULL AS present`,
+  );
+  if (!rows[0]?.present) {
+    throw new Error(
+      "[orch] failed_workflows is missing. Apply packages/db/migrations " +
+        "before starting the worker.",
+    );
+  }
+
 }
 
 export async function recordFailedWorkflow(

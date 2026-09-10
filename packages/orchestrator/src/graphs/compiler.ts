@@ -138,58 +138,61 @@ export class GraphCompiler {
   }
 
   /**
-   * Ensure table exists and seed recipes from git-authored `.def.ts` catalog
-   * (design §8 — git is authoring source; DB is runtime store).
+   * Check the runtime store is there. Do NOT build it.
+   *
+   * This used to CREATE TABLE IF NOT EXISTS on every boot, which made the
+   * engine a second author of the schema alongside the migrations — and they
+   * disagreed. `graph_definitions.id` is text here and was uuid in one of the
+   * two files that both claimed V11; whichever ran first won, and nothing
+   * reported the difference.
+   *
+   * The migrations now build the database from empty, checked on every push.
+   * A CREATE TABLE IF NOT EXISTS would quietly accept a table it did not
+   * create and quietly invent one no migration knows about, which is exactly
+   * how a column ends up in production and in no file.
+   *
+   * The seeding that used to live here is already gone, for a related reason
+   * kept below because it is worth not repeating:
+   *
+   *   The loop wrote the git catalog into graph_definitions on every boot and
+   *   forced its own idea of which version was active. That was right when git
+   *   was the only author and the database started empty. It stopped being
+   *   right: the admin app has written hundreds of versions, migrations
+   *   advanced several workflows past the catalog, and the loop tried to
+   *   re-activate `duplicate.review` v1 while v2 held the pointer. The
+   *   one-active index refused and the worker would not start at all — a
+   *   disagreement about one row took down every workflow.
+   *
+   * Seeding belongs in a migration: applied deliberately, in order, still in
+   * git. `R__seed_syntra_graphs.sql` is generated from the same catalog and
+   * creates only what is absent. `graphSeedCatalog` stays exported because the
+   * generator reads it.
    */
   async ensureSchemaAndSeed(): Promise<void> {
-    await this.pool.query(`
-      CREATE TABLE IF NOT EXISTS graph_definitions (
-        id            text PRIMARY KEY,
-        org_id        text,
-        graph_key     text NOT NULL,
-        version       int  NOT NULL,
-        definition    jsonb NOT NULL,
-        checksum      text NOT NULL,
-        status        text NOT NULL DEFAULT 'draft'
-                      CHECK (status IN ('draft', 'active', 'retired')),
-        created_by    text NOT NULL DEFAULT 'seed',
-        created_at    timestamptz NOT NULL DEFAULT now(),
-        activated_at  timestamptz
-      )
-    `);
+    const { rows } = await this.pool.query<{ missing: string | null }>(
+      `SELECT CASE
+                WHEN to_regclass('public.graph_definitions') IS NULL
+                  THEN 'graph_definitions'
+                WHEN NOT EXISTS (
+                  SELECT 1 FROM pg_indexes
+                   WHERE tablename = 'graph_definitions'
+                     AND indexname = 'graph_definitions_one_active')
+                  THEN 'graph_definitions_one_active'
+                ELSE NULL
+              END AS missing`,
+    );
 
-    await this.pool.query(`
-      CREATE UNIQUE INDEX IF NOT EXISTS graph_definitions_key_version_scope
-        ON graph_definitions (graph_key, version, COALESCE(org_id, '~global~'));
-      CREATE UNIQUE INDEX IF NOT EXISTS graph_definitions_one_active
-        ON graph_definitions (graph_key, COALESCE(org_id, '~global~'))
-        WHERE status = 'active';
-    `);
+    const missing = rows[0]?.missing;
+    if (missing) {
+      throw new Error(
+        `[GraphCompiler] ${missing} is missing. The schema comes from ` +
+          `packages/db/migrations — apply them before starting the worker, ` +
+          `and verify with scripts/rebuild-check.sh.`,
+      );
+    }
 
-    /**
-     * NO SEEDING HERE ANY MORE.
-     *
-     * This loop wrote the git catalog into `graph_definitions` on every boot,
-     * forcing its own idea of which version is active. That was right when git
-     * was the only author of a workflow and the database started empty.
-     *
-     * It stopped being right some time ago. The admin app has written hundreds
-     * of versions, migrations have advanced several workflows past the
-     * catalog, and this loop had no way to know: it tried to re-activate
-     * `duplicate.review` v1 while v2 held the pointer, the one-active index
-     * refused, and the worker would not start at all. A disagreement about one
-     * row took down every workflow.
-     *
-     * Seeding belongs in a migration, which is applied deliberately, in order,
-     * and is still tracked in git — `R__seed_syntra_graphs.sql` is generated
-     * from the same catalog and now creates only what is absent. Boot makes
-     * sure the table and its indexes exist, and reads.
-     *
-     * `graphSeedCatalog` stays exported: the generator reads it, and it is the
-     * source those migrations come from.
-     */
     console.log(
-      `[GraphCompiler] graph_definitions ready (seeded by migration, not at boot)`,
+      "[GraphCompiler] graph_definitions ready (built by migration, not at boot)",
     );
   }
 
