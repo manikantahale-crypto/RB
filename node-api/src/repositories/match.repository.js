@@ -1,4 +1,79 @@
 const { pool } = require("../config/db");
+
+/*
+ * READS COME FROM `core`. WRITES STILL GO TO `syntra`.
+ *
+ * The business entities moved to `core` and several columns were renamed on
+ * the way — requirement_id, person_id, status — while three groups of columns
+ * moved out into tables of their own: file metadata, embeddings, and
+ * processing state.
+ *
+ * These four constants put them back together under the old names, so every
+ * query below keeps its column references and every caller keeps its response
+ * shape. The alternative was rewriting 150 column references by hand.
+ *
+ * Writes are NOT moved. core.matches has composite foreign keys to
+ * requirements, people and resumes, so a match written to core whose job went
+ * to syntra fails the key — the writes have to move as one cluster, later. The
+ * mirror triggers in V20260909.15-18 carry every syntra write into core in the
+ * same transaction, so these reads are never behind.
+ */
+
+/** core.matches, under the three column names that were renamed. */
+const CORE_MATCHES = `(SELECT *,
+         requirement_id AS job_id,
+         person_id      AS candidate_id,
+         status         AS match_status,
+         requested_at   AS match_requested_at,
+         scored_by      AS score_source
+    FROM core.matches)`;
+
+/** core.people — was syntra.candidates. Same columns, new home. */
+const CORE_PEOPLE = "core.people";
+
+/**
+ * core.requirements — was syntra.jobs.
+ *
+ * `processed_at` is the readiness gate every matching query uses. It is no
+ * longer a column: it is whether the extract stage finished. `embedding` moved
+ * to core.embeddings, versioned by model, so the newest is taken.
+ */
+const CORE_REQUIREMENTS = `(SELECT q.*,
+         q.summary AS jd_summary,
+         pj.finished_at AS processed_at,
+         e.embedding
+    FROM core.requirements q
+    LEFT JOIN LATERAL (
+      SELECT p.finished_at FROM core.processing_jobs p
+       WHERE p.subject_type = 'requirement' AND p.subject_id = q.id
+         AND p.stage = 'extract'
+       ORDER BY p.attempt DESC LIMIT 1
+    ) pj ON true
+    LEFT JOIN LATERAL (
+      SELECT x.embedding FROM core.embeddings x
+       WHERE x.subject_type = 'requirement' AND x.subject_id = q.id
+       ORDER BY x.created_at DESC LIMIT 1
+    ) e ON true)`;
+
+/** core.resumes — was syntra.resumes. Same three columns moved out. */
+const CORE_RESUMES = `(SELECT r.*,
+         r.person_id AS candidate_id,
+         r.summary AS resume_summary,
+         r.current_role_title AS current_role,
+         pj.finished_at AS processed_at,
+         e.embedding
+    FROM core.resumes r
+    LEFT JOIN LATERAL (
+      SELECT p.finished_at FROM core.processing_jobs p
+       WHERE p.subject_type = 'resume' AND p.subject_id = r.id
+         AND p.stage = 'extract'
+       ORDER BY p.attempt DESC LIMIT 1
+    ) pj ON true
+    LEFT JOIN LATERAL (
+      SELECT x.embedding FROM core.embeddings x
+       WHERE x.subject_type = 'resume' AND x.subject_id = r.id
+       ORDER BY x.created_at DESC LIMIT 1
+    ) e ON true)`;
 const { match: matchStatus } = require("../constants/statuses");
 
 async function getJobForMatching(jobId) {
@@ -32,11 +107,10 @@ async function findCandidatesForJob(jobId) {
             j.id AS job_id,
             j.primary_role AS job_primary_role,
             j.required_skills
-       FROM syntra.jobs j
-       JOIN syntra.candidates c
-         ON c.created_by = j.created_by
-        AND c.created_by IS NOT NULL
-       JOIN syntra.resumes r
+       FROM ${CORE_REQUIREMENTS} j
+       JOIN ${CORE_PEOPLE} c
+         ON c.org_id = j.org_id
+       JOIN ${CORE_RESUMES} r
          ON r.candidate_id = c.id
         AND r.primary_role = j.primary_role
         AND r.is_current = true
@@ -44,7 +118,7 @@ async function findCandidatesForJob(jobId) {
       WHERE j.id = $1
         AND j.processed_at IS NOT NULL
         AND j.primary_role IS NOT NULL
-        AND j.created_by IS NOT NULL`,
+      ORDER BY r.id`,
     [jobId]
   );
   if (roleMatched.rows.length) return roleMatched.rows;
@@ -57,17 +131,16 @@ async function findCandidatesForJob(jobId) {
             j.id AS job_id,
             j.primary_role AS job_primary_role,
             j.required_skills
-       FROM syntra.jobs j
-       JOIN syntra.candidates c
-         ON c.created_by = j.created_by
-        AND c.created_by IS NOT NULL
-       JOIN syntra.resumes r
+       FROM ${CORE_REQUIREMENTS} j
+       JOIN ${CORE_PEOPLE} c
+         ON c.org_id = j.org_id
+       JOIN ${CORE_RESUMES} r
          ON r.candidate_id = c.id
         AND r.is_current = true
         AND r.processed_at IS NOT NULL
       WHERE j.id = $1
         AND j.processed_at IS NOT NULL
-        AND j.created_by IS NOT NULL`,
+      ORDER BY r.id`,
     [jobId]
   );
   return rows;
@@ -82,20 +155,19 @@ async function findOpenJobsForResume(resumeId) {
             r.candidate_id,
             r.primary_role AS resume_primary_role,
             r.skills
-       FROM syntra.resumes r
-       JOIN syntra.candidates c
+       FROM ${CORE_RESUMES} r
+       JOIN ${CORE_PEOPLE} c
          ON c.id = r.candidate_id
-        AND c.created_by IS NOT NULL
-       JOIN syntra.jobs j
-         ON j.created_by = c.created_by
+       JOIN ${CORE_REQUIREMENTS} j
+         ON j.org_id = c.org_id
         AND j.primary_role = r.primary_role
         AND j.processed_at IS NOT NULL
         AND j.primary_role IS NOT NULL
-        AND j.created_by IS NOT NULL
       WHERE r.id = $1
         AND r.is_current = true
         AND r.processed_at IS NOT NULL
-        AND r.primary_role IS NOT NULL`,
+        AND r.primary_role IS NOT NULL
+      ORDER BY j.id`,
     [resumeId]
   );
   if (roleMatched.rows.length) return roleMatched.rows;
@@ -108,17 +180,16 @@ async function findOpenJobsForResume(resumeId) {
             r.candidate_id,
             r.primary_role AS resume_primary_role,
             r.skills
-       FROM syntra.resumes r
-       JOIN syntra.candidates c
+       FROM ${CORE_RESUMES} r
+       JOIN ${CORE_PEOPLE} c
          ON c.id = r.candidate_id
-        AND c.created_by IS NOT NULL
-       JOIN syntra.jobs j
-         ON j.created_by = c.created_by
+       JOIN ${CORE_REQUIREMENTS} j
+         ON j.org_id = c.org_id
         AND j.processed_at IS NOT NULL
-        AND j.created_by IS NOT NULL
       WHERE r.id = $1
         AND r.is_current = true
-        AND r.processed_at IS NOT NULL`,
+        AND r.processed_at IS NOT NULL
+      ORDER BY j.id`,
     [resumeId]
   );
   return rows;
@@ -201,9 +272,9 @@ async function listMatchesForJob(jobId, { status, minScore } = {}) {
             m.breakdown,
             m.evidence,
             j.score_threshold
-       FROM syntra.matches m
-       JOIN syntra.candidates c ON c.id = m.candidate_id
-       JOIN syntra.jobs j ON j.id = m.job_id
+       FROM ${CORE_MATCHES} m
+       JOIN ${CORE_PEOPLE} c ON c.id = m.candidate_id
+       JOIN ${CORE_REQUIREMENTS} j ON j.id = m.job_id
       WHERE m.job_id = $1${extra}
       ORDER BY m.score DESC NULLS LAST, m.created_at DESC`,
     params
@@ -237,8 +308,8 @@ async function listMatchesForCandidate(candidateId, { status, minScore } = {}) {
             m.breakdown,
             m.evidence,
             j.score_threshold
-       FROM syntra.matches m
-       JOIN syntra.jobs j ON j.id = m.job_id
+       FROM ${CORE_MATCHES} m
+       JOIN ${CORE_REQUIREMENTS} j ON j.id = m.job_id
       WHERE m.candidate_id = $1${extra}
       ORDER BY m.score DESC NULLS LAST, m.created_at DESC`,
     params
@@ -265,17 +336,17 @@ async function listTopMatches({ userId = null, limit = 5 } = {}) {
               m.score,
               m.tier,
               m.skill_match_score
-         FROM syntra.matches m
-         JOIN syntra.candidates c ON c.id = m.candidate_id
-         JOIN syntra.jobs j ON j.id = m.job_id
+         FROM ${CORE_MATCHES} m
+         JOIN ${CORE_PEOPLE} c ON c.id = m.candidate_id
+         JOIN ${CORE_REQUIREMENTS} j ON j.id = m.job_id
         WHERE m.match_status = 'completed'
           AND m.score IS NOT NULL
           AND c.full_name IS NOT NULL
           AND c.full_name !~* '^jd[[:space:]]'
           ${userFilter}
-        ORDER BY m.candidate_id, m.score DESC
+        ORDER BY m.candidate_id, m.score DESC NULLS LAST, m.id
      ) best
-     ORDER BY best.score DESC
+     ORDER BY best.score DESC NULLS LAST, best.match_id
      LIMIT ${limitPlaceholder}`,
     params
   );
@@ -291,14 +362,40 @@ async function getMatchById(matchId, userId = null) {
   }
 
   const { rows } = await pool.query(
-    `SELECT m.*,
+    `SELECT m.id,
+            m.job_id,
+            m.candidate_id,
+            m.resume_id,
+            m.match_status,
+            m.skill_match_score,
+            m.eligibility_score,
+            m.score,
+            m.tier,
+            m.final_decision,
+            m.reasoning,
+            m.strengths,
+            m.gaps,
+            m.green_flags,
+            m.red_flags,
+            m.confidence_score,
+            m.breakdown,
+            m.evidence,
+            m.model_name,
+            m.prompt_version,
+            m.llm_score,
+            m.org_id,
+            m.score_source,
+            m.match_requested_at,
+            m.matched_at,
+            m.created_at,
+            m.updated_at,
             c.full_name,
             c.email,
             j.title AS job_title,
             j.score_threshold
-       FROM syntra.matches m
-       JOIN syntra.candidates c ON c.id = m.candidate_id
-       JOIN syntra.jobs j ON j.id = m.job_id
+       FROM ${CORE_MATCHES} m
+       JOIN ${CORE_PEOPLE} c ON c.id = m.candidate_id
+       JOIN ${CORE_REQUIREMENTS} j ON j.id = m.job_id
       WHERE m.id = $1${extraWhere}`,
     params
   );
@@ -322,21 +419,21 @@ async function dailyActivity({ userId = null, days = 7 } = {}) {
      )
      SELECT d.date,
             (
-              SELECT COUNT(*)::int FROM syntra.matches m
-                JOIN syntra.jobs j ON j.id = m.job_id
+              SELECT COUNT(*)::int FROM ${CORE_MATCHES} m
+                JOIN ${CORE_REQUIREMENTS} j ON j.id = m.job_id
                WHERE COALESCE(m.match_requested_at, m.created_at)::date = d.date
                  ${userJoinFilter}
             ) AS matches_requested,
             (
-              SELECT COUNT(*)::int FROM syntra.matches m
-                JOIN syntra.jobs j ON j.id = m.job_id
+              SELECT COUNT(*)::int FROM ${CORE_MATCHES} m
+                JOIN ${CORE_REQUIREMENTS} j ON j.id = m.job_id
                WHERE m.match_status = 'completed'
                  AND COALESCE(m.matched_at, m.created_at)::date = d.date
                  ${userJoinFilter}
             ) AS matches_completed,
             (
-              SELECT COUNT(*)::int FROM syntra.matches m
-                JOIN syntra.jobs j ON j.id = m.job_id
+              SELECT COUNT(*)::int FROM ${CORE_MATCHES} m
+                JOIN ${CORE_REQUIREMENTS} j ON j.id = m.job_id
                WHERE m.match_status = 'completed'
                  AND m.score >= 60
                  AND COALESCE(m.matched_at, m.created_at)::date = d.date
@@ -436,8 +533,8 @@ async function getSummariesForScoring(jobId, resumeId) {
             j.score_threshold,
             r.resume_summary,
             r.candidate_id
-       FROM syntra.jobs j
-       CROSS JOIN syntra.resumes r
+       FROM ${CORE_REQUIREMENTS} j
+       CROSS JOIN ${CORE_RESUMES} r
       WHERE j.id = $1 AND r.id = $2`,
     [jobId, resumeId]
   );
@@ -486,11 +583,10 @@ async function findTopJobsByVector(resumeId, limit = 50) {
             r.candidate_id,
             r.primary_role AS resume_primary_role,
             r.skills
-       FROM syntra.jobs j
-       JOIN syntra.resumes r ON r.id = $2
-       JOIN syntra.candidates c ON r.candidate_id = c.id
-      WHERE j.created_by = c.created_by
-        AND j.created_by IS NOT NULL
+       FROM ${CORE_REQUIREMENTS} j
+       JOIN ${CORE_RESUMES} r ON r.id = $2
+       JOIN ${CORE_PEOPLE} c ON r.candidate_id = c.id
+      WHERE j.org_id = c.org_id
         AND j.processed_at IS NOT NULL
         AND j.embedding IS NOT NULL
         AND r.is_current = true
@@ -523,11 +619,10 @@ async function findTopCandidatesByVector(jobId, limit = 50) {
             j.id AS job_id,
             j.primary_role,
             j.required_skills
-       FROM syntra.resumes r
-       JOIN syntra.candidates c ON r.candidate_id = c.id
-       JOIN syntra.jobs j ON j.id = $2
-      WHERE c.created_by = j.created_by
-        AND c.created_by IS NOT NULL
+       FROM ${CORE_RESUMES} r
+       JOIN ${CORE_PEOPLE} c ON r.candidate_id = c.id
+       JOIN ${CORE_REQUIREMENTS} j ON j.id = $2
+      WHERE c.org_id = j.org_id
         AND j.processed_at IS NOT NULL
         AND r.is_current = true
         AND r.processed_at IS NOT NULL
@@ -545,21 +640,20 @@ module.exports.findTopCandidatesByVector = findTopCandidatesByVector;
 /** Why tier-1 vector pool may be empty for a job (diagnostics only). */
 async function countMatchPoolDiagnostics(jobId) {
   const { rows } = await pool.query(
-    `SELECT j.created_by::text AS job_owner,
+    `SELECT j.org_id::text AS job_owner,
             (SELECT COUNT(*)::int
-               FROM syntra.resumes r
+               FROM ${CORE_RESUMES} r
               WHERE r.is_current = true
                 AND r.processed_at IS NOT NULL
                 AND r.embedding IS NOT NULL) AS resumes_ready,
             (SELECT COUNT(*)::int
-               FROM syntra.resumes r
-               JOIN syntra.candidates c ON r.candidate_id = c.id
-              WHERE c.created_by = j.created_by
-                AND c.created_by IS NOT NULL
+               FROM ${CORE_RESUMES} r
+               JOIN ${CORE_PEOPLE} c ON r.candidate_id = c.id
+              WHERE c.org_id = j.org_id
                 AND r.is_current = true
                 AND r.processed_at IS NOT NULL
                 AND r.embedding IS NOT NULL) AS resumes_same_owner
-       FROM syntra.jobs j
+       FROM ${CORE_REQUIREMENTS} j
       WHERE j.id = $1`,
     [jobId]
   );

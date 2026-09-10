@@ -39,7 +39,7 @@ WITH pairs AS (
   UNION ALL
   SELECT 'matches',
          (SELECT count(*) FROM syntra.matches),
-         (SELECT count(*) FROM core.matches), 263, 'cross-tenant, cannot be represented'
+         (SELECT count(*) FROM core.matches), 0, ''
 )
 SELECT entity,
        source,
