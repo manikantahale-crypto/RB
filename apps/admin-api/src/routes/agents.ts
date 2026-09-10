@@ -2405,7 +2405,6 @@ export function registerAgentRoutes(
             eventType: triggerEventType,
             orgId,
             graphKey,
-            agentId,
             /**
              * Only ever true when the caller has been shown WHICH workflow
              * stops running and said yes to that. The 409 below carries the
@@ -2421,7 +2420,6 @@ export function registerAgentRoutes(
               error: "EVENT_ALREADY_BOUND",
               message: err.message,
               eventType: err.eventType ?? triggerEventType,
-              existingAgentId: err.existingAgentId ?? null,
               existingGraphKey: err.existingGraphKey ?? null,
               /**
                * 'seed' means a migration created it and it is what runs in
@@ -2715,7 +2713,6 @@ export function registerAgentRoutes(
             eventType: triggerEventType,
             orgId,
             graphKey,
-            agentId,
             /**
              * Only ever true when the caller has been shown WHICH workflow
              * stops running and said yes to that. The 409 below carries the
@@ -2734,7 +2731,6 @@ export function registerAgentRoutes(
               error: "EVENT_ALREADY_BOUND",
               message: err.message,
               eventType: err.eventType ?? triggerEventType,
-              existingAgentId: err.existingAgentId ?? null,
               existingGraphKey: err.existingGraphKey ?? null,
               /**
                * 'seed' means a migration created it and it is what runs in
@@ -2807,11 +2803,22 @@ export function registerAgentRoutes(
 
       await client.query("BEGIN");
       try {
+        /**
+         * Retired by the workflow it points at, not by the agent that made it.
+         *
+         * `authoring.event_bindings` has no agent column — the unit of
+         * authorship is the workflow now — and this route already knows the
+         * graph key, because the very next statement retires the definition
+         * with it. The two were always meant to name the same thing.
+         */
         await client.query(
-          `UPDATE graph_event_bindings
+          `UPDATE authoring.event_bindings b
               SET status = 'retired', updated_at = NOW()
-            WHERE agent_id = $1 AND status = 'active'`,
-          [agentId],
+             FROM authoring.graphs g
+            WHERE g.id = b.graph_id
+              AND g.graph_key = $1
+              AND b.status = 'active'`,
+          [graphKey],
         );
         await client.query(
           `UPDATE graph_definitions
@@ -2884,14 +2891,30 @@ export function registerAgentRoutes(
         });
       }
 
+      /**
+       * Deleting an agent takes its workflow off whatever event it answers.
+       *
+       * By the graph key, because bindings name workflows now, not agents.
+       * The key is the same convention the go-live route above builds —
+       * `<agentKey>.authored` — and taking it from the template rather than
+       * assembling it here keeps the two from drifting.
+       */
+      const tmpl = await templateForAgentId(client, agentId);
+      const graphKey = tmpl ? `${tmpl.agentKey}.authored` : null;
+
       await client.query("BEGIN");
       try {
-        await client.query(
-          `UPDATE graph_event_bindings
-              SET status = 'retired', updated_at = NOW()
-            WHERE agent_id = $1 AND status = 'active'`,
-          [agentId],
-        );
+        if (graphKey) {
+          await client.query(
+            `UPDATE authoring.event_bindings b
+                SET status = 'retired', updated_at = NOW()
+               FROM authoring.graphs g
+              WHERE g.id = b.graph_id
+                AND g.graph_key = $1
+                AND b.status = 'active'`,
+            [graphKey],
+          );
+        }
         await client.query(
           `UPDATE agent_definitions
               SET is_active = false, updated_at = NOW()

@@ -87,6 +87,7 @@ import {
   GenerationFailedError,
   generateGraphFromLlm,
   loadEventCatalog,
+  registerEvent,
   type LLMClient,
 } from "@tekisho/authoring";
 
@@ -1931,22 +1932,12 @@ export function registerProposeRoutes(
                 [trigger],
               );
               if (!already.rowCount) {
-                await client.query(
-                  `INSERT INTO event_schemas (
-                     event_type, schema_version, description, payload_schema,
-                     envelope_fields, produced_when, primary_consumer, status
-                   )
-                   SELECT $1, '1.0', $2,
-                     '{"type":"object","additionalProperties":true}'::jsonb,
-                     e.envelope_fields, $3, $4, 'ACTIVE'
-                   FROM ${EVENT_SCHEMAS} e WHERE e.schema_version = '1.0' LIMIT 1`,
-                  [
-                    trigger,
-                    `Handoff from ${String(link.fromModule ?? "one application")} to ${String(link.module ?? "another")}, created with a workflow chain.`,
-                    String(link.fromModule ?? "another application"),
-                    graphKey,
-                  ],
-                );
+                await registerEvent(client, {
+                  eventType: trigger,
+                  description: `Handoff from ${String(link.fromModule ?? "one application")} to ${String(link.module ?? "another")}, created with a workflow chain.`,
+                  producedWhen: String(link.fromModule ?? "another application"),
+                  primaryConsumer: graphKey,
+                });
                 createdEvents.push(trigger);
               }
             }

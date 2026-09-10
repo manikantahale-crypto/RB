@@ -52,58 +52,22 @@ function moduleOf(key: string): string {
 }
 
 async function ensureTable(pool: pg.Pool): Promise<void> {
-  await pool.query(`
-    CREATE TABLE IF NOT EXISTS node_registry (
-      registry_key   text PRIMARY KEY,
-      key            text NOT NULL,
-      version        text NOT NULL,
-      module         text NOT NULL,
-      shareable      boolean NOT NULL DEFAULT false,
-      title          text NOT NULL,
-      description    text NOT NULL,
-      tags           jsonb NOT NULL DEFAULT '[]',
-      input_schema   jsonb,
-      output_schema  jsonb,
-      config_schema  jsonb,
-      admin_exposed  jsonb NOT NULL DEFAULT '[]',
-      side_effect    text,
-      idempotency    jsonb,
-      execution      jsonb,
-      llm            jsonb,
-      dependencies   jsonb NOT NULL DEFAULT '[]',
-      persistence    jsonb,
-      fixture_names  jsonb NOT NULL DEFAULT '[]',
-      has_stub       boolean NOT NULL DEFAULT false,
-      /**
-       * Every event the node may publish. NULLABLE ON PURPOSE, with no
-       * default: NULL means nobody has declared, '[]' means declared to
-       * publish nothing. A default of '[]' would have every undeclared legacy
-       * node claiming silence, and a handoff that is merely unknown would be
-       * reported as definitely broken.
-       */
-      emits          jsonb,
-      /**
-       * 'contract'  declared, and the declaration is what runs.
-       * 'declared'  declared, but the engine runs its own implementation, so
-       *             nothing checks one against the other. See declaredNodes
-       *             in adapters/index.ts for why two nodes are like this.
-       * 'legacy'    an engine function with no declaration at all.
-       */
-      source         text NOT NULL DEFAULT 'contract',
-      checksum       text,
-      updated_at     timestamptz NOT NULL DEFAULT now()
-    )
-  `);
-  // The table is older than this column on any database that has been
-  // materialized before. Additive and nullable, so nothing already there
-  // changes meaning: every existing row becomes "not declared", which is
-  // exactly what it was.
-  await pool.query(
-    `ALTER TABLE node_registry ADD COLUMN IF NOT EXISTS emits jsonb`,
+  // The registry is built by packages/db/migrations, not by the generator.
+  //
+  // This used to CREATE TABLE IF NOT EXISTS, which made a build script an
+  // author of the schema — and it built the OLD shape: a `module` column where
+  // authoring.node_registry has `application`, referencing
+  // platform.applications. A run against a fresh database would have created
+  // the wrong table and then filled it.
+  const { rows } = await pool.query<{ present: boolean }>(
+    `SELECT to_regclass('authoring.node_registry') IS NOT NULL AS present`,
   );
-  await pool.query(
-    `CREATE INDEX IF NOT EXISTS node_registry_module_idx ON node_registry (module)`,
-  );
+  if (!rows[0]?.present) {
+    throw new Error(
+      "[registry] authoring.node_registry is missing. Apply " +
+        "packages/db/migrations before generating the registry.",
+    );
+  }
 }
 
 async function main() {
@@ -134,7 +98,7 @@ async function main() {
       const row = toRegistryRow(contract);
       const checksum = checksumOf(row);
       await pool.query(
-        `INSERT INTO node_registry (
+        `INSERT INTO authoring.node_registry (
            registry_key, key, version, module, shareable, title, description,
            tags, input_schema, output_schema, config_schema, admin_exposed,
            side_effect, idempotency, execution, llm, dependencies, persistence,
@@ -202,7 +166,7 @@ async function main() {
       if (contractKeys.has(key)) continue;
       const entry = catalog.find((t) => t.key === key);
       await pool.query(
-        `INSERT INTO node_registry (
+        `INSERT INTO authoring.node_registry (
            registry_key, key, version, module, shareable, title, description,
            source, updated_at
          ) VALUES ($1,$2,'1.0.0',$3,false,$4,$5,'legacy', now())
@@ -223,7 +187,7 @@ async function main() {
     // Anything in the table that no longer exists in code is drift, and drift
     // that is only detected by a person is not detected.
     const { rows: stale } = await pool.query<{ registry_key: string }>(
-      `SELECT registry_key FROM node_registry WHERE registry_key <> ALL($1::text[])`,
+      `SELECT registry_key FROM authoring.node_registry WHERE registry_key <> ALL($1::text[])`,
       [written.map((w) => w.split(" ")[0])],
     );
     if (stale.length) {
@@ -235,7 +199,7 @@ async function main() {
     }
 
     const { rows: counts } = await pool.query<{ source: string; n: string }>(
-      `SELECT source, count(*) n FROM node_registry GROUP BY source ORDER BY source`,
+      `SELECT source, count(*) n FROM authoring.node_registry GROUP BY source ORDER BY source`,
     );
     console.log("node_registry materialized:");
     for (const c of counts) console.log(`   ${c.source.padEnd(9)} ${c.n}`);

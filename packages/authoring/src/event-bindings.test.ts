@@ -25,7 +25,6 @@ const row = (over: Partial<EventBindingRow> = {}): EventBindingRow => ({
   org_id: null,
   graph_key: "astra.requirement.workflow",
   module_queue: "module.syntra.jd",
-  agent_id: "01900000-0000-7000-8000-000000000501",
   version: 1,
   status: "active",
   source: "seed",
@@ -41,7 +40,7 @@ function fakeClient(
   existing: EventBindingRow | null,
   opts: { catalogue?: boolean; siblingQueue?: string | null } = {},
 ) {
-  /** Whether `event_schemas` knows this event. */
+  /** Whether the event catalogue knows this event. */
   const catalogue = opts.catalogue ?? true;
   /** The queue this application's other triggers already use, if any. */
   const siblingQueue = opts.siblingQueue ?? null;
@@ -53,8 +52,16 @@ function fakeClient(
       statements.push(t.split("\n")[0]!.trim());
 
       // "Is this event in the catalogue at all?"
-      if (/event_schemas/i.test(t)) {
+      if (/event_catalog/i.test(t)) {
         return { rows: catalogue ? [{ ok: 1 }] : [], rowCount: catalogue ? 1 : 0 };
+      }
+      // "Which workflow does this graph_key name?" — a foreign key now, so
+      // the binding cannot be written without it.
+      if (/FROM authoring\.graphs/i.test(t)) {
+        return {
+          rows: [{ id: "22222222-2222-2222-2222-222222222222" }],
+          rowCount: 1,
+        };
       }
       // "What queue do this application's other triggers use?"
       if (/event_type LIKE/i.test(t)) {
@@ -66,7 +73,10 @@ function fakeClient(
       if (/^SELECT/i.test(t)) {
         return { rows: existing ? [existing] : [], rowCount: existing ? 1 : 0 };
       }
-      if (/^INSERT/i.test(t)) {
+      // The write itself is a CTE now — it resolves the pinned version, writes
+      // the binding and reads it back under the old column names in one
+      // statement, so the caller never sees the three tables underneath.
+      if (/^WITH pinned/i.test(t) || /^INSERT/i.test(t)) {
         return { rows: [row({ source: "authoring" })], rowCount: 1 };
       }
       return { rows: [], rowCount: 0 };
@@ -82,7 +92,6 @@ const activate = (
     eventType: EVENT,
     orgId: null,
     graphKey: "astra.authored",
-    agentId: "99999999-9999-9999-9999-999999999999",
     version: 1,
     ...over,
   });
@@ -137,9 +146,17 @@ describe("upsertActiveEventBinding", () => {
     await expect(activate(client)).resolves.toBeTruthy();
   });
 
-  it("lets the same agent replace its own binding", async () => {
-    const client = fakeClient(row({ agent_id: "99999999-9999-9999-9999-999999999999" }));
-    await expect(activate(client)).resolves.toBeTruthy();
+  it("still refuses a different workflow from the same author", async () => {
+    // The owner of a binding is the WORKFLOW, not whoever authored it. This
+    // used to be allowed: the guard also matched on agent id, so one agent
+    // could move an event from one of its workflows to another without being
+    // asked. That is a takeover like any other — the first workflow stops
+    // running — and it now needs the same confirmation.
+    const client = fakeClient(row({ graph_key: "astra.something.else" }));
+    await expect(activate(client)).rejects.toThrow(EventAlreadyBoundError);
+    await expect(
+      activate(client, { allowTakeover: true }),
+    ).resolves.toBeTruthy();
   });
 
   it("binds freely when nothing holds the event", async () => {
@@ -160,7 +177,6 @@ describe("binding an event the hardcoded catalogue has never heard of", () => {
       eventType: NEW_EVENT,
       orgId: null,
       graphKey: "syntra.authored",
-      agentId: "99999999-9999-9999-9999-999999999999",
       version: 1,
       ...over,
     });
@@ -175,7 +191,7 @@ describe("binding an event the hardcoded catalogue has never heard of", () => {
 
   it("still refuses an event nobody has registered", async () => {
     // The catalogue is the authority, so an event that is in neither the
-    // hardcoded list nor `event_schemas` is a typo, not a new trigger.
+    // hardcoded list nor the catalogue is a typo, not a new trigger.
     const client = fakeClient(null, { catalogue: false });
     await expect(activate(client)).rejects.toThrow(/Register it in the event/);
   });
@@ -196,8 +212,12 @@ describe("binding an event the hardcoded catalogue has never heard of", () => {
     await expect(
       activate(client, { moduleQueue: "module.chosen.by.hand" }),
     ).resolves.toBeTruthy();
-    // With a queue given, it never needs to ask the catalogue at all.
-    expect(client.statements.some((q) => /event_schemas/i.test(q))).toBe(false);
+    // With a queue given, it never needs to look the event up in the
+    // catalogue. It still promotes `handling` there afterwards, which is the
+    // write below, not this lookup.
+    expect(
+      client.statements.some((q) => /SELECT 1 FROM authoring.event_catalog/i.test(q)),
+    ).toBe(false);
   });
 
   it("does not consult the catalogue for one of the known eighteen", async () => {
@@ -209,9 +229,10 @@ describe("binding an event the hardcoded catalogue has never heard of", () => {
       eventType: "syntra.resume.received",
       orgId: null,
       graphKey: "resume.intake",
-      agentId: "99999999-9999-9999-9999-999999999999",
       version: 1,
     });
-    expect(client.statements.some((q) => /event_schemas/i.test(q))).toBe(false);
+    expect(
+      client.statements.some((q) => /SELECT 1 FROM authoring.event_catalog/i.test(q)),
+    ).toBe(false);
   });
 });

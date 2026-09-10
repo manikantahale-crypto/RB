@@ -82,7 +82,7 @@ async function bootstrapPgBoss(): Promise<void> {
   );
   console.log(`[Nodes] ${describeNodeRegistry()}`);
   await withPgRetry("worker graph seed", () => compiler.ensureSchemaAndSeed());
-  await withPgRetry("worker failed_workflows", () =>
+  await withPgRetry("worker run_failures", () =>
     ensureFailedWorkflowsTable(pool),
   );
 

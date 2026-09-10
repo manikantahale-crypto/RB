@@ -83,7 +83,10 @@ export async function ensureAuthoringSchema(pool: Pool): Promise<void> {
         );
         await pool.query(`GRANT INSERT ON agent_definitions TO ${role}`);
         await pool.query(
-          `GRANT SELECT, INSERT, UPDATE ON graph_event_bindings TO ${role}`,
+          `GRANT SELECT, INSERT, UPDATE ON authoring.event_bindings TO ${role}`,
+        );
+        await pool.query(
+          `GRANT SELECT ON authoring.graphs, authoring.graph_versions TO ${role}`,
         );
 
         // Stage 2 Compile writes graph_definitions (runtime store).

@@ -14,12 +14,13 @@ async function getRecentPlatformEvents(limit = 20) {
             e.occurred_at,
             e.published_at,
             b.graph_key,
-            b.agent_id::text AS agent_id
+            NULL::text AS agent_id
        FROM event_outbox e
-       LEFT JOIN graph_event_bindings b
-         ON b.event_type = e.event_type
-        AND b.status = 'active'
-        AND b.org_id IS NULL
+       LEFT JOIN authoring.event_bindings eb
+         ON eb.event_type = e.event_type
+        AND eb.status = 'active'
+        AND eb.org_id IS NULL
+       LEFT JOIN authoring.graphs b ON b.id = eb.graph_id
       WHERE e.event_type ~ '^(syntra|astra|orbit)\\.'
          OR e.producer IN ('orchestrator', 'syntra.node-api', 'astra-intake')
       ORDER BY e.occurred_at DESC NULLS LAST
@@ -126,10 +127,16 @@ async function getRecentOrchSteps(limit = 40) {
 
 async function getActiveBindings() {
   const { rows } = await pool.query(
-    `SELECT event_type, graph_key, agent_id::text, source
-       FROM graph_event_bindings
-      WHERE status = 'active'
-        AND org_id IS NULL
+    /**
+     * `agent_id` is gone from the binding — a binding names a workflow now,
+     * not the agent that authored it — so the screen labels the workflow,
+     * which is what the row is actually about.
+     */
+    `SELECT b.event_type, g.graph_key, NULL::text AS agent_id, b.source
+       FROM authoring.event_bindings b
+       JOIN authoring.graphs g ON g.id = b.graph_id
+      WHERE b.status = 'active'
+        AND b.org_id IS NULL
         AND event_type ~ '^(syntra|astra)\\.'
       ORDER BY event_type`,
   );

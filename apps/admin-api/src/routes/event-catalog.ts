@@ -21,6 +21,7 @@
  * column for them. Reported as an empty list rather than faked, and flagged in
  * the response so the UI can say so.
  */
+import { registerEvent } from "@tekisho/authoring";
 import type { Pool } from "pg";
 import { withOrgScope } from "../with-org-scope.js";
 
@@ -188,12 +189,12 @@ export function registerEventCatalogRoutes(app: FastifyLike, pool: Pool): void {
             .code(409)
             .send({ error: "already_exists", eventType });
         }
-        await client.query(
-          `INSERT INTO event_schemas
-             (event_type, schema_version, description, payload_schema, status)
-           VALUES ($1, '1.0', $2, $3::jsonb, 'draft')`,
-          [eventType, description, JSON.stringify(payloadSchema)],
-        );
+        await registerEvent(client, {
+          eventType,
+          description,
+          payloadSchema,
+          status: "draft",
+        });
         return { eventType, status: "draft", created: true };
       });
     } catch (err) {

@@ -684,25 +684,34 @@ WITH envelope AS (
     }
   }'::jsonb AS fields
 )
-INSERT INTO event_schemas (
-  event_type, schema_version, description, payload_schema,
+INSERT INTO authoring.event_catalog (
+  event_type, schema_version, application, description, payload_schema,
   envelope_fields, produced_when, primary_consumer, status
 )
-SELECT s.event_type, '1.0', s.description, s.payload_schema,
-       e.fields, s.produced_when, s.primary_consumer, 'ACTIVE'
+SELECT s.event_type, '1.0',
+       (SELECT a.key FROM platform.applications a
+         WHERE s.event_type LIKE a.key || '.%' LIMIT 1),
+       s.description, s.payload_schema,
+       e.fields, s.produced_when, s.primary_consumer, 'active'
 FROM _seed_event_schemas s
 CROSS JOIN envelope e
 ON CONFLICT (event_type, schema_version) DO UPDATE
   SET description      = EXCLUDED.description,
       produced_when    = EXCLUDED.produced_when,
-      primary_consumer = EXCLUDED.primary_consumer
+      primary_consumer = EXCLUDED.primary_consumer,
+      -- Filled in for rows registered before the column existed. Never
+      -- cleared: an application set by hand outranks a guess from the prefix.
+      application      = coalesce(authoring.event_catalog.application,
+                                  EXCLUDED.application)
       -- payload_schema and envelope_fields are intentionally absent. See header.
+      -- So is `handling`: the catalogue owns it and this file cannot know it.
   -- Skip the write entirely when nothing changed, so the set_updated_at trigger
   -- does not stamp all nine rows on every re-run and updated_at keeps meaning
   -- "when this contract's documentation last actually changed".
-  WHERE event_schemas.description      IS DISTINCT FROM EXCLUDED.description
-     OR event_schemas.produced_when    IS DISTINCT FROM EXCLUDED.produced_when
-     OR event_schemas.primary_consumer IS DISTINCT FROM EXCLUDED.primary_consumer;
+  WHERE authoring.event_catalog.description      IS DISTINCT FROM EXCLUDED.description
+     OR authoring.event_catalog.produced_when    IS DISTINCT FROM EXCLUDED.produced_when
+     OR authoring.event_catalog.primary_consumer IS DISTINCT FROM EXCLUDED.primary_consumer
+     OR authoring.event_catalog.application      IS NULL;
 
 
 -- -----------------------------------------------------------------------------
@@ -718,7 +727,7 @@ BEGIN
   SELECT string_agg(s.event_type, ', ' ORDER BY s.event_type)
     INTO offenders
   FROM _seed_event_schemas s
-  JOIN event_schemas es
+  JOIN authoring.event_catalog es
     ON es.event_type = s.event_type
    AND es.schema_version = '1.0'
   WHERE es.payload_schema <> s.payload_schema;
@@ -732,7 +741,7 @@ BEGIN
       offenders;
   END IF;
 
-  RAISE NOTICE 'event_schemas: % event contracts registered at version 1.0.',
+  RAISE NOTICE 'event catalogue: % event contracts registered at version 1.0.',
     (SELECT count(*) FROM _seed_event_schemas);
 END
 $$;

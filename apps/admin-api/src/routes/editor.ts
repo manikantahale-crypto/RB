@@ -474,9 +474,12 @@ export function registerEditorRoutes(app: FastifyLike, pool: Pool): void {
       }
 
       const { rowCount } = await pool.query(
-        `UPDATE graph_event_bindings
+        `UPDATE authoring.event_bindings b
             SET status = 'retired', updated_at = now()
-          WHERE graph_key = $1 AND status = 'active'`,
+           FROM authoring.graphs g
+          WHERE g.id = b.graph_id
+            AND g.graph_key = $1
+            AND b.status = 'active'`,
         [graphKey],
       );
 

@@ -11,17 +11,20 @@ const pool = new pg.Pool({
 
 // Retire platform match binding so Syntra4 can go live on syntra.match.requested
 const retired = await pool.query(`
-  UPDATE graph_event_bindings
+  UPDATE authoring.event_bindings b
      SET status = 'retired', updated_at = now()
-   WHERE event_type = 'syntra.match.requested'
-     AND status = 'active'
-  RETURNING event_type, graph_key, agent_id::text, status
+    FROM authoring.graphs g
+   WHERE g.id = b.graph_id
+     AND b.event_type = 'syntra.match.requested'
+     AND b.status = 'active'
+  RETURNING b.event_type, g.graph_key, b.status
 `);
 
 const active = await pool.query(`
-  SELECT event_type, graph_key, agent_id::text, status
-    FROM graph_event_bindings
-   WHERE event_type = 'syntra.match.requested' AND status = 'active'
+  SELECT b.event_type, g.graph_key, b.status
+    FROM authoring.event_bindings b
+    JOIN authoring.graphs g ON g.id = b.graph_id
+   WHERE b.event_type = 'syntra.match.requested' AND b.status = 'active'
 `);
 
 console.log(JSON.stringify({ retired: retired.rows, activeMatchBinding: active.rows }, null, 2));

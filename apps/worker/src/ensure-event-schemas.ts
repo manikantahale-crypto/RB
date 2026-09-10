@@ -1,10 +1,11 @@
 import type { Pool } from "pg";
 import { EVENT_TYPES } from "@tekisho/domain";
+import { registerEvent } from "@tekisho/authoring";
 
 /**
- * Ensure syntra.match.requested is registered so ingress can write event_outbox
- * (FK to event_schemas). Idempotent; quiet when already seeded by Flyway
- * R__seed_event_schemas / R__orch_runtime_grants.
+ * Ensure syntra.match.requested is registered so ingress can publish it.
+ * Idempotent; quiet when already seeded by Flyway R__seed_event_schemas /
+ * R__orch_runtime_grants.
  */
 export async function ensureIngressEventSchemas(pool: Pool): Promise<void> {
   const orbitEvents: Array<{ type: string; description: string }> = [
@@ -44,74 +45,39 @@ export async function ensureIngressEventSchemas(pool: Pool): Promise<void> {
 
   for (const ev of orbitEvents) {
     try {
-      await pool.query(
-        `INSERT INTO event_schemas (
-           event_type, schema_version, description, payload_schema,
-           envelope_fields, produced_when, primary_consumer, status
-         )
-         SELECT
-           $1, '1.0', $2,
-           '{"type":"object","additionalProperties":true}'::jsonb,
-           e.envelope_fields,
-           'ORBIT',
-           'orbit workflows',
-           'ACTIVE'
-         FROM event_schemas e
-         WHERE e.schema_version = '1.0'
-         LIMIT 1
-         ON CONFLICT (event_type, schema_version) DO NOTHING`,
-        [ev.type, ev.description],
-      );
+      await registerEvent(pool, {
+        eventType: ev.type,
+        description: ev.description,
+        producedWhen: "ORBIT",
+        primaryConsumer: "orbit workflows",
+      });
     } catch (err: unknown) {
       const message = err instanceof Error ? err.message : String(err);
       if (!/duplicate key|unique constraint|already exists/i.test(message)) {
-        console.warn(`[Bootstrap] orbit event_schema ${ev.type}:`, message);
+        console.warn(`[Bootstrap] orbit event ${ev.type}:`, message);
       }
     }
   }
 
   try {
-    const existing = await pool.query(
-      `SELECT 1 FROM event_schemas
-       WHERE event_type = $1 AND schema_version = '1.0'
-       LIMIT 1`,
-      [EVENT_TYPES.MATCH_REQUESTED],
-    );
-    if ((existing.rowCount ?? 0) > 0) {
-      return;
+    const created = await registerEvent(pool, {
+      eventType: EVENT_TYPES.MATCH_REQUESTED,
+      description:
+        "A job×resume match was requested (Syntra queue or platform ingress).",
+      payloadSchema: {
+        $schema: "https://json-schema.org/draft/2020-12/schema",
+        title: "syntra.match.requested payload",
+        type: "object",
+        additionalProperties: true,
+      },
+      producedWhen: "Match requested",
+      primaryConsumer: "Orchestrator match workflow",
+    });
+    if (created) {
+      console.log(
+        "[Bootstrap] registered the catalogue entry for syntra.match.requested",
+      );
     }
-
-    await pool.query(
-      `INSERT INTO event_schemas (
-         event_type, schema_version, description, payload_schema,
-         envelope_fields, produced_when, primary_consumer, status
-       )
-       SELECT
-         $1,
-         '1.0',
-         'A job×resume match was requested (Syntra queue or platform ingress).',
-         $2::jsonb,
-         e.envelope_fields,
-         'Match requested',
-         'Orchestrator match workflow',
-         'ACTIVE'
-       FROM event_schemas e
-       WHERE e.schema_version = '1.0'
-       LIMIT 1
-       ON CONFLICT (event_type, schema_version) DO NOTHING`,
-      [
-        EVENT_TYPES.MATCH_REQUESTED,
-        JSON.stringify({
-          $schema: "https://json-schema.org/draft/2020-12/schema",
-          title: "syntra.match.requested payload",
-          type: "object",
-          additionalProperties: true,
-        }),
-      ],
-    );
-    console.log(
-      "[Bootstrap] registered event_schemas row for syntra.match.requested",
-    );
   } catch (err: unknown) {
     const message = err instanceof Error ? err.message : String(err);
     if (/duplicate key|unique constraint|already exists/i.test(message)) {
@@ -120,7 +86,7 @@ export async function ensureIngressEventSchemas(pool: Pool): Promise<void> {
     console.warn(
       "[Bootstrap] ensureIngressEventSchemas:",
       message,
-      "— if match ingress fails FK, run Flyway R__seed_event_schemas.sql / grant-orch-runtime.sql as postgres",
+      "— if match ingress fails its FK, run Flyway R__seed_event_schemas.sql / grant-orch-runtime.sql as postgres",
     );
   }
 }

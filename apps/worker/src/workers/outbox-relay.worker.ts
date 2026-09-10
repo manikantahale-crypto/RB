@@ -131,7 +131,7 @@ export async function relayOnce(
      */
     const boundEvents = await client
       .query<{ event_type: string }>(
-        `SELECT DISTINCT event_type FROM graph_event_bindings WHERE status = 'active'`,
+        `SELECT DISTINCT event_type FROM authoring.event_bindings WHERE status = 'active'`,
       )
       .then((r) => new Set(r.rows.map((x) => x.event_type)))
       .catch(() => new Set<string>());

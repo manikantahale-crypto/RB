@@ -85,9 +85,9 @@ export async function startModuleWorkers(args: {
    */
   const bound = await pool
     .query<{ module_queue: string }>(
-      `SELECT DISTINCT module_queue
-         FROM graph_event_bindings
-        WHERE status = 'active' AND module_queue IS NOT NULL`,
+      `SELECT DISTINCT queue_key AS module_queue
+         FROM authoring.event_bindings
+        WHERE status = 'active'`,
     )
     .then((r) => r.rows.map((x) => x.module_queue))
     .catch(() => [] as string[]);

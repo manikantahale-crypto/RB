@@ -90,7 +90,7 @@ export async function handlePlatformDispatchEvent(args: {
       pinned_payload: envelope as unknown as Record<string, unknown>,
     });
     console.log(
-      `[Dispatcher] agent_run.failed → failed_workflows (${envelope.event_id})`,
+      `[Dispatcher] agent_run.failed → orch.run_failures (${envelope.event_id})`,
     );
     return 'recorded_fail';
   }

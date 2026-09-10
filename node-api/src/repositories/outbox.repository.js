@@ -28,14 +28,26 @@ const PLATFORM_EVENT_TYPES = [
 ];
 
 /**
- * Seed event_schemas so event_outbox FK inserts succeed (orch Flyway may already have these).
+ * Seed the event catalogue so outbox inserts satisfy their FK (orch Flyway may
+ * already have these).
+ *
+ * `application` is derived from the name prefix the one way the platform does
+ * it, rather than left NULL — see registerEvent in packages/authoring. These
+ * rows reach the legacy public.event_schemas, which is what the outbox FK
+ * still points at, through the mirror in V20260909.34.
  */
 async function seedEventSchemas() {
   for (const eventType of PLATFORM_EVENT_TYPES) {
     await pool.query(
-      `INSERT INTO public.event_schemas (
-         event_type, schema_version, description, payload_schema, envelope_fields, status
-       ) VALUES ($1, '1.0', $2, '{}'::jsonb, '{}'::jsonb, 'ACTIVE')
+      `INSERT INTO authoring.event_catalog (
+         event_type, schema_version, application, description,
+         payload_schema, envelope_fields, status
+       ) VALUES (
+         $1, '1.0',
+         (SELECT a.key FROM platform.applications a
+           WHERE $1 LIKE a.key || '.%' LIMIT 1),
+         $2, '{}'::jsonb, '{}'::jsonb, 'active'
+       )
        ON CONFLICT (event_type, schema_version) DO NOTHING`,
       [eventType, `Syntra platform event: ${eventType}`],
     );

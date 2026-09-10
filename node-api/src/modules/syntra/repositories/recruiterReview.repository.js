@@ -3,33 +3,33 @@ const crypto = require("crypto");
 
 let schemaReady = null;
 
+/**
+ * The table is built by packages/db/migrations. This only checks.
+ *
+ * It used to CREATE TABLE IF NOT EXISTS, and that cost real work. When
+ * V20260909.31 renamed the table to `review_queue`, a node-api still running
+ * the previous code booted, found no `syntra.recruiter_review_items`, and made
+ * itself an empty one. The dedupe in findExistingBySourceEvent then had
+ * nothing to find, so 204 review items that already existed were created a
+ * second time — silently, into a table no migration knew about.
+ *
+ * That is the whole argument against a process authoring its own schema, and
+ * this was the last place still doing it. The other six were removed in
+ * "Stop the running code creating its own schema"; this one lives under
+ * node-api/ and the sweep only covered packages/ and apps/.
+ */
 async function ensureSchema() {
   if (schemaReady) return schemaReady;
-  schemaReady = pool.query(`
-    CREATE TABLE IF NOT EXISTS syntra.review_queue (
-      id              uuid PRIMARY KEY DEFAULT gen_random_uuid(),
-      user_id         uuid,
-      organization_id uuid,
-      action_type     text NOT NULL,
-      status          text NOT NULL DEFAULT 'pending'
-                        CHECK (status IN ('pending', 'approved', 'rejected', 'dismissed')),
-      title           text NOT NULL,
-      message         text NOT NULL,
-      payload         jsonb NOT NULL DEFAULT '{}'::jsonb,
-      source_event_type text,
-      source_event_id uuid,
-      created_at      timestamptz NOT NULL DEFAULT now(),
-      decided_at      timestamptz,
-      decided_by      uuid,
-      decision_note   text
-    );
-    CREATE INDEX IF NOT EXISTS recruiter_review_pending_user_idx
-      ON syntra.review_queue (user_id, status, created_at DESC)
-      WHERE status = 'pending';
-    CREATE INDEX IF NOT EXISTS recruiter_review_source_event_idx
-      ON syntra.review_queue (source_event_id)
-      WHERE source_event_id IS NOT NULL;
-  `);
+  schemaReady = pool
+    .query(`SELECT to_regclass('syntra.review_queue') IS NOT NULL AS present`)
+    .then(({ rows }) => {
+      if (!rows[0]?.present) {
+        throw new Error(
+          "syntra.review_queue is missing. Apply packages/db/migrations " +
+            "before starting node-api.",
+        );
+      }
+    });
   return schemaReady;
 }
 

@@ -93,8 +93,10 @@ export {
   loadEventCatalog,
   loadEventSchemaDetail,
   formatEventCatalogForPrompt,
+  registerEvent,
   type EventCatalogEntry,
   type EventSchemaDetail,
+  type RegisterEventArgs,
 } from "./event-catalog.js";
 export {
   buildGraphSystemPrompt,

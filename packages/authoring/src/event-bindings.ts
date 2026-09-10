@@ -14,33 +14,47 @@ export type EventBindingRow = {
   org_id: string | null;
   graph_key: string;
   module_queue: string;
-  agent_id: string | null;
   version: number | null;
   status: string;
   source: string;
 };
 
+/** One projection, so the org-scoped and global reads cannot drift apart. */
+const BINDING_SELECT = `
+  SELECT b.id::text AS id, b.event_type, b.org_id::text AS org_id,
+         g.graph_key, b.queue_key AS module_queue,
+         v.version, b.status, b.source
+    FROM authoring.event_bindings b
+    JOIN authoring.graphs g ON g.id = b.graph_id
+    LEFT JOIN authoring.graph_versions v ON v.id = b.pinned_version_id`;
+
 /**
- * Resolve active binding for ingress.
- * Prefers org-scoped row, else global (org_id IS NULL).
- * Returns null when nothing is active — caller must NOT fall back to code.
- */
-/**
- * STILL READS public.graph_event_bindings, ON PURPOSE.
+ * Resolve the active binding for ingress. Prefers the org-scoped row, else the
+ * global one (org_id IS NULL). Returns null when nothing is active — the
+ * caller must NOT fall back to code.
  *
- * Every other read in admin-api moved to authoring.event_bindings. This one
- * cannot yet: it returns `agent_id`, and `upsertActiveEventBinding` below uses
- * it for the rule that lets an agent replace its own binding without a
- * confirmation. authoring.event_bindings has no such column, deliberately —
- * agent_id belongs to the older agent_* model, which is parked rather than
- * migrated, and adding it here would drag that model into the new schema.
+ * The binding is a row in `authoring.event_bindings`, presented under the
+ * names the callers already use.
  *
- * The router does not depend on this path any more: it resolves through
- * authoring.event_bindings via the routing table, and falls back here only
- * when that table has not loaded. So this is a fallback reading the old
- * source, which is the right way round.
+ * Three columns are reassembled rather than stored: `graph_key` comes from
+ * `authoring.graphs`, `module_queue` is `queue_key`, and `version` is the
+ * number of the pinned version, or NULL for a binding that follows whichever
+ * version is live.
  *
- * It moves when the agent_* question is answered.
+ * `agent_id` IS GONE, AND THAT IS THE POINT.
+ *
+ * A binding used to name the agent that authored it, because Builder's unit of
+ * authorship was an agent. The unit is now a workflow, and the new table has
+ * no agent column on purpose: the agent_* model is being retired with the old
+ * project, and giving it a column here would carry it forward.
+ *
+ * The one rule that read it — an agent may replace its own binding without a
+ * confirmation — is now matched on the graph key, which was already the half
+ * of that rule doing the work. See the note on `sameOwner` below.
+ *
+ * The legacy public.graph_event_bindings is kept in step by the mirror in
+ * V20260909.36, so RELAY, INTERVIEW and node-api's activity screen still
+ * resolve while they are on the old table.
  */
 export async function resolveActiveEventBinding(
   db: DbQueryable,
@@ -49,12 +63,10 @@ export async function resolveActiveEventBinding(
 ): Promise<EventBindingRow | null> {
   if (organizationId) {
     const org = await db.query<EventBindingRow & QueryResultRow>(
-      `SELECT id, event_type, org_id::text, graph_key, module_queue,
-              agent_id::text, version, status, source
-         FROM graph_event_bindings
-        WHERE event_type = $1
-          AND org_id = $2::uuid
-          AND status = 'active'
+      `${BINDING_SELECT}
+        WHERE b.event_type = $1
+          AND b.org_id = $2::uuid
+          AND b.status = 'active'
         LIMIT 1`,
       [eventType, organizationId],
     );
@@ -62,12 +74,10 @@ export async function resolveActiveEventBinding(
   }
 
   const global = await db.query<EventBindingRow & QueryResultRow>(
-    `SELECT id, event_type, org_id::text, graph_key, module_queue,
-            agent_id::text, version, status, source
-       FROM graph_event_bindings
-      WHERE event_type = $1
-        AND org_id IS NULL
-        AND status = 'active'
+    `${BINDING_SELECT}
+      WHERE b.event_type = $1
+        AND b.org_id IS NULL
+        AND b.status = 'active'
       LIMIT 1`,
     [eventType],
   );
@@ -81,7 +91,6 @@ function normalize(row: EventBindingRow & QueryResultRow): EventBindingRow {
     org_id: row.org_id == null ? null : String(row.org_id),
     graph_key: String(row.graph_key),
     module_queue: String(row.module_queue),
-    agent_id: row.agent_id == null ? null : String(row.agent_id),
     version: row.version == null ? null : Number(row.version),
     status: String(row.status),
     source: String(row.source),
@@ -92,20 +101,18 @@ export class EventAlreadyBoundError extends Error {
   readonly code = "EVENT_ALREADY_BOUND";
   constructor(
     public readonly eventType: string,
-    public readonly existingAgentId: string | null,
     public readonly existingGraphKey: string,
     /** Where the current holder came from: a migration, or somebody authoring. */
     public readonly existingSource: string = "authoring",
   ) {
     super(
       `Event "${eventType}" is already bound to graph "${existingGraphKey}"` +
-        (existingAgentId ? ` (agent ${existingAgentId})` : "") +
         (existingSource === "seed"
           ? `. That binding was created by a migration and is what runs in ` +
             `production today — taking it over stops "${existingGraphKey}" ` +
             `from running at all. Confirm the takeover, or trigger this ` +
             `workflow from a different event.`
-          : `. Retire or rebind that agent before activating another.`),
+          : `. Retire or rebind that workflow before activating another.`),
     );
     this.name = "EventAlreadyBoundError";
   }
@@ -136,12 +143,11 @@ async function deriveModuleQueue(
 
   if (application) {
     const { rows } = await client.query<{ module_queue: string }>(
-      `SELECT module_queue, count(*) AS n
-         FROM graph_event_bindings
+      `SELECT queue_key AS module_queue, count(*) AS n
+         FROM authoring.event_bindings
         WHERE status = 'active'
           AND event_type LIKE $1
-          AND module_queue IS NOT NULL
-        GROUP BY module_queue
+        GROUP BY queue_key
         ORDER BY n DESC
         LIMIT 1`,
       [`${application}.%`],
@@ -184,7 +190,6 @@ export async function upsertActiveEventBinding(
     orgId: string | null;
     graphKey: string;
     moduleQueue?: string;
-    agentId: string;
     version: number;
     /**
      * Take the event from whoever holds it, stopping their workflow.
@@ -214,7 +219,7 @@ export async function upsertActiveEventBinding(
 
   if (!moduleQueue) {
     const { rows: known } = await client.query(
-      `SELECT 1 FROM event_schemas WHERE event_type = $1 LIMIT 1`,
+      `SELECT 1 FROM authoring.event_catalog WHERE event_type = $1 LIMIT 1`,
       [args.eventType],
     );
     if (known.length === 0) {
@@ -233,29 +238,63 @@ export async function upsertActiveEventBinding(
   /**
    * Replacing your own binding is not a takeover.
    *
-   * Matched on the graph key as well as the agent, because an authored
-   * workflow re-activating over its own seeded row is the same workflow
-   * getting a new version — the common case, and refusing it would make every
-   * seeded workflow permanently unpublishable.
+   * The owner is the workflow. This used to also match on the agent id, and
+   * that half never decided anything the graph key had not already decided:
+   * an authored workflow re-activating over its own seeded row is the same
+   * workflow getting a new version — the common case, and refusing it would
+   * make every seeded workflow permanently unpublishable.
    */
-  const sameOwner =
-    existing !== null &&
-    ((existing.agent_id !== null && existing.agent_id === args.agentId) ||
-      existing.graph_key === args.graphKey);
+  const sameOwner = existing !== null && existing.graph_key === args.graphKey;
 
   if (existing && !sameOwner && !args.allowTakeover) {
     throw new EventAlreadyBoundError(
       args.eventType,
-      existing.agent_id,
       existing.graph_key,
       existing.source,
     );
   }
 
+  /**
+   * The workflow this binding points at has to exist before the binding can.
+   *
+   * A binding naming a workflow nobody has authored was representable in the
+   * old table — graph_key was just text — and it is not here, because
+   * `graph_id` is a foreign key. That is the point: the two ways a binding
+   * could silently do nothing were a queue nothing served and a graph key
+   * nothing matched, and both are now constraints rather than surprises.
+   */
+  const { rows: graphRows } = await client.query<{ id: string }>(
+    `SELECT id::text AS id FROM authoring.graphs
+      WHERE graph_key = $1
+        AND org_id IS NOT DISTINCT FROM $2::uuid
+      LIMIT 1`,
+    [args.graphKey, orgId],
+  );
+  const graphId = graphRows[0]?.id;
+  if (!graphId) {
+    throw new Error(
+      `No workflow named "${args.graphKey}" in this scope. Save it before ` +
+        `binding an event to it.`,
+    );
+  }
+
+  /**
+   * The queue is a foreign key too, and a queue nobody has declared is exactly
+   * how RELAY's bindings ended up on doors onto nothing. Declaring it here is
+   * safe now that the module worker subscribes to whatever queues active
+   * bindings name.
+   */
+  await client.query(
+    `INSERT INTO platform.queues (key, description)
+     VALUES ($1, 'Declared by a binding')
+     ON CONFLICT (key) DO NOTHING`,
+    [moduleQueue],
+  );
+
   // Retire all active for this event+scope (including seed) before insert.
   if (orgId === null) {
     await client.query(
-      `UPDATE graph_event_bindings
+      `UPDATE authoring.event_bindings
           SET status = 'retired', updated_at = now()
         WHERE event_type = $1
           AND org_id IS NULL
@@ -264,7 +303,7 @@ export async function upsertActiveEventBinding(
     );
   } else {
     await client.query(
-      `UPDATE graph_event_bindings
+      `UPDATE authoring.event_bindings
           SET status = 'retired', updated_at = now()
         WHERE event_type = $1
           AND org_id = $2::uuid
@@ -274,19 +313,44 @@ export async function upsertActiveEventBinding(
   }
 
   const inserted = await client.query<EventBindingRow & QueryResultRow>(
-    `INSERT INTO graph_event_bindings (
-       event_type, org_id, graph_key, module_queue, agent_id, version, status, source
-     ) VALUES ($1, $2::uuid, $3, $4, $5::uuid, $6, 'active', 'authoring')
-     RETURNING id, event_type, org_id::text, graph_key, module_queue,
-               agent_id::text, version, status, source`,
-    [
-      args.eventType,
-      orgId,
-      args.graphKey,
-      moduleQueue,
-      args.agentId,
-      args.version,
-    ],
+    `WITH pinned AS (
+       SELECT v.id FROM authoring.graph_versions v
+        WHERE v.graph_id = $3::uuid AND v.version = $5
+     ), inserted AS (
+       INSERT INTO authoring.event_bindings (
+         event_type, org_id, graph_id, queue_key, consuming_application,
+         pinned_version_id, status, source
+       )
+       SELECT $1, $2::uuid, $3::uuid, $4,
+              (SELECT q.application FROM platform.queues q WHERE q.key = $4),
+              (SELECT id FROM pinned),
+              'active', 'authoring'
+       RETURNING id, event_type, org_id, graph_id, queue_key,
+                 pinned_version_id, status, source
+     )
+     SELECT i.id::text AS id, i.event_type, i.org_id::text AS org_id,
+            g.graph_key, i.queue_key AS module_queue,
+            v.version, i.status, i.source
+       FROM inserted i
+       JOIN authoring.graphs g ON g.id = i.graph_id
+       LEFT JOIN authoring.graph_versions v ON v.id = i.pinned_version_id`,
+    [args.eventType, orgId, graphId, moduleQueue, args.version],
+  );
+
+  /**
+   * A bound event is a routed event.
+   *
+   * `handling` is what the router consults to decide whether an event starts a
+   * workflow or is merely acknowledged, and a newly registered event defaults
+   * to `terminal`. Binding a workflow to it is precisely the act that makes it
+   * `graph` — so the promotion happens here, in the same transaction, rather
+   * than being a second thing somebody has to remember.
+   */
+  await client.query(
+    `UPDATE authoring.event_catalog
+        SET handling = 'graph', updated_at = now()
+      WHERE event_type = $1 AND handling <> 'graph'`,
+    [args.eventType],
   );
 
   return normalize(inserted.rows[0]!);
@@ -306,11 +370,11 @@ export async function ensureEventBindingsSchema(pool: Pool): Promise<void> {
   // one-active index that decides what routes, so two definitions of it is
   // two definitions of the routing rule.
   const { rows } = await pool.query<{ present: boolean }>(
-    `SELECT to_regclass('public.graph_event_bindings') IS NOT NULL AS present`,
+    `SELECT to_regclass('authoring.event_bindings') IS NOT NULL AS present`,
   );
   if (!rows[0]?.present) {
     throw new Error(
-      "[authoring] graph_event_bindings is missing. Apply " +
+      "[authoring] authoring.event_bindings is missing. Apply " +
         "packages/db/migrations before starting.",
     );
   }
@@ -319,66 +383,80 @@ export async function ensureEventBindingsSchema(pool: Pool): Promise<void> {
     eventType: string;
     graphKey: string;
     moduleQueue: string;
-    agentId: string;
   }> = [
     {
       eventType: "syntra.jd.received",
       graphKey: "syntra.jd.workflow",
       moduleQueue: "module.syntra.jd",
-      agentId: "01900000-0000-7000-8000-000000000501",
     },
     {
       eventType: "syntra.resume.received",
       graphKey: "resume.intake",
       moduleQueue: "module.design.resume",
-      agentId: "01900000-0000-7000-8000-000000000502",
     },
     {
       eventType: "syntra.match.requested",
       graphKey: "syntra.match.workflow",
       moduleQueue: "module.syntra.match",
-      agentId: "01900000-0000-7000-8000-000000000501",
     },
     {
       eventType: "syntra.duplicate.review_required",
       graphKey: "duplicate.review",
       moduleQueue: "module.design.duplicate",
-      agentId: "01900000-0000-7000-8000-000000000502",
     },
     {
       eventType: "syntra.jd.parsed",
       graphKey: "syntra.continuous.match",
       moduleQueue: "module.syntra.match",
-      agentId: "01900000-0000-7000-8000-000000000501",
     },
     {
       eventType: "syntra.profile.prepared",
       graphKey: "syntra.duplicate.detect",
       moduleQueue: "module.design.duplicate",
-      agentId: "01900000-0000-7000-8000-000000000502",
     },
   ];
 
   for (const s of seeds) {
     await pool.query(
-      `INSERT INTO graph_event_bindings (
-         event_type, org_id, graph_key, module_queue, agent_id, version, status, source
+      `INSERT INTO platform.queues (key, description)
+       VALUES ($1, 'Declared by a day-1 binding')
+       ON CONFLICT (key) DO NOTHING`,
+      [s.moduleQueue],
+    );
+
+    /**
+     * Skipped, not invented, when the workflow is not there.
+     *
+     * `graph_id` is a foreign key, so a seed naming a workflow nobody has
+     * authored cannot be written at all — and creating an empty graph to hold
+     * it would hide the fault rather than fix it.
+     */
+    await pool.query(
+      `INSERT INTO authoring.event_bindings (
+         event_type, org_id, graph_id, queue_key, consuming_application,
+         status, source
        )
-       SELECT $1, NULL, $2, $3, $4::uuid, 1, 'active', 'seed'
-       WHERE NOT EXISTS (
-         SELECT 1 FROM graph_event_bindings b
-          WHERE b.event_type = $1
-            AND b.org_id IS NULL
-            AND b.status = 'active'
-       )`,
-      [s.eventType, s.graphKey, s.moduleQueue, s.agentId],
+       SELECT $1, NULL, g.id, $3,
+              (SELECT q.application FROM platform.queues q WHERE q.key = $3),
+              'active', 'seed'
+         FROM authoring.graphs g
+        WHERE g.graph_key = $2
+          AND g.org_id IS NULL
+          AND NOT EXISTS (
+            SELECT 1 FROM authoring.event_bindings b
+             WHERE b.event_type = $1
+               AND b.org_id IS NULL
+               AND b.status = 'active'
+          )
+        LIMIT 1`,
+      [s.eventType, s.graphKey, s.moduleQueue],
     );
   }
 
   for (const role of ["syntra_app", "syntra_relay"]) {
     try {
       await pool.query(
-        `GRANT SELECT, INSERT, UPDATE ON graph_event_bindings TO ${role}`,
+        `GRANT SELECT, INSERT, UPDATE ON authoring.event_bindings TO ${role}`,
       );
     } catch {
       /* role may not exist */
