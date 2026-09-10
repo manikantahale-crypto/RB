@@ -8,156 +8,70 @@ import { defaultDraftPolicyForTemplate } from "./product-agent-defaults.js";
  * No FKs here — migrator may lack REFERENCES on agent_definitions / organizations;
  * Flyway V12–V14 own the full schema with FKs when applied.
  */
+/**
+ * The six tables the authoring layer cannot start without.
+ *
+ * Named here rather than created here. See the note on ensureAuthoringSchema.
+ */
+const REQUIRED_TABLES = [
+  "agent_policies",
+  "agent_versions",
+  "agent_templates",
+  "graph_definitions",
+  "graph_versions",
+  "admin_agent_entitlements",
+] as const;
+
+/**
+ * Fail loudly if the schema is not there, instead of building a guess of it.
+ *
+ * The message names the fix, because the person who sees this is usually
+ * setting up a new environment and does not yet know how migrations are run
+ * here.
+ */
+async function assertAuthoringTables(pool: Pool): Promise<void> {
+  const { rows } = await pool.query<{ missing: string[] }>(
+    `SELECT coalesce(array_agg(t), '{}') AS missing
+       FROM unnest($1::text[]) AS t
+      WHERE to_regclass('public.' || t) IS NULL`,
+    [REQUIRED_TABLES as unknown as string[]],
+  );
+
+  const missing = rows[0]?.missing ?? [];
+  if (missing.length > 0) {
+    throw new Error(
+      `[authoring] missing ${missing.length} table(s): ${missing.join(", ")}.\n` +
+        `The schema comes from packages/db/migrations. Apply them first:\n` +
+        `  flyway -url=... migrate      (or psql -f each V*.sql in order)\n` +
+        `Verify with scripts/rebuild-check.sh.`,
+    );
+  }
+}
+
+/**
+ * Grants, row-level security and seed data for the authoring layer.
+ *
+ * IT NO LONGER CREATES TABLES, AND THAT IS THE POINT.
+ *
+ * It used to, with CREATE TABLE IF NOT EXISTS, because Flyway had never run
+ * against this database and something had to make the app work. Its own
+ * comment said as much: "Flyway V12-V14 own the full schema with FKs when
+ * applied." They were not applied, so this was the schema, and the database
+ * ended up with three authors — hand-pasted SQL, migration files nobody ran,
+ * and this function — none of which agreed.
+ *
+ * That is fixed: the migrations now build the database from empty, checked on
+ * every push by the `schema` job and locally by scripts/rebuild-check.sh.
+ *
+ * Creating tables here would undo it. A CREATE TABLE IF NOT EXISTS silently
+ * accepts a table whose shape it did not create, and silently invents one that
+ * no migration knows about — which is exactly how a column ends up existing in
+ * production and in no file. So this now checks and refuses.
+ */
 export async function ensureAuthoringSchema(pool: Pool): Promise<void> {
+  await assertAuthoringTables(pool);
+
   try {
-    await pool.query(`
-      CREATE TABLE IF NOT EXISTS agent_policies (
-        id            uuid PRIMARY KEY DEFAULT gen_random_uuid(),
-        org_id        uuid,
-        agent_id      uuid NOT NULL,
-        policy        jsonb NOT NULL,
-        status        text NOT NULL DEFAULT 'draft'
-                      CHECK (status IN ('draft', 'generated', 'pending_go_live', 'compiled', 'published', 'active')),
-        version       int  NOT NULL,
-        checksum      text,
-        created_by    text NOT NULL,
-        created_at    timestamptz NOT NULL DEFAULT now(),
-        updated_at    timestamptz NOT NULL DEFAULT now()
-      )
-    `);
-
-    await pool.query(`
-      CREATE UNIQUE INDEX IF NOT EXISTS agent_policies_key_version_scope
-        ON agent_policies (agent_id, version, COALESCE(org_id::text, '~global~'));
-      CREATE UNIQUE INDEX IF NOT EXISTS agent_policies_one_active
-        ON agent_policies (agent_id, COALESCE(org_id::text, '~global~'))
-        WHERE status = 'active';
-      CREATE INDEX IF NOT EXISTS agent_policies_agent_lookup
-        ON agent_policies (agent_id, status);
-    `);
-
-    // Widen status CHECK if tables already existed without pending_go_live (local ensure).
-    await widenAuthoringStatusChecks(pool);
-
-    await pool.query(`
-      CREATE TABLE IF NOT EXISTS agent_versions (
-        id              uuid PRIMARY KEY DEFAULT gen_random_uuid(),
-        agent_id        uuid NOT NULL,
-        org_id          uuid,
-        policy_id       uuid NOT NULL,
-        version         int  NOT NULL,
-        artifact_ref    text NOT NULL,
-        artifact_source text NOT NULL,
-        checksum        text NOT NULL,
-        status          text NOT NULL
-                        CHECK (status IN ('draft', 'generated', 'pending_go_live', 'compiled', 'published', 'active')),
-        generated_by    text NOT NULL,
-        generated_at    timestamptz NOT NULL DEFAULT now(),
-        meta            jsonb NOT NULL DEFAULT '{}'::jsonb
-      )
-    `);
-
-    await pool.query(`
-      ALTER TABLE agent_versions
-        ADD COLUMN IF NOT EXISTS meta jsonb NOT NULL DEFAULT '{}'::jsonb
-    `).catch(() => {
-      /* ignore */
-    });
-
-    await pool.query(`
-      CREATE UNIQUE INDEX IF NOT EXISTS agent_versions_key_version_scope
-        ON agent_versions (agent_id, version, COALESCE(org_id::text, '~global~'));
-      CREATE INDEX IF NOT EXISTS agent_versions_policy_lookup
-        ON agent_versions (policy_id);
-    `);
-
-    await pool.query(`
-      CREATE TABLE IF NOT EXISTS agent_templates (
-        id            uuid PRIMARY KEY DEFAULT gen_random_uuid(),
-        agent_key     text NOT NULL,
-        agent_id      uuid,
-        display_name  text NOT NULL,
-        version       int  NOT NULL DEFAULT 1,
-        template      jsonb NOT NULL,
-        is_active     boolean NOT NULL DEFAULT true,
-        created_at    timestamptz NOT NULL DEFAULT now(),
-        updated_at    timestamptz NOT NULL DEFAULT now(),
-        CONSTRAINT agent_templates_key_version_key UNIQUE (agent_key, version)
-      )
-    `);
-
-    await pool.query(`
-      CREATE UNIQUE INDEX IF NOT EXISTS agent_templates_one_active
-        ON agent_templates (agent_key)
-        WHERE is_active = true;
-      CREATE INDEX IF NOT EXISTS agent_templates_agent_id_lookup
-        ON agent_templates (agent_id)
-        WHERE agent_id IS NOT NULL;
-    `);
-
-    // Stage 2 Compile store (runtime-owned in prod environments).
-    // If Flyway runtime migrations haven't run yet, create the minimal tables
-    // so the admin API compile endpoint can persist artifacts.
-    await pool.query(`
-      CREATE TABLE IF NOT EXISTS graph_definitions (
-        id            text PRIMARY KEY,
-        org_id        text, -- NULL = global default
-        graph_key     text NOT NULL,
-        version       int  NOT NULL,
-        definition    jsonb NOT NULL,
-        checksum      text NOT NULL,
-        status        text NOT NULL DEFAULT 'draft'
-                      CHECK (status IN ('draft', 'active', 'retired')),
-        created_by    text NOT NULL,
-        created_at    timestamptz NOT NULL DEFAULT now(),
-        activated_at  timestamptz
-      );
-      CREATE UNIQUE INDEX IF NOT EXISTS graph_definitions_key_version_scope
-        ON graph_definitions (graph_key, version, COALESCE(org_id, '~global~'));
-      CREATE UNIQUE INDEX IF NOT EXISTS graph_definitions_one_active
-        ON graph_definitions (graph_key, COALESCE(org_id, '~global~'))
-        WHERE status = 'active';
-      CREATE INDEX IF NOT EXISTS graph_definitions_lookup
-        ON graph_definitions (graph_key, status);
-    `);
-
-    await pool.query(`
-      CREATE TABLE IF NOT EXISTS admin_agent_entitlements (
-        id         uuid PRIMARY KEY DEFAULT gen_random_uuid(),
-        admin_id   text NOT NULL,
-        agent_id   uuid NOT NULL,
-        org_id     uuid,
-        can_edit   boolean NOT NULL DEFAULT true,
-        created_at timestamptz NOT NULL DEFAULT now()
-      )
-    `);
-
-    await pool.query(`
-      CREATE UNIQUE INDEX IF NOT EXISTS admin_agent_entitlements_scope
-        ON admin_agent_entitlements (admin_id, agent_id, COALESCE(org_id::text, '~global~'));
-      CREATE INDEX IF NOT EXISTS admin_agent_entitlements_admin
-        ON admin_agent_entitlements (admin_id);
-    `);
-
-    // Stage 2 Compile store (runtime-owned in prod environments).
-    // We create it here best-effort so `POST /agents/:id/compile` works in local/dev
-    // even when Flyway migrations haven't been applied.
-    await pool.query(`
-      CREATE TABLE IF NOT EXISTS graph_versions (
-        id            uuid PRIMARY KEY DEFAULT gen_random_uuid(),
-        org_id        text,
-        graph_id      text NOT NULL,
-        graph_key     text NOT NULL,
-        version       int  NOT NULL,
-        definition    jsonb NOT NULL,
-        checksum      text NOT NULL,
-        status        text NOT NULL DEFAULT 'compiled'
-                      CHECK (status IN ('draft', 'compiled', 'published', 'active', 'retired')),
-        compiled_by  text NOT NULL,
-        compiled_at  timestamptz NOT NULL DEFAULT now()
-      )
-    `);
-
     for (const role of ["syntra_app", "syntra_relay", "syntra_migrator"]) {
       try {
         await pool.query(
