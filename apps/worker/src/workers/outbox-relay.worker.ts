@@ -94,7 +94,7 @@ export async function relayOnce(
       `SELECT id, event_id, event_type, schema_version, organization_id,
               aggregate_type, aggregate_id, correlation_id, causation_id,
               producer, payload_ref, occurred_at
-         FROM event_outbox
+         FROM orch.event_outbox
         WHERE published_at IS NULL
         ORDER BY id
         FOR UPDATE SKIP LOCKED
@@ -209,7 +209,7 @@ export async function relayOnce(
     }
 
     await client.query(
-      `UPDATE event_outbox
+      `UPDATE orch.event_outbox
           SET published_at = now()
         WHERE id = ANY($1::bigint[])`,
       [publishedIds],
@@ -266,12 +266,16 @@ async function checkOutboxRelayPrivileges(pool: Pool): Promise<string | null> {
       can_update: boolean;
     }>(`
       SELECT current_user,
-             has_table_privilege(current_user, 'event_outbox', 'update') AS can_update
+             -- Schema-qualified deliberately. Unqualified, this resolves by
+             -- search_path to the compatibility VIEW public.event_outbox, and
+             -- a privilege on the view says nothing about the table the relay
+             -- actually locks rows in.
+             has_table_privilege(current_user, 'orch.event_outbox', 'update') AS can_update
     `);
     const { current_user: dbUser, can_update: canUpdate } = rows[0]!;
     if (!canUpdate) {
       return (
-        `Outbox relay DB role "${dbUser}" lacks UPDATE on event_outbox ` +
+        `Outbox relay DB role "${dbUser}" lacks UPDATE on orch.event_outbox ` +
         `(SELECT ... FOR UPDATE + mark published_at both need it). ` +
         `Prefer shared migrator pool (leave DATABASE_RELAY_URL empty) after ` +
         `packages/db/scripts/grant-orch-runtime.sql, or set DATABASE_RELAY_URL to syntra_relay.`
@@ -281,7 +285,7 @@ async function checkOutboxRelayPrivileges(pool: Pool): Promise<string | null> {
     await client.query("BEGIN");
     try {
       await client.query(`
-        SELECT id FROM event_outbox
+        SELECT id FROM orch.event_outbox
          WHERE published_at IS NULL
          ORDER BY id
          FOR UPDATE SKIP LOCKED
@@ -293,7 +297,7 @@ async function checkOutboxRelayPrivileges(pool: Pool): Promise<string | null> {
       await client.query("ROLLBACK");
       const message = error instanceof Error ? error.message : String(error);
       return (
-        `Outbox relay cannot lock event_outbox rows as "${dbUser}": ${message}. ` +
+        `Outbox relay cannot lock orch.event_outbox rows as "${dbUser}": ${message}. ` +
         `Under FORCE RLS the role also needs an UPDATE policy ` +
         `(see packages/db/scripts/grant-orch-runtime.sql).`
       );

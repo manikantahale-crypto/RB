@@ -8,7 +8,7 @@ try {
 } catch (e) {
   console.log("organizations error:", e.message);
   const t = await p.query(
-    `SELECT column_name, is_nullable FROM information_schema.columns WHERE table_name='event_outbox' AND column_name='organization_id'`,
+    `SELECT column_name, is_nullable FROM information_schema.columns WHERE table_schema='orch' AND table_name='event_outbox' AND column_name='organization_id'`,
   );
   console.log(t.rows);
 }

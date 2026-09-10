@@ -36,7 +36,7 @@ export async function acceptPlatformEvent(
     envelope.organization_id,
     async (client) => {
       const result = await client.query(
-        `INSERT INTO event_outbox (
+        `INSERT INTO orch.event_outbox (
            event_id, event_type, schema_version, organization_id,
            aggregate_type, aggregate_id, correlation_id, causation_id,
            producer, payload_ref, published_at

@@ -133,7 +133,7 @@ async function cleanup(client: PoolClient, s: Scratch): Promise<string[]> {
   if (ml.rowCount) removed.push(`scoring_log:${ml.rowCount}`);
 
   const ob = await client.query(
-    `DELETE FROM event_outbox
+    `DELETE FROM orch.event_outbox
       WHERE occurred_at > now() - interval '10 minutes'
         AND (${ids.map((_, i) => `payload_ref::text LIKE '%'||$${i + 1}||'%'`).join(" OR ")})`,
     ids,

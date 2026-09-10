@@ -73,7 +73,7 @@ async function insertEvent(client, {
   const corrId = correlationId || crypto.randomUUID();
 
   const sql = `
-    INSERT INTO public.event_outbox (
+    INSERT INTO orch.event_outbox (
       event_id,
       event_type,
       schema_version,

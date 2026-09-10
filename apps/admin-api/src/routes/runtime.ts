@@ -17,12 +17,12 @@ async function loadTrace(pool: Pool, eventId: string) {
     `SELECT event_id, event_type, organization_id, correlation_id,
             aggregate_type, aggregate_id, producer, payload_ref,
             occurred_at, published_at, causation_id
-       FROM event_outbox
+       FROM orch.event_outbox
       WHERE event_id::text = $1
          OR causation_id::text = $1
          OR (
            correlation_id::text = (
-             SELECT correlation_id::text FROM event_outbox
+             SELECT correlation_id::text FROM orch.event_outbox
               WHERE event_id::text = $1 LIMIT 1
            )
          )
@@ -254,11 +254,11 @@ export function registerRuntimeRoutes(app: FastifyLike, pool: Pool): void {
           `SELECT event_id::text AS event_id, event_type, producer,
                   occurred_at, causation_id::text AS causation_id,
                   correlation_id::text AS correlation_id
-             FROM event_outbox
+             FROM orch.event_outbox
             WHERE event_id::text = ANY($1::text[])
                OR causation_id::text = ANY($1::text[])
                OR correlation_id::text IN (
-                    SELECT correlation_id::text FROM event_outbox
+                    SELECT correlation_id::text FROM orch.event_outbox
                      WHERE event_id::text = ANY($1::text[])
                   )
             ORDER BY occurred_at ASC NULLS LAST
@@ -648,7 +648,7 @@ export function registerRuntimeRoutes(app: FastifyLike, pool: Pool): void {
            count(*) FILTER (WHERE event_type = 'astra.requirement.scored')::int AS astra_scored,
            count(*) FILTER (WHERE event_type = 'syntra.jd.parsed')::int AS syntra_parsed,
            count(*) FILTER (WHERE event_type = 'syntra.approval.requested')::int AS human_gates
-         FROM event_outbox
+         FROM orch.event_outbox
          WHERE occurred_at > now() - interval '14 days'`,
       );
       const recent = await pool.query(

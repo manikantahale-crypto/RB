@@ -253,7 +253,7 @@ export class WorkflowRunner {
     await withOrgConnection(this.pool, event.organization_id, async (client) => {
       for (const generatedEvent of events) {
         await client.query(
-          `INSERT INTO event_outbox (
+          `INSERT INTO orch.event_outbox (
             event_id, event_type, schema_version, organization_id,
             aggregate_type, aggregate_id, correlation_id, causation_id,
             producer, payload_ref

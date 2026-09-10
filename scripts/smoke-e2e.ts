@@ -37,7 +37,7 @@ async function resolveOrgId(pool: pg.Pool): Promise<string> {
   try {
     const fromOutbox = await pool.query<{ id: string }>(
       `SELECT organization_id::text AS id
-       FROM event_outbox
+       FROM orch.event_outbox
        WHERE organization_id IS NOT NULL
        ORDER BY occurred_at DESC NULLS LAST
        LIMIT 1`,

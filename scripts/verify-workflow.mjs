@@ -83,7 +83,7 @@ for (const eventType of ["syntra.jd.parsed", "syntra.match.requested", "syntra.p
 const outbox = await pool.query(`
   SELECT event_type, COUNT(*)::int AS n,
          COUNT(*) FILTER (WHERE published_at IS NULL)::int AS pending
-    FROM event_outbox
+    FROM orch.event_outbox
    WHERE event_type LIKE 'syntra.%'
      AND occurred_at > now() - interval '7 days'
    GROUP BY event_type
@@ -99,7 +99,7 @@ if (outbox.rows.some((r) => r.event_type === "syntra.jd.parsed" && r.n > 0)) {
 }
 
 const pending = await pool.query(
-  `SELECT COUNT(*)::int AS n FROM event_outbox WHERE published_at IS NULL`,
+  `SELECT COUNT(*)::int AS n FROM orch.event_outbox WHERE published_at IS NULL`,
 );
 if (pending.rows[0].n > 0) {
   warn("outbox relay", `${pending.rows[0].n} unpublished row(s) — is npm run dev:worker running?`);

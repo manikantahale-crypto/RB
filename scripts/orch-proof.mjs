@@ -48,11 +48,11 @@ async function printProof() {
   console.log(`Orch API (${ORCH}): ${orchOk ? "✓ UP" : "✗ DOWN — run npm run dev:orch-api"}`);
 
   const pending = await pool.query(
-    `SELECT count(*)::int AS n FROM event_outbox
+    `SELECT count(*)::int AS n FROM orch.event_outbox
       WHERE published_at IS NULL AND occurred_at > now() - interval '2 hours'`,
   );
   const relayed = await pool.query(
-    `SELECT count(*)::int AS n, max(published_at) AS last_at FROM event_outbox
+    `SELECT count(*)::int AS n, max(published_at) AS last_at FROM orch.event_outbox
       WHERE published_at > now() - interval '15 minutes'`,
   );
   const runs = await pool.query(
@@ -92,7 +92,7 @@ async function printProof() {
   const events = await pool.query(
     `SELECT e.event_type, e.producer, e.published_at IS NOT NULL AS relayed,
             e.occurred_at, b.graph_key, b.agent_id::text
-       FROM event_outbox e
+       FROM orch.event_outbox e
        LEFT JOIN graph_event_bindings b
          ON b.event_type=e.event_type AND b.status='active' AND b.org_id IS NULL
       WHERE e.event_type ~ '^(syntra|astra|orbit)\\.'

@@ -8,7 +8,7 @@ async function check() {
     ssl: { rejectUnauthorized: false }
   });
 
-  const res = await pool.query('SELECT * FROM event_outbox ORDER BY occurred_at DESC LIMIT 5');
+  const res = await pool.query('SELECT * FROM orch.event_outbox ORDER BY occurred_at DESC LIMIT 5');
   console.log(JSON.stringify(res.rows, null, 2));
   await pool.end();
 }

@@ -133,7 +133,7 @@ async function syncHumanEventsFromOutbox(organizationId) {
   const { rows } = await pool.query(
     `SELECT event_id::text, event_type, organization_id::text,
             payload_ref, correlation_id::text, occurred_at
-       FROM event_outbox
+       FROM orch.event_outbox
       WHERE event_type IN (
               'syntra.approval.requested',
               'syntra.duplicate.review_required'

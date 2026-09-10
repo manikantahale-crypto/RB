@@ -183,7 +183,7 @@ export function registerLiveTestRoutes(app: FastifyLike, pool: Pool): void {
                 producer,
                 occurred_at,
                 payload_ref
-           FROM event_outbox
+           FROM orch.event_outbox
           WHERE event_type = $1
           ORDER BY id DESC
           LIMIT 10`,
@@ -319,7 +319,7 @@ export function registerLiveTestRoutes(app: FastifyLike, pool: Pool): void {
 
       // No run. Either it has not been routed yet, or nothing was listening.
       const { rows: out } = await pool.query(
-        `SELECT published_at FROM event_outbox WHERE event_id::text = $1 LIMIT 1`,
+        `SELECT published_at FROM orch.event_outbox WHERE event_id::text = $1 LIMIT 1`,
         [eventId],
       );
       if (out.length === 0) return { state: "unknown" };

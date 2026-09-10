@@ -757,7 +757,7 @@ export function registerProposeRoutes(
              FROM ${EVENT_SCHEMAS} s
              LEFT JOIN (
                SELECT event_type, count(*) AS n
-                 FROM event_outbox
+                 FROM orch.event_outbox
                 GROUP BY event_type
              ) p ON p.event_type = s.event_type
             ORDER BY s.event_type`,

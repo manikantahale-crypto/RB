@@ -262,7 +262,7 @@ export function registerWorkflowRoutes(app: FastifyLike, pool: Pool): void {
             (SELECT min(d.version) FROM ${GRAPH_DEFINITIONS} d
               WHERE d.graph_key = r.graph_key) AS only_version
           FROM orch.runs r
-          LEFT JOIN event_outbox o ON o.event_id = r.trigger_event_id
+          LEFT JOIN orch.event_outbox o ON o.event_id = r.trigger_event_id
           WHERE r.graph_key = $1${statusPredicate}${searchPredicate}
           ORDER BY r.created_at DESC
           LIMIT $2
@@ -387,7 +387,7 @@ export function registerWorkflowRoutes(app: FastifyLike, pool: Pool): void {
             r.langgraph_thread_id,
             r.started_at, r.completed_at, r.error
           FROM orch.runs r
-          LEFT JOIN event_outbox o ON o.event_id = r.trigger_event_id
+          LEFT JOIN orch.event_outbox o ON o.event_id = r.trigger_event_id
           WHERE r.id = $1::uuid
           `,
           [runId],

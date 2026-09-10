@@ -27,7 +27,7 @@ const { rows: jobs } = await pool.query(
     WHERE j.processed_at IS NOT NULL
       AND j.processing_failed_at IS NULL
       AND NOT EXISTS (
-            SELECT 1 FROM event_outbox e
+            SELECT 1 FROM orch.event_outbox e
              WHERE e.event_type = 'syntra.jd.parsed'
                AND e.aggregate_id = j.id
           )

@@ -11,7 +11,7 @@ async function main() {
   const corr = process.argv[2]!;
   const r = await pool.query(
     `SELECT event_id::text, event_type, published_at IS NOT NULL AS published
-       FROM event_outbox WHERE correlation_id = $1::uuid ORDER BY occurred_at`,
+       FROM orch.event_outbox WHERE correlation_id = $1::uuid ORDER BY occurred_at`,
     [corr],
   );
   console.table(r.rows);
@@ -19,7 +19,7 @@ async function main() {
     `SELECT id::text, graph_key, status, trigger_event_id::text
        FROM orch.runs
       WHERE trigger_event_id IN (
-        SELECT event_id FROM event_outbox WHERE correlation_id = $1::uuid
+        SELECT event_id FROM orch.event_outbox WHERE correlation_id = $1::uuid
       )
       ORDER BY started_at`,
     [corr],
@@ -29,7 +29,7 @@ async function main() {
     `SELECT s.seq, s.node, s.status, s.latency_ms, r.graph_key
        FROM orch.steps s JOIN orch.runs r ON r.id = s.run_id
       WHERE r.trigger_event_id IN (
-        SELECT event_id FROM event_outbox WHERE correlation_id = $1::uuid
+        SELECT event_id FROM orch.event_outbox WHERE correlation_id = $1::uuid
       )
       ORDER BY r.started_at, s.seq`,
     [corr],

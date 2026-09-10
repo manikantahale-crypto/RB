@@ -83,7 +83,7 @@ export function registerEventCatalogRoutes(app: FastifyLike, pool: Pool): void {
                           ORDER BY t.n DESC), '[]'::jsonb)
               FROM (
                 SELECT o.producer, count(*) AS n
-                FROM event_outbox o
+                FROM orch.event_outbox o
                 WHERE o.event_type = s.event_type AND o.producer IS NOT NULL
                 GROUP BY o.producer
               ) t

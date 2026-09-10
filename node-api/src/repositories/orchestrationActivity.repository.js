@@ -15,7 +15,7 @@ async function getRecentPlatformEvents(limit = 20) {
             e.published_at,
             b.graph_key,
             NULL::text AS agent_id
-       FROM event_outbox e
+       FROM orch.event_outbox e
        LEFT JOIN authoring.event_bindings eb
          ON eb.event_type = e.event_type
         AND eb.status = 'active'
@@ -59,13 +59,13 @@ async function getRecentOrchRuns(limit = 15) {
 async function getWorkerHealth() {
   const pending = await pool.query(
     `SELECT count(*)::int AS n
-       FROM event_outbox
+       FROM orch.event_outbox
       WHERE published_at IS NULL
         AND occurred_at > now() - interval '2 hours'`,
   );
   const recentPublished = await pool.query(
     `SELECT count(*)::int AS n, max(published_at) AS last_published
-       FROM event_outbox
+       FROM orch.event_outbox
       WHERE published_at IS NOT NULL
         AND published_at > now() - interval '15 minutes'`,
   );

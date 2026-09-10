@@ -287,12 +287,12 @@ export async function loadTraceByEventId(
     `SELECT event_id, event_type, organization_id, correlation_id,
             aggregate_type, aggregate_id, producer, payload_ref,
             occurred_at, published_at, causation_id
-     FROM event_outbox
+     FROM orch.event_outbox
      WHERE event_id::text = $1
         OR causation_id::text = $1
         OR (
           correlation_id::text = (
-            SELECT correlation_id::text FROM event_outbox
+            SELECT correlation_id::text FROM orch.event_outbox
             WHERE event_id::text = $1 LIMIT 1
           )
           AND (event_id::text = $1 OR producer = 'orchestrator')

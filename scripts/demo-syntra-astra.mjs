@@ -174,7 +174,7 @@ async function printRecentOutbox(limit = 12) {
     const events = await pool.query(
       `SELECT event_type, producer, occurred_at::text,
               published_at IS NOT NULL AS published
-         FROM event_outbox
+         FROM orch.event_outbox
         ORDER BY occurred_at DESC
         LIMIT $1`,
       [limit],
