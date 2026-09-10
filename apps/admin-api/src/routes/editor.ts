@@ -156,12 +156,17 @@ export function registerEditorRoutes(app: FastifyLike, pool: Pool): void {
   /**
    * POST /workflows/:graphKey/draft
    *
-   * Start editing: copy the active version's topology into a new draft at
-   * `max(version) + 1`. The active row is not touched.
+   * Start editing: copy the active version's topology into the workflow's
+   * draft. The active row is not touched.
+   *
+   * The draft sits at version 0 — the reserved working-copy slot — because a
+   * draft is not a version. Versions are allocated when a workflow is
+   * published, which is the only point at which the number means something: it
+   * is what a run pins and what a rollback returns to.
    *
    * If a draft already exists, that one is returned instead of stacking a
-   * second — one draft per workflow keeps "which draft am I looking at"
-   * from becoming a question.
+   * second — one draft per workflow keeps "which draft am I looking at" from
+   * becoming a question.
    */
   app.post("/workflows/:graphKey/draft", async (req: any, reply: any) => {
     const graphKey = String(req.params?.graphKey ?? "");
@@ -170,10 +175,13 @@ export function registerEditorRoutes(app: FastifyLike, pool: Pool): void {
 
     try {
       return await withOrgScope(pool, orgId, async (client) => {
+        // Newest, not highest-numbered. Drafts created from here on carry
+        // version 0 (see below), so ordering by version would keep returning a
+        // stale draft from before that change.
         const existing = await client.query(
           `SELECT version FROM graph_definitions
             WHERE graph_key = $1 AND status = 'draft' AND org_id IS NULL
-            ORDER BY version DESC LIMIT 1`,
+            ORDER BY created_at DESC LIMIT 1`,
           [graphKey],
         );
         if (existing.rows[0]) {
@@ -198,12 +206,25 @@ export function registerEditorRoutes(app: FastifyLike, pool: Pool): void {
           });
         }
 
-        const next = await client.query(
-          `SELECT coalesce(max(version), 0) + 1 AS v FROM graph_definitions
-            WHERE graph_key = $1`,
-          [graphKey],
-        );
-        const version = Number(next.rows[0].v);
+        /**
+         * A DRAFT IS NOT A VERSION.
+         *
+         * This used to allocate max(version) + 1, so merely opening the editor
+         * consumed a version number. `syntra.authored` reached version 124
+         * with one active version and 32 abandoned drafts — 123 numbers spent
+         * on editing sessions, and a binding pointing at a number that means
+         * nothing.
+         *
+         * Drafts now sit at version 0, the reserved "working copy" slot. A
+         * version is allocated when the workflow is PUBLISHED, which is the
+         * only moment a version means anything: it is what a run pins and what
+         * a rollback goes back to.
+         *
+         * This is also what makes the row map onto authoring.graph_drafts,
+         * which holds exactly one draft per workflow and has no version column
+         * at all.
+         */
+        const version = 0;
         const definition = source.rows[0].definition;
 
         await client.query(
@@ -211,7 +232,7 @@ export function registerEditorRoutes(app: FastifyLike, pool: Pool): void {
              (id, org_id, graph_key, version, definition, checksum, status, created_by)
            VALUES ($1, NULL, $2, $3, $4::jsonb, $5, 'draft', $6)`,
           [
-            `${graphKey}@${version}`,
+            `${graphKey}@draft`,
             graphKey,
             version,
             JSON.stringify(definition),
