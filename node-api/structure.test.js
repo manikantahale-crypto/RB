@@ -15,10 +15,11 @@
  *      LOAD time in CommonJS, so loading the app proves the whole graph
  *   2. the module boundaries hold — no application reaching into another
  *
- * The second is the rule from `docs/module-code-structure.md`. A convention
- * nobody checks is not a rule: `adapters/README.md` promised a `registry:check`
- * that was never written, and ORBIT's controllers drifted out of
- * `services/orbit/` while nothing complained.
+ * The second is the first rule module teams are given: your module never
+ * imports another module. A convention nobody checks is not a rule —
+ * `adapters/README.md` promised a `registry:check` that was never written until
+ * recently, and ORBIT's controllers drifted out of `services/orbit/` while
+ * nothing complained.
  *
  * NO DATABASE IS NEEDED. `config/env.js` throws without `DATABASE_URL`, but
  * `config/db.js` builds its Pool lazily and only connects inside a function, so
