@@ -21,11 +21,11 @@ export async function ensureFailedWorkflowsTable(
   // process that creates its own tables is a second author of the schema, and
   // the two drift without either side noticing.
   const { rows } = await client.query<{ present: boolean }>(
-    `SELECT to_regclass('public.failed_workflows') IS NOT NULL AS present`,
+    `SELECT to_regclass('orch.run_failures') IS NOT NULL AS present`,
   );
   if (!rows[0]?.present) {
     throw new Error(
-      "[orch] failed_workflows is missing. Apply packages/db/migrations " +
+      "[orch] orch.run_failures is missing. Apply packages/db/migrations " +
         "before starting the worker.",
     );
   }
@@ -39,7 +39,7 @@ export async function recordFailedWorkflow(
   const id = uuidv4();
   await ensureFailedWorkflowsTable(pool);
   await pool.query(
-    `INSERT INTO failed_workflows (
+    `INSERT INTO orch.run_failures (
        id, organization_id, event_id, thread_id, graph_key, graph_version,
        queue, error_class, error_message, pinned_payload
      ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10::jsonb)`,
@@ -70,7 +70,7 @@ export async function loadFailedWorkflowForReplay(
   const { rows } = await pool.query(
     `SELECT organization_id, event_id, thread_id, graph_key, graph_version,
             queue, error_class, error_message, pinned_payload
-     FROM failed_workflows WHERE id = $1`,
+     FROM orch.run_failures WHERE id = $1`,
     [failedId],
   );
   const r = rows[0];
@@ -93,7 +93,7 @@ export async function markFailedWorkflowReplayed(
   failedId: string,
 ): Promise<void> {
   await pool.query(
-    `UPDATE failed_workflows SET replayed_at = now() WHERE id = $1`,
+    `UPDATE orch.run_failures SET replayed_at = now() WHERE id = $1`,
     [failedId],
   );
 }

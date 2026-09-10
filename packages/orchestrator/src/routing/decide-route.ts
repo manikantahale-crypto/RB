@@ -55,7 +55,7 @@ export type ActiveBinding = {
  * skipped just because a workflow is also bound:
  *
  *   - `resume` unparks a waiting human gate via the resume-thread queue
- *   - `fail`   records the run in failed_workflows so it can be replayed
+ *   - `fail`   records the run in orch.run_failures so it can be replayed
  *   - `terminal` acknowledges, which is all it ever did
  *
  * So a bound `fail` event now goes to BOTH: the failure is recorded AND the

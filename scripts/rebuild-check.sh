@@ -63,7 +63,10 @@ SCHEMAS="--schema=app --schema=platform --schema=core --schema=authoring --schem
 # line, because the column definitions inside its CREATE TABLE do not mention
 # the table name.
 SCHEMAS="$SCHEMAS --exclude-table=public.flyway_schema_history"
-PGURL="$(cd "$REPO" && node -e "require('dotenv').config();process.stdout.write(process.env.DATABASE_URL||'')")"
+# .env by default. An exported DATABASE_URL wins, which is how you point this
+# at the transaction pooler (port 6543) when the running services have taken
+# all fifteen session-mode slots and pg_dump cannot get one.
+PGURL="${DATABASE_URL:-$(cd "$REPO" && node -e "require('dotenv').config();process.stdout.write(process.env.DATABASE_URL||'')")}"
 
 A="$(mktemp)"; B="$(mktemp)"
 trap 'rm -f "$A" "$B"; cleanup' EXIT
