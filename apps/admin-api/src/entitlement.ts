@@ -18,7 +18,7 @@ export async function canEditAgent(
     args.orgId === null
       ? await db.query<{ org_id: string | null; can_edit: boolean }>(
           `SELECT org_id, can_edit
-             FROM admin_agent_entitlements
+             FROM builder.admin_agent_entitlements
             WHERE admin_id = $1
               AND agent_id = $2
               AND org_id IS NULL`,
@@ -26,7 +26,7 @@ export async function canEditAgent(
         )
       : await db.query<{ org_id: string | null; can_edit: boolean }>(
           `SELECT org_id, can_edit
-             FROM admin_agent_entitlements
+             FROM builder.admin_agent_entitlements
             WHERE admin_id = $1
               AND agent_id = $2
               AND (org_id IS NULL OR org_id = $3)`,
@@ -58,7 +58,7 @@ export async function editableAgentIds(
     orgId === null
       ? await db.query<{ agent_id: string; org_id: string | null; can_edit: boolean }>(
           `SELECT agent_id, org_id, can_edit
-             FROM admin_agent_entitlements
+             FROM builder.admin_agent_entitlements
             WHERE admin_id = $1
               AND org_id IS NULL
               AND agent_id = ANY($2::uuid[])`,
@@ -66,7 +66,7 @@ export async function editableAgentIds(
         )
       : await db.query<{ agent_id: string; org_id: string | null; can_edit: boolean }>(
           `SELECT agent_id, org_id, can_edit
-             FROM admin_agent_entitlements
+             FROM builder.admin_agent_entitlements
             WHERE admin_id = $1
               AND (org_id IS NULL OR org_id = $2)
               AND agent_id = ANY($3::uuid[])`,

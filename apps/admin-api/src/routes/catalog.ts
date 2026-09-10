@@ -198,27 +198,27 @@ export function registerCatalogAndCreateRoutes(
           }>(
             orgId === null
               ? `SELECT d.purpose, p.policy, t.template
-                   FROM agent_definitions d
+                   FROM builder.agent_definitions d
                    LEFT JOIN LATERAL (
-                     SELECT policy FROM agent_policies
+                     SELECT policy FROM builder.agent_policies
                       WHERE agent_id = d.id AND org_id IS NULL
                       ORDER BY version DESC LIMIT 1
                    ) p ON true
                    LEFT JOIN LATERAL (
-                     SELECT template FROM agent_templates
+                     SELECT template FROM builder.agent_templates
                       WHERE agent_id = d.id AND is_active = true
                       ORDER BY version DESC LIMIT 1
                    ) t ON true
                   WHERE d.id = $1::uuid`
               : `SELECT d.purpose, p.policy, t.template
-                   FROM agent_definitions d
+                   FROM builder.agent_definitions d
                    LEFT JOIN LATERAL (
-                     SELECT policy FROM agent_policies
+                     SELECT policy FROM builder.agent_policies
                       WHERE agent_id = d.id AND (org_id = $2 OR org_id IS NULL)
                       ORDER BY (org_id IS NOT NULL) DESC, version DESC LIMIT 1
                    ) p ON true
                    LEFT JOIN LATERAL (
-                     SELECT template FROM agent_templates
+                     SELECT template FROM builder.agent_templates
                       WHERE agent_id = d.id AND is_active = true
                       ORDER BY version DESC LIMIT 1
                    ) t ON true
@@ -254,7 +254,7 @@ export function registerCatalogAndCreateRoutes(
           policy_ext: string | null;
         }>(
           `SELECT template
-             FROM agent_templates
+             FROM builder.agent_templates
             WHERE agent_key = $1 AND is_active = true
             ORDER BY version DESC
             LIMIT 1`,
@@ -283,7 +283,7 @@ export function registerCatalogAndCreateRoutes(
           : "SyntraPolicyExt";
 
       await client.query(
-        `INSERT INTO agent_definitions (
+        `INSERT INTO builder.agent_definitions (
            id, name, version, purpose, system_prompt_ref,
            allowed_tools, autonomy, model_config, is_active
          ) VALUES (
@@ -319,7 +319,7 @@ export function registerCatalogAndCreateRoutes(
       };
 
       await client.query(
-        `INSERT INTO agent_templates (
+        `INSERT INTO builder.agent_templates (
            id, agent_key, agent_id, display_name, version, template, is_active
          ) VALUES (
            gen_random_uuid(), $1, $2::uuid, $3, 1, $4::jsonb, true
@@ -328,7 +328,7 @@ export function registerCatalogAndCreateRoutes(
       );
 
       await client.query(
-        `INSERT INTO admin_agent_entitlements (admin_id, agent_id, org_id, can_edit)
+        `INSERT INTO builder.admin_agent_entitlements (admin_id, agent_id, org_id, can_edit)
          VALUES ($1, $2::uuid, $3::uuid, true)`,
         [adminId, agentId, orgId],
       );
@@ -367,7 +367,7 @@ export function registerCatalogAndCreateRoutes(
       }
 
       await client.query(
-        `INSERT INTO agent_policies (
+        `INSERT INTO builder.agent_policies (
            id, org_id, agent_id, policy, status, version, created_by
          ) VALUES (
            gen_random_uuid(), $1::uuid, $2::uuid, $3::jsonb, 'draft', 1, $4

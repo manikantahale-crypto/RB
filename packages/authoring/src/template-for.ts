@@ -25,7 +25,7 @@ export async function templateFor(
 ): Promise<LoadedTemplate | null> {
   const { rows } = await db.query(
     `SELECT id, agent_key, agent_id, display_name, version, template
-       FROM agent_templates
+       FROM builder.agent_templates
       WHERE agent_key = $1 AND is_active = true
       ORDER BY version DESC
       LIMIT 1`,
@@ -57,7 +57,7 @@ export async function templateForAgentId(
 ): Promise<LoadedTemplate | null> {
   const { rows } = await db.query(
     `SELECT id, agent_key, agent_id, display_name, version, template
-       FROM agent_templates
+       FROM builder.agent_templates
       WHERE agent_id = $1 AND is_active = true
       ORDER BY version DESC
       LIMIT 1`,
@@ -91,7 +91,7 @@ export async function templateForAgentId(
 export async function listActiveTemplates(db: Db): Promise<LoadedTemplate[]> {
   const { rows } = await db.query(
     `SELECT id, agent_key, agent_id, display_name, version, template
-       FROM agent_templates
+       FROM builder.agent_templates
       WHERE is_active = true
       ORDER BY agent_key`,
   );

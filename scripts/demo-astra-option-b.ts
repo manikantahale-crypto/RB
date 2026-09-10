@@ -110,7 +110,7 @@ const astraTemplate: AgentTemplate = {
 
 async function alignDb() {
   await pool.query(
-    `UPDATE agent_definitions
+    `UPDATE builder.agent_definitions
         SET allowed_tools = $1::jsonb,
             purpose = $2,
             updated_at = now()
@@ -123,7 +123,7 @@ async function alignDb() {
   );
 
   await pool.query(
-    `UPDATE agent_policies
+    `UPDATE builder.agent_policies
         SET policy = $1::jsonb,
             updated_at = now()
       WHERE agent_id = $2
@@ -133,7 +133,7 @@ async function alignDb() {
   );
 
   await pool.query(
-    `UPDATE agent_templates
+    `UPDATE builder.agent_templates
         SET template = $1::jsonb,
             display_name = $2,
             version = 3,
@@ -159,12 +159,12 @@ async function alignDb() {
 
   try {
     const av = await pool.query(
-      `SELECT COALESCE(MAX(version), 0) AS v FROM agent_versions WHERE agent_id = $1`,
+      `SELECT COALESCE(MAX(version), 0) AS v FROM builder.agent_versions WHERE agent_id = $1`,
       [ASTRA_ID],
     );
     const nextV = Number(av.rows[0].v) + 1;
     await pool.query(
-      `INSERT INTO agent_versions (
+      `INSERT INTO builder.agent_versions (
          org_id, agent_id, version, artifact_source, checksum, status, created_by
        ) VALUES (NULL, $1, $2, $3, $4, 'generated', 'demo-astra-v3')`,
       [ASTRA_ID, nextV, gen.source, gen.checksum],
@@ -209,7 +209,7 @@ async function alignDb() {
             policy->>'minConfidence' AS min_confidence,
             policy->>'passMin' AS pass_min,
             policy->>'humanMin' AS human_min
-       FROM agent_policies
+       FROM builder.agent_policies
       WHERE agent_id = $1 AND org_id IS NULL AND version = 1`,
     [ASTRA_ID],
   );

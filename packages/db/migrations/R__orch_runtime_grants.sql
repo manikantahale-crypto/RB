@@ -46,7 +46,7 @@ $$;
 
 DO $$
 BEGIN
-  EXECUTE 'GRANT SELECT ON TABLE agent_definitions TO syntra_migrator';
+  EXECUTE 'GRANT SELECT ON TABLE builder.agent_definitions TO syntra_migrator';
   EXECUTE 'GRANT SELECT, INSERT ON TABLE authoring.event_catalog TO syntra_migrator';
   EXECUTE 'GRANT SELECT, INSERT, UPDATE ON TABLE agent_runs TO syntra_migrator';
   EXECUTE 'GRANT SELECT, INSERT, UPDATE ON TABLE agent_steps TO syntra_migrator';

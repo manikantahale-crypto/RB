@@ -5,7 +5,7 @@
 -- Authoring templates live in R__seed_agent_templates.sql (agent_templates ids 604–609).
 -- =============================================================================
 
-INSERT INTO agent_definitions (
+INSERT INTO builder.agent_definitions (
   id, name, version, purpose, system_prompt_ref,
   allowed_tools, autonomy, model_config, is_active
 ) VALUES

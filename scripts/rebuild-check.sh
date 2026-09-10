@@ -54,7 +54,7 @@ echo "  applied $APPLIED"
 echo "→ dumping both"
 # Every schema this system owns. ADD NEW ONES HERE as the migration
 # proceeds — core, authoring — or the check silently stops covering them.
-SCHEMAS="--schema=app --schema=platform --schema=core --schema=authoring --schema=public --schema=syntra --schema=orch --schema=relay --schema=interview_agent"
+SCHEMAS="--schema=app --schema=platform --schema=core --schema=authoring --schema=builder --schema=public --schema=syntra --schema=orch --schema=relay --schema=interview_agent"
 
 # Flyway's own bookkeeping. It exists in production because `flyway baseline`
 # created it, and never in a freshly built database until Flyway runs there

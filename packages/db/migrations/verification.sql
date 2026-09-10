@@ -18,7 +18,7 @@ WHERE table_schema = 'public'
 ORDER BY table_name;
 
 -- Seed counts.
-SELECT 'agent_definitions' AS object, count(*) AS rows FROM agent_definitions
+SELECT 'agent_definitions' AS object, count(*) AS rows FROM builder.agent_definitions
 UNION ALL SELECT 'channels', count(*) FROM channels
 UNION ALL SELECT 'event_schemas', count(*) FROM event_schemas
 UNION ALL SELECT 'matching_policies', count(*) FROM matching_policies

@@ -57,22 +57,22 @@ export function registerBuilderOverviewRoutes(app: FastifyLike, pool: Pool): voi
           geb.version AS binding_version,
           geb.module_queue AS binding_queue,
           geb.source AS binding_source
-        FROM agent_definitions d
+        FROM builder.agent_definitions d
         LEFT JOIN LATERAL (
           SELECT display_name, agent_key
-            FROM agent_templates
+            FROM builder.agent_templates
            WHERE agent_id = d.id AND is_active = true
            ORDER BY version DESC LIMIT 1
         ) t ON true
         LEFT JOIN LATERAL (
           SELECT status, version, policy
-            FROM agent_policies
+            FROM builder.agent_policies
            WHERE agent_id = d.id AND (${scopePred})
            ORDER BY ${scopeOrder} LIMIT 1
         ) p ON true
         LEFT JOIN LATERAL (
           SELECT version, artifact_source, status, checksum
-            FROM agent_versions
+            FROM builder.agent_versions
            WHERE agent_id = d.id AND (${scopePred})
            ORDER BY generated_at DESC NULLS LAST, version DESC
            LIMIT 1

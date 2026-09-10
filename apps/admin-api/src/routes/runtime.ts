@@ -144,8 +144,8 @@ export function registerRuntimeRoutes(app: FastifyLike, pool: Pool): void {
         `SELECT v.id, v.version, v.status, v.checksum, v.generated_at, v.generated_by,
                 v.artifact_ref, v.artifact_source, v.meta, v.policy_id,
                 p.policy AS policy_json
-           FROM agent_versions v
-           LEFT JOIN agent_policies p ON p.id = v.policy_id
+           FROM builder.agent_versions v
+           LEFT JOIN builder.agent_policies p ON p.id = v.policy_id
           WHERE v.agent_id = $1::uuid
           ORDER BY v.version DESC
           LIMIT 30`,
@@ -163,9 +163,9 @@ export function registerRuntimeRoutes(app: FastifyLike, pool: Pool): void {
 
       const agent = await pool.query(
         `SELECT d.id, d.name, t.agent_key
-           FROM agent_definitions d
+           FROM builder.agent_definitions d
            LEFT JOIN LATERAL (
-             SELECT agent_key FROM agent_templates
+             SELECT agent_key FROM builder.agent_templates
               WHERE agent_id = d.id AND is_active = true
               ORDER BY version DESC LIMIT 1
            ) t ON true
@@ -628,7 +628,7 @@ export function registerRuntimeRoutes(app: FastifyLike, pool: Pool): void {
           LIMIT 20`,
       );
       const graphsGenerated = await pool.query(
-        `SELECT count(*)::int AS n FROM agent_versions
+        `SELECT count(*)::int AS n FROM builder.agent_versions
           WHERE status IN ('generated', 'pending_go_live', 'compiled', 'published', 'active')`,
       );
       const graphsActive = await pool.query(

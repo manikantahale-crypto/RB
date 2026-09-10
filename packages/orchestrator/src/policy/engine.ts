@@ -93,7 +93,7 @@ export class PolicyEngine {
     try {
       const { rows } = await this.pool.query(
         `SELECT id, name, version, autonomy, allowed_tools, model_config
-         FROM agent_definitions
+         FROM builder.agent_definitions
          WHERE name = $1 AND is_active = true
          LIMIT 1`,
         [name],

@@ -128,10 +128,10 @@ export async function ensureAuthoringSchema(pool: Pool): Promise<void> {
 async function widenAuthoringStatusChecks(pool: Pool): Promise<void> {
   try {
     await pool.query(
-      `ALTER TABLE agent_policies DROP CONSTRAINT IF EXISTS agent_policies_status_check`,
+      `ALTER TABLE builder.agent_policies DROP CONSTRAINT IF EXISTS agent_policies_status_check`,
     );
     await pool.query(`
-      ALTER TABLE agent_policies
+      ALTER TABLE builder.agent_policies
         ADD CONSTRAINT agent_policies_status_check
         CHECK (status IN (
           'draft', 'generated', 'pending_go_live', 'compiled', 'published', 'active'
@@ -142,10 +142,10 @@ async function widenAuthoringStatusChecks(pool: Pool): Promise<void> {
   }
   try {
     await pool.query(
-      `ALTER TABLE agent_versions DROP CONSTRAINT IF EXISTS agent_versions_status_check`,
+      `ALTER TABLE builder.agent_versions DROP CONSTRAINT IF EXISTS agent_versions_status_check`,
     );
     await pool.query(`
-      ALTER TABLE agent_versions
+      ALTER TABLE builder.agent_versions
         ADD CONSTRAINT agent_versions_status_check
         CHECK (status IN (
           'draft', 'generated', 'pending_go_live', 'compiled', 'published', 'active'
@@ -171,7 +171,7 @@ export async function seedAgentTemplates(pool: Pool): Promise<void> {
     ];
 
     const updated = await pool.query(
-      `UPDATE agent_templates
+      `UPDATE builder.agent_templates
           SET agent_id = $1,
               display_name = $2,
               template = $3::jsonb,
@@ -184,7 +184,7 @@ export async function seedAgentTemplates(pool: Pool): Promise<void> {
     if ((updated.rowCount ?? 0) > 0) continue;
 
     const bumped = await pool.query(
-      `UPDATE agent_templates
+      `UPDATE builder.agent_templates
           SET agent_id = $1,
               display_name = $2,
               template = $3::jsonb,
@@ -205,7 +205,7 @@ export async function seedAgentTemplates(pool: Pool): Promise<void> {
 
     try {
       await pool.query(
-        `INSERT INTO agent_templates (
+        `INSERT INTO builder.agent_templates (
            id, agent_key, agent_id, display_name, version, template, is_active
          ) VALUES ($1, $2, $3, $4, $5, $6::jsonb, true)
          ON CONFLICT (id) DO UPDATE SET
@@ -228,7 +228,7 @@ export async function seedAgentTemplates(pool: Pool): Promise<void> {
     } catch (err: any) {
       if (err?.code === "23505") {
         await pool.query(
-          `UPDATE agent_templates
+          `UPDATE builder.agent_templates
               SET agent_id = $1,
                   display_name = $2,
                   template = $3::jsonb,
@@ -320,12 +320,12 @@ export async function seedProductAgentDefinitions(pool: Pool): Promise<void> {
           : PRODUCT_AGENT_RUNTIME_TOOLS;
 
     const defRow = await pool.query(
-      `SELECT 1 FROM agent_definitions WHERE id = $1`,
+      `SELECT 1 FROM builder.agent_definitions WHERE id = $1`,
       [s.agentId],
     );
     if ((defRow.rowCount ?? 0) === 0) {
       await pool.query(
-        `INSERT INTO agent_definitions (
+        `INSERT INTO builder.agent_definitions (
            id, name, version, purpose, system_prompt_ref,
            allowed_tools, autonomy, model_config, is_active
          ) VALUES ($1, $2, '1.0.0', $3, $4, $5::jsonb, $6::jsonb, $7::jsonb, true)`,
@@ -343,7 +343,7 @@ export async function seedProductAgentDefinitions(pool: Pool): Promise<void> {
     } else if (s.agentKey === "astra" || s.agentKey === "orbit") {
       // Align existing definition with real runtime tools (was Syntra placeholder).
       await pool.query(
-        `UPDATE agent_definitions
+        `UPDATE builder.agent_definitions
             SET allowed_tools = $2::jsonb,
                 purpose = $3,
                 updated_at = now()
@@ -360,13 +360,13 @@ export async function seedProductAgentDefinitions(pool: Pool): Promise<void> {
     });
 
     const polRow = await pool.query(
-      `SELECT policy FROM agent_policies
+      `SELECT policy FROM builder.agent_policies
         WHERE agent_id = $1 AND org_id IS NULL AND version = 1`,
       [s.agentId],
     );
     if ((polRow.rowCount ?? 0) === 0) {
       await pool.query(
-        `INSERT INTO agent_policies (
+        `INSERT INTO builder.agent_policies (
            org_id, agent_id, policy, status, version, created_by
          ) VALUES (NULL, $1, $2::jsonb, 'draft', 1, 'seed')`,
         [s.agentId, JSON.stringify(policy)],
@@ -375,7 +375,7 @@ export async function seedProductAgentDefinitions(pool: Pool): Promise<void> {
     } else if (s.agentKey === "astra" || s.agentKey === "orbit") {
       // Align draft/generated policy tools with runtime (was Syntra placeholder).
       await pool.query(
-        `UPDATE agent_policies
+        `UPDATE builder.agent_policies
             SET policy = $2::jsonb,
                 updated_at = now()
           WHERE agent_id = $1
@@ -398,13 +398,13 @@ export async function seedProductAgentDefinitions(pool: Pool): Promise<void> {
 export async function seedDefaultEntitlements(pool: Pool): Promise<void> {
   for (const s of TEMPLATE_SEED_CATALOG) {
     const existing = await pool.query(
-      `SELECT 1 FROM admin_agent_entitlements
+      `SELECT 1 FROM builder.admin_agent_entitlements
         WHERE admin_id = 'admin-local' AND agent_id = $1 AND org_id IS NULL`,
       [s.agentId],
     );
     if ((existing.rowCount ?? 0) > 0) continue;
     await pool.query(
-      `INSERT INTO admin_agent_entitlements (admin_id, agent_id, org_id, can_edit)
+      `INSERT INTO builder.admin_agent_entitlements (admin_id, agent_id, org_id, can_edit)
        VALUES ('admin-local', $1, NULL, true)`,
       [s.agentId],
     );
@@ -427,13 +427,13 @@ export async function applyAuthoringRls(pool: Pool): Promise<void> {
   }
 
   const statements = [
-    `ALTER TABLE agent_policies ENABLE ROW LEVEL SECURITY`,
-    `ALTER TABLE agent_policies FORCE ROW LEVEL SECURITY`,
-    `ALTER TABLE agent_versions ENABLE ROW LEVEL SECURITY`,
-    `ALTER TABLE agent_versions FORCE ROW LEVEL SECURITY`,
-    `ALTER TABLE admin_agent_entitlements ENABLE ROW LEVEL SECURITY`,
-    `ALTER TABLE admin_agent_entitlements FORCE ROW LEVEL SECURITY`,
-    `ALTER TABLE agent_templates ENABLE ROW LEVEL SECURITY`,
+    `ALTER TABLE builder.agent_policies ENABLE ROW LEVEL SECURITY`,
+    `ALTER TABLE builder.agent_policies FORCE ROW LEVEL SECURITY`,
+    `ALTER TABLE builder.agent_versions ENABLE ROW LEVEL SECURITY`,
+    `ALTER TABLE builder.agent_versions FORCE ROW LEVEL SECURITY`,
+    `ALTER TABLE builder.admin_agent_entitlements ENABLE ROW LEVEL SECURITY`,
+    `ALTER TABLE builder.admin_agent_entitlements FORCE ROW LEVEL SECURITY`,
+    `ALTER TABLE builder.agent_templates ENABLE ROW LEVEL SECURITY`,
 
     `DROP POLICY IF EXISTS agent_policies_read ON agent_policies`,
     `CREATE POLICY agent_policies_read ON agent_policies

@@ -47,7 +47,7 @@
 -- through users.preferences (§8.7 trust ramp); this row is the floor they start
 -- from, not the final word.
 
-INSERT INTO agent_definitions (
+INSERT INTO builder.agent_definitions (
   id, name, version, purpose, system_prompt_ref,
   allowed_tools, autonomy, model_config, is_active
 ) VALUES
@@ -149,7 +149,7 @@ BEGIN
   --    event_schemas and matching_policies: fail loudly rather than diverge.
   SELECT string_agg(d.name || '@' || d.version, ', ' ORDER BY d.name)
     INTO offenders
-  FROM agent_definitions d
+  FROM builder.agent_definitions d
   JOIN (VALUES
     ('matching-agent', 12, 'AUTO'),
     ('intake-agent',    9, 'AUTO')
@@ -174,7 +174,7 @@ BEGIN
   --    human — it can only fail, and the §5 autonomy model quietly stops
   --    working for it.
   SELECT string_agg(d.name, ', ' ORDER BY d.name) INTO offenders
-  FROM agent_definitions d
+  FROM builder.agent_definitions d
   WHERE d.is_active
     AND EXISTS (
       SELECT 1 FROM jsonb_each_text(d.autonomy) a WHERE a.value <> 'AUTO'
@@ -191,7 +191,7 @@ BEGIN
   END IF;
 
   RAISE NOTICE 'Agent definitions: % active.',
-    (SELECT count(*) FROM agent_definitions WHERE is_active);
+    (SELECT count(*) FROM builder.agent_definitions WHERE is_active);
 END
 $$;
 

@@ -120,7 +120,7 @@ async function latestPolicy(
     orgId === null
       ? await client.query<PolicyRow & QueryResultRow>(
           `SELECT id, version, status, policy, checksum, updated_at, created_by
-             FROM agent_policies
+             FROM builder.agent_policies
             WHERE agent_id = $1 AND org_id IS NULL
             ORDER BY version DESC
             LIMIT 1`,
@@ -128,7 +128,7 @@ async function latestPolicy(
         )
       : await client.query<PolicyRow & QueryResultRow>(
           `SELECT id, version, status, policy, checksum, updated_at, created_by
-             FROM agent_policies
+             FROM builder.agent_policies
             WHERE agent_id = $1 AND (org_id = $2 OR org_id IS NULL)
             ORDER BY (org_id IS NOT NULL) DESC, version DESC
             LIMIT 1`,
@@ -142,7 +142,7 @@ async function agentExists(
   agentId: string,
 ): Promise<AgentDefRow | null> {
   const { rows } = await client.query<AgentDefRow & QueryResultRow>(
-    `SELECT id, name, purpose, is_active FROM agent_definitions WHERE id = $1`,
+    `SELECT id, name, purpose, is_active FROM builder.agent_definitions WHERE id = $1`,
     [agentId],
   );
   return rows[0] ?? null;
@@ -157,7 +157,7 @@ async function latestGeneratedArtifact(
     orgId === null
       ? await client.query<GeneratedArtifactRow & QueryResultRow>(
           `SELECT id, version, artifact_source, checksum, policy_id, meta
-             FROM agent_versions
+             FROM builder.agent_versions
             WHERE agent_id = $1
               AND org_id IS NULL
               AND status = 'generated'
@@ -167,7 +167,7 @@ async function latestGeneratedArtifact(
         )
       : await client.query<GeneratedArtifactRow & QueryResultRow>(
           `SELECT id, version, artifact_source, checksum, policy_id, meta
-             FROM agent_versions
+             FROM builder.agent_versions
             WHERE agent_id = $1
               AND (org_id = $2 OR org_id IS NULL)
               AND status = 'generated'
@@ -187,7 +187,7 @@ async function latestCompiledArtifact(
     orgId === null
       ? await client.query<GeneratedArtifactRow & QueryResultRow>(
           `SELECT id, version, artifact_source, checksum, policy_id
-             FROM agent_versions
+             FROM builder.agent_versions
             WHERE agent_id = $1
               AND org_id IS NULL
               AND status = 'compiled'
@@ -197,7 +197,7 @@ async function latestCompiledArtifact(
         )
       : await client.query<GeneratedArtifactRow & QueryResultRow>(
           `SELECT id, version, artifact_source, checksum, policy_id
-             FROM agent_versions
+             FROM builder.agent_versions
             WHERE agent_id = $1
               AND (org_id = $2 OR org_id IS NULL)
               AND status = 'compiled'
@@ -217,7 +217,7 @@ async function latestPublishedArtifact(
     orgId === null
       ? await client.query<GeneratedArtifactRow & QueryResultRow>(
           `SELECT id, version, artifact_source, checksum, policy_id
-             FROM agent_versions
+             FROM builder.agent_versions
             WHERE agent_id = $1
               AND org_id IS NULL
               AND status = 'published'
@@ -227,7 +227,7 @@ async function latestPublishedArtifact(
         )
       : await client.query<GeneratedArtifactRow & QueryResultRow>(
           `SELECT id, version, artifact_source, checksum, policy_id
-             FROM agent_versions
+             FROM builder.agent_versions
             WHERE agent_id = $1
               AND (org_id = $2 OR org_id IS NULL)
               AND status = 'published'
@@ -382,10 +382,10 @@ export function registerAgentRoutes(
           b.graph_key AS binding_graph_key,
           b.version AS binding_version,
           b.source AS binding_source
-        FROM agent_definitions d
+        FROM builder.agent_definitions d
         LEFT JOIN LATERAL (
           SELECT display_name
-            FROM agent_templates
+            FROM builder.agent_templates
            WHERE agent_id = d.id
              AND is_active = true
            ORDER BY version DESC
@@ -393,7 +393,7 @@ export function registerAgentRoutes(
         ) t ON true
         LEFT JOIN LATERAL (
           SELECT status, version, updated_at, created_by, checksum
-            FROM agent_policies
+            FROM builder.agent_policies
            WHERE agent_id = d.id
              AND (${scopePred})
            ORDER BY ${scopeOrder}
@@ -401,7 +401,7 @@ export function registerAgentRoutes(
         ) p ON true
         LEFT JOIN LATERAL (
           SELECT version, updated_at
-            FROM agent_policies
+            FROM builder.agent_policies
            WHERE agent_id = d.id
              AND status = 'active'
              AND (${scopePred})
@@ -410,7 +410,7 @@ export function registerAgentRoutes(
         ) a ON true
         LEFT JOIN LATERAL (
           SELECT version, generated_at, generated_by, status
-            FROM agent_versions
+            FROM builder.agent_versions
            WHERE agent_id = d.id
              AND (${scopePred})
            ORDER BY generated_at DESC, version DESC
@@ -512,14 +512,14 @@ export function registerAgentRoutes(
         const verRows = await client.query(
           orgId === null
             ? `SELECT version, artifact_source, checksum, status, generated_at, meta
-                 FROM agent_versions
+                 FROM builder.agent_versions
                 WHERE agent_id = $1 AND org_id IS NULL
                   AND artifact_source IS NOT NULL
                   AND artifact_source <> ''
                 ORDER BY generated_at DESC NULLS LAST, version DESC
                 LIMIT 1`
             : `SELECT version, artifact_source, checksum, status, generated_at, meta
-                 FROM agent_versions
+                 FROM builder.agent_versions
                 WHERE agent_id = $1 AND org_id = $2
                   AND artifact_source IS NOT NULL
                   AND artifact_source <> ''
@@ -729,11 +729,11 @@ export function registerAgentRoutes(
       const exact = await client.query(
         orgId === null
           ? `SELECT id, version, status, policy, checksum, updated_at, created_by
-               FROM agent_policies
+               FROM builder.agent_policies
               WHERE agent_id = $1 AND org_id IS NULL
               ORDER BY version DESC LIMIT 1`
           : `SELECT id, version, status, policy, checksum, updated_at, created_by
-               FROM agent_policies
+               FROM builder.agent_policies
               WHERE agent_id = $1 AND org_id = $2
               ORDER BY version DESC LIMIT 1`,
         orgId === null ? [agentId] : [agentId, orgId],
@@ -755,7 +755,7 @@ export function registerAgentRoutes(
 
       if (!scopeLatest) {
         const { rows } = await client.query(
-          `INSERT INTO agent_policies
+          `INSERT INTO builder.agent_policies
              (org_id, agent_id, policy, status, version, created_by)
            VALUES ($1, $2, $3::jsonb, 'draft', 1, $4)
            RETURNING id, version, status, updated_at`,
@@ -764,7 +764,7 @@ export function registerAgentRoutes(
         row = rows[0];
       } else if (scopeLatest.status === "draft") {
         const { rows } = await client.query(
-          `UPDATE agent_policies
+          `UPDATE builder.agent_policies
               SET policy = $1::jsonb,
                   status = 'draft',
                   updated_at = now(),
@@ -777,7 +777,7 @@ export function registerAgentRoutes(
       } else {
         const nextVersion = scopeLatest.version + 1;
         const { rows } = await client.query(
-          `INSERT INTO agent_policies
+          `INSERT INTO builder.agent_policies
              (org_id, agent_id, policy, status, version, created_by)
            VALUES ($1, $2, $3::jsonb, 'draft', $4, $5)
            RETURNING id, version, status, updated_at`,
@@ -863,11 +863,11 @@ export function registerAgentRoutes(
       const exact = await client.query(
         orgId === null
           ? `SELECT id, version, status, policy, checksum, updated_at, created_by
-               FROM agent_policies
+               FROM builder.agent_policies
               WHERE agent_id = $1 AND org_id IS NULL
               ORDER BY version DESC LIMIT 1`
           : `SELECT id, version, status, policy, checksum, updated_at, created_by
-               FROM agent_policies
+               FROM builder.agent_policies
               WHERE agent_id = $1 AND org_id = $2
               ORDER BY version DESC LIMIT 1`,
         orgId === null ? [agentId] : [agentId, orgId],
@@ -1141,7 +1141,7 @@ export function registerAgentRoutes(
       });
 
       const { rows: policyRows } = await client.query(
-        `UPDATE agent_policies
+        `UPDATE builder.agent_policies
             SET policy = $1::jsonb,
                 status = 'generated',
                 checksum = $2,
@@ -1161,10 +1161,10 @@ export function registerAgentRoutes(
       // Upsert version row: regenerate updates the same version artifact.
       const existingVer = await client.query(
         orgId === null
-          ? `SELECT id FROM agent_versions
+          ? `SELECT id FROM builder.agent_versions
               WHERE agent_id = $1 AND org_id IS NULL AND version = $2
               LIMIT 1`
-          : `SELECT id FROM agent_versions
+          : `SELECT id FROM builder.agent_versions
               WHERE agent_id = $1 AND org_id = $2 AND version = $3
               LIMIT 1`,
         orgId === null
@@ -1175,7 +1175,7 @@ export function registerAgentRoutes(
       let ver: QueryResultRow;
       if (existingVer.rows[0]) {
         const { rows: versionRows } = await client.query(
-          `UPDATE agent_versions
+          `UPDATE builder.agent_versions
               SET artifact_ref = $1,
                   artifact_source = $2,
                   checksum = $3,
@@ -1199,7 +1199,7 @@ export function registerAgentRoutes(
         ver = versionRows[0];
       } else {
         const { rows: versionRows } = await client.query(
-          `INSERT INTO agent_versions
+          `INSERT INTO builder.agent_versions
              (agent_id, org_id, policy_id, version, artifact_ref, artifact_source,
               checksum, status, generated_by, meta)
            VALUES ($1, $2, $3, $4, $5, $6, $7, 'generated', $8, $9::jsonb)
@@ -1334,11 +1334,11 @@ export function registerAgentRoutes(
       const ver = await client.query(
         orgId === null
           ? `SELECT id, version, artifact_source, checksum, policy_id, meta, status
-               FROM agent_versions
+               FROM builder.agent_versions
               WHERE agent_id = $1 AND org_id IS NULL AND version = $2
               LIMIT 1`
           : `SELECT id, version, artifact_source, checksum, policy_id, meta, status
-               FROM agent_versions
+               FROM builder.agent_versions
               WHERE agent_id = $1 AND org_id = $2 AND version = $3
               LIMIT 1`,
         orgId === null
@@ -1445,7 +1445,7 @@ export function registerAgentRoutes(
       await withOrgScope(pool, orgId, async (client) => {
         if (orgId === null) {
           await client.query(
-            `UPDATE agent_policies
+            `UPDATE builder.agent_policies
                 SET status = 'generated', updated_at = now()
               WHERE agent_id = $1
                 AND version = $2
@@ -1455,7 +1455,7 @@ export function registerAgentRoutes(
           );
         } else {
           await client.query(
-            `UPDATE agent_policies
+            `UPDATE builder.agent_policies
                 SET status = 'generated', updated_at = now()
               WHERE agent_id = $1
                 AND version = $2
@@ -1593,7 +1593,7 @@ export function registerAgentRoutes(
       // Keep agent_versions at generated/compiled/published so Approve can still
       // find an artifact — only the policy status signals the pending request.
       await client.query(
-        `UPDATE agent_policies
+        `UPDATE builder.agent_policies
             SET status = 'pending_go_live',
                 created_by = $1,
                 updated_at = now()
@@ -1647,7 +1647,7 @@ export function registerAgentRoutes(
       }
 
       await client.query(
-        `UPDATE agent_policies
+        `UPDATE builder.agent_policies
             SET status = 'generated',
                 updated_at = now()
           WHERE id = $1`,
@@ -1687,11 +1687,11 @@ export function registerAgentRoutes(
           p.updated_at,
           p.created_by AS requested_by,
           p.checksum
-        FROM agent_policies p
-        INNER JOIN agent_definitions d ON d.id = p.agent_id AND d.is_active = true
+        FROM builder.agent_policies p
+        INNER JOIN builder.agent_definitions d ON d.id = p.agent_id AND d.is_active = true
         LEFT JOIN LATERAL (
           SELECT display_name
-            FROM agent_templates
+            FROM builder.agent_templates
            WHERE agent_id = d.id AND is_active = true
            ORDER BY version DESC
            LIMIT 1
@@ -1700,7 +1700,7 @@ export function registerAgentRoutes(
           AND (${scopePred})
           AND p.version = (
             SELECT MAX(p2.version)
-              FROM agent_policies p2
+              FROM builder.agent_policies p2
              WHERE p2.agent_id = p.agent_id
                AND p2.org_id IS NOT DISTINCT FROM p.org_id
           )
@@ -1794,10 +1794,10 @@ export function registerAgentRoutes(
       // as compile → publish → activate advance status.
       const ver = await client.query(
         orgId === null
-          ? `SELECT status FROM agent_versions
+          ? `SELECT status FROM builder.agent_versions
               WHERE agent_id = $1 AND org_id IS NULL AND version = $2
               LIMIT 1`
-          : `SELECT status FROM agent_versions
+          : `SELECT status FROM builder.agent_versions
               WHERE agent_id = $1 AND org_id = $2 AND version = $3
               LIMIT 1`,
         orgId === null
@@ -1905,7 +1905,7 @@ export function registerAgentRoutes(
       const policyRow = (
         await client.query<PolicyRow & QueryResultRow>(
           `SELECT id, version, status, policy, checksum, updated_at, created_by
-             FROM agent_policies
+             FROM builder.agent_policies
             WHERE id = $1
             LIMIT 1`,
           [latest.policy_id],
@@ -1998,7 +1998,7 @@ export function registerAgentRoutes(
       });
 
       await client.query(
-        `UPDATE agent_policies
+        `UPDATE builder.agent_policies
             SET status = 'compiled',
                 updated_at = now()
           WHERE id = $1`,
@@ -2006,7 +2006,7 @@ export function registerAgentRoutes(
       );
 
       await client.query(
-        `UPDATE agent_versions
+        `UPDATE builder.agent_versions
             SET status = 'compiled'
           WHERE id = $1`,
         [latest.id],
@@ -2069,7 +2069,7 @@ export function registerAgentRoutes(
       const policyRow = (
         await client.query<PolicyRow & QueryResultRow>(
           `SELECT id, version, status, policy, checksum, updated_at, created_by
-             FROM agent_policies
+             FROM builder.agent_policies
             WHERE id = $1
             LIMIT 1`,
           [latest.policy_id],
@@ -2107,7 +2107,7 @@ export function registerAgentRoutes(
       }
 
       await client.query(
-        `UPDATE agent_policies
+        `UPDATE builder.agent_policies
             SET status = 'published',
                 updated_at = now()
           WHERE id = $1`,
@@ -2115,7 +2115,7 @@ export function registerAgentRoutes(
       );
 
       await client.query(
-        `UPDATE agent_versions
+        `UPDATE builder.agent_versions
             SET status = 'published'
           WHERE id = $1`,
         [latest.id],
@@ -2192,7 +2192,7 @@ export function registerAgentRoutes(
       const policyRow = (
         await client.query<PolicyRow & QueryResultRow>(
           `SELECT id, version, status, policy, checksum, updated_at, created_by
-             FROM agent_policies
+             FROM builder.agent_policies
             WHERE id = $1
             LIMIT 1`,
           [latest.policy_id],
@@ -2280,7 +2280,7 @@ export function registerAgentRoutes(
       // 3) Authoring one-active: demote previous active policy for this agent+scope.
       if (orgId === null) {
         await client.query(
-          `UPDATE agent_policies
+          `UPDATE builder.agent_policies
               SET status = 'published',
                   updated_at = now()
             WHERE agent_id = $1
@@ -2291,7 +2291,7 @@ export function registerAgentRoutes(
         );
       } else {
         await client.query(
-          `UPDATE agent_policies
+          `UPDATE builder.agent_policies
               SET status = 'published',
                   updated_at = now()
             WHERE agent_id = $1
@@ -2303,7 +2303,7 @@ export function registerAgentRoutes(
       }
 
       await client.query(
-        `UPDATE agent_policies
+        `UPDATE builder.agent_policies
             SET status = 'active',
                 updated_at = now()
           WHERE id = $1`,
@@ -2313,7 +2313,7 @@ export function registerAgentRoutes(
       // Demote other agent_versions for this agent+scope (one active authoring version).
       if (orgId === null) {
         await client.query(
-          `UPDATE agent_versions
+          `UPDATE builder.agent_versions
               SET status = 'published'
             WHERE agent_id = $1
               AND org_id IS NULL
@@ -2323,7 +2323,7 @@ export function registerAgentRoutes(
         );
       } else {
         await client.query(
-          `UPDATE agent_versions
+          `UPDATE builder.agent_versions
               SET status = 'published'
             WHERE agent_id = $1
               AND org_id = $2
@@ -2334,7 +2334,7 @@ export function registerAgentRoutes(
       }
 
       await client.query(
-        `UPDATE agent_versions
+        `UPDATE builder.agent_versions
             SET status = 'active'
           WHERE id = $1`,
         [latest.id],
@@ -2467,7 +2467,7 @@ export function registerAgentRoutes(
         orgId === null
           ? await client.query<GeneratedArtifactRow & QueryResultRow>(
               `SELECT id, version, artifact_source, checksum, policy_id
-                 FROM agent_versions
+                 FROM builder.agent_versions
                 WHERE agent_id = $1
                   AND org_id IS NULL
                   AND version = $2
@@ -2477,7 +2477,7 @@ export function registerAgentRoutes(
             )
           : await client.query<GeneratedArtifactRow & QueryResultRow>(
               `SELECT id, version, artifact_source, checksum, policy_id
-                 FROM agent_versions
+                 FROM builder.agent_versions
                 WHERE agent_id = $1
                   AND org_id = $2
                   AND version = $3
@@ -2527,7 +2527,7 @@ export function registerAgentRoutes(
       const policyRow = (
         await client.query<PolicyRow & QueryResultRow>(
           `SELECT id, version, status, policy, checksum, updated_at, created_by
-             FROM agent_policies
+             FROM builder.agent_policies
             WHERE id = $1
             LIMIT 1`,
           [target.policy_id],
@@ -2573,7 +2573,7 @@ export function registerAgentRoutes(
       // Authoring one-active for this agent+scope.
       if (orgId === null) {
         await client.query(
-          `UPDATE agent_policies
+          `UPDATE builder.agent_policies
               SET status = 'published',
                   updated_at = now()
             WHERE agent_id = $1
@@ -2583,7 +2583,7 @@ export function registerAgentRoutes(
           [agentId, policyRow.id],
         );
         await client.query(
-          `UPDATE agent_versions
+          `UPDATE builder.agent_versions
               SET status = 'published'
             WHERE agent_id = $1
               AND org_id IS NULL
@@ -2593,7 +2593,7 @@ export function registerAgentRoutes(
         );
       } else {
         await client.query(
-          `UPDATE agent_policies
+          `UPDATE builder.agent_policies
               SET status = 'published',
                   updated_at = now()
             WHERE agent_id = $1
@@ -2603,7 +2603,7 @@ export function registerAgentRoutes(
           [agentId, orgId, policyRow.id],
         );
         await client.query(
-          `UPDATE agent_versions
+          `UPDATE builder.agent_versions
               SET status = 'published'
             WHERE agent_id = $1
               AND org_id = $2
@@ -2614,7 +2614,7 @@ export function registerAgentRoutes(
       }
 
       await client.query(
-        `UPDATE agent_policies
+        `UPDATE builder.agent_policies
             SET status = 'active',
                 updated_at = now()
           WHERE id = $1`,
@@ -2622,7 +2622,7 @@ export function registerAgentRoutes(
       );
 
       await client.query(
-        `UPDATE agent_versions
+        `UPDATE builder.agent_versions
             SET status = 'active'
           WHERE id = $1`,
         [target.id],
@@ -2769,7 +2769,7 @@ export function registerAgentRoutes(
         await retireActive(client, { graphKey, orgId });
         if (orgId === null) {
           await client.query(
-            `UPDATE agent_policies
+            `UPDATE builder.agent_policies
                 SET status = 'published', updated_at = now()
               WHERE agent_id = $1
                 AND status = 'active'
@@ -2778,7 +2778,7 @@ export function registerAgentRoutes(
           );
         } else {
           await client.query(
-            `UPDATE agent_policies
+            `UPDATE builder.agent_policies
                 SET status = 'published', updated_at = now()
               WHERE agent_id = $1
                 AND status = 'active'
@@ -2855,7 +2855,7 @@ export function registerAgentRoutes(
           );
         }
         await client.query(
-          `UPDATE agent_definitions
+          `UPDATE builder.agent_definitions
               SET is_active = false, updated_at = NOW()
             WHERE id = $1`,
           [agentId],

@@ -68,7 +68,7 @@ export async function resolveAgentDefinitionId(
 ): Promise<string | null> {
   try {
     const { rows } = await pool.query<{ id: string }>(
-      `SELECT id::text AS id FROM agent_definitions
+      `SELECT id::text AS id FROM builder.agent_definitions
        WHERE name = $1 AND is_active = true
        LIMIT 1`,
       [agentName],

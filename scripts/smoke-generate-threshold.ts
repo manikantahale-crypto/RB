@@ -219,7 +219,7 @@ async function main(): Promise<void> {
       meta: unknown;
     }>(
       `SELECT version, status, artifact_source, meta
-         FROM agent_versions
+         FROM builder.agent_versions
         WHERE agent_id = $1 AND org_id IS NULL AND version = $2
         ORDER BY generated_at DESC
         LIMIT 1`,

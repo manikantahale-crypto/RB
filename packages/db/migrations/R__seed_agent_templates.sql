@@ -8,7 +8,7 @@
 -- (packages/orchestrator/src/nodes/registry.ts). No authoring-only tools.
 -- =============================================================================
 
-INSERT INTO agent_templates (
+INSERT INTO builder.agent_templates (
   id, agent_key, agent_id, display_name, version, template, is_active
 ) VALUES
 
