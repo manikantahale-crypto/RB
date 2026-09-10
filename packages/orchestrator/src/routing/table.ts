@@ -1,4 +1,5 @@
 import { EVENT_TYPES } from '@tekisho/domain';
+import { handlingFromCatalogue } from './handling-cache.js';
 
 /**
  * Platform event metadata for workers (terminals / queues).
@@ -168,7 +169,11 @@ export const PLATFORM_EVENT_PLAN: Record<string, PlatformEventPlan> = {
 };
 
 export function planForEvent(eventType: string): PlatformEventPlan {
+  // The catalogue first — it is the thing an operator can change without a
+  // release. The map below is the floor for a worker that has not loaded it,
+  // or cannot reach the database. See handling-cache.ts.
   return (
+    handlingFromCatalogue(eventType) ??
     PLATFORM_EVENT_PLAN[eventType] ?? {
       kind: 'terminal',
       note: 'Unknown event — ack as terminal',

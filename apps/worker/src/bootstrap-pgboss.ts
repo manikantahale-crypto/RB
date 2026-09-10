@@ -18,6 +18,8 @@ import {
   type DbQueryable,
 } from "@tekisho/authoring";
 import { startOutboxRelay } from "./workers/outbox-relay.worker.js";
+import { loadEventHandling } from "@tekisho/orchestrator/src/routing/handling-cache.js";
+import { loadRoutingTableCache } from "./routing-table-cache.js";
 import { startIngressRouter } from "./workers/ingress-router.worker.js";
 import { startModuleWorkers } from "./workers/module-execute.worker.js";
 import { startResumeThreadWorker } from "./workers/resume-thread.worker.js";
@@ -83,6 +85,38 @@ async function bootstrapPgBoss(): Promise<void> {
   await withPgRetry("worker failed_workflows", () =>
     ensureFailedWorkflowsTable(pool),
   );
+
+  // What the platform does with each event — from authoring.event_catalog
+  // rather than the map compiled into the engine. Without this the worker
+  // still runs, on the hardcoded 26 entries, which is what it did before.
+  //
+  // Refreshed on a timer so an event registered through the authoring screens
+  // starts routing without a restart. Five minutes is a compromise: shorter is
+  // a pointless query, longer makes "I registered it and nothing happened" a
+  // support conversation.
+  const knownEvents = await loadEventHandling(pool);
+  console.log(
+    knownEvents > 0
+      ? `[Routing] ${knownEvents} events from authoring.event_catalog`
+      : "[Routing] catalogue unavailable — falling back to the compiled event map",
+  );
+  const handlingRefresh = setInterval(() => {
+    void loadEventHandling(pool);
+  }, 5 * 60 * 1000);
+  handlingRefresh.unref();
+
+  // Which workflows answer each event. Until this loads the router uses the
+  // single-binding lookup it always did, so a slow or unreachable database
+  // delays fan-out rather than stopping routing.
+  const routing = await loadRoutingTableCache(pool);
+  console.log(
+    `[Routing] ${routing.entries} active bindings` +
+      (routing.dropped > 0 ? ` (${routing.dropped} ignored — no workflow)` : ""),
+  );
+  const routingRefresh = setInterval(() => {
+    void loadRoutingTableCache(pool);
+  }, 5 * 60 * 1000);
+  routingRefresh.unref();
   await withPgRetry("worker job_pin", () => ensureJobPinTable(pool));
   await withPgRetry("worker ingress schemas", () =>
     ensureIngressEventSchemas(pool),
@@ -227,6 +261,8 @@ async function bootstrapPgBoss(): Promise<void> {
 
   const shutdown = async () => {
     console.log("\nShutting down dispatcher...");
+    clearInterval(handlingRefresh);
+    clearInterval(routingRefresh);
     await stopOutboxRelay();
     await boss.stop();
     await pool.end();

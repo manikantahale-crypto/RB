@@ -6,6 +6,11 @@ export {
   type TriggerEventCatalogEntry,
 } from "./trigger-events.js";
 export {
+  loadRoutingTable,
+  toBindingEntries,
+  type BindingRow,
+} from "./routing-table.js";
+export {
   resolveActiveEventBinding,
   upsertActiveEventBinding,
   ensureEventBindingsSchema,
