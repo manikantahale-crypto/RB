@@ -8,6 +8,7 @@ import {
 import { withOrgScope } from "../with-org-scope.js";
 
 import { EVENT_SCHEMAS } from "../lib/authoring-views.js";
+import { authorableSourcesSql } from "../lib/authorable-steps.js";
 type FastifyLike = {
   get: (path: string, handler: any) => void;
   post: (path: string, handler: any) => void;
@@ -431,8 +432,31 @@ export function registerCatalogAndCreateRoutes(
         `SELECT a.key,
                 a.name,
                 a.status,
+                /*
+                 * Steps this application may actually BUILD WITH — which is
+                 * not the same as steps it owns, and not every row either.
+                 *
+                 * Two corrections to counting rows blindly.
+                 *
+                 * Undeclared steps are excluded. Such a row is one the engine
+                 * resolves but nobody described, and it hands work downstream
+                 * by mutating the trigger payload, which a declared step does
+                 * not read. A workflow built from one finishes green having
+                 * done nothing, so the generator is not offered them — and an
+                 * application must not look authorable on their strength.
+                 *
+                 * Other applications' shareable steps are included, and
+                 * platform's. Every ORBIT step is legacy, so counting only its
+                 * own would have made ORBIT unauthorable — wrong in the other
+                 * direction: it has nine events and may build on the two
+                 * platform steps and seven shareable SYNTRA ones, which is the
+                 * cross-application borrowing the proposer already supports.
+                 */
                 (SELECT count(*) FROM authoring.node_registry n
-                  WHERE n.application = a.key)::int AS nodes,
+                  WHERE n.source IN (${authorableSourcesSql()})
+                    AND (n.application = a.key
+                         OR n.application = 'platform'
+                         OR n.shareable))::int AS nodes,
                 (SELECT count(*) FROM authoring.event_catalog e
                   WHERE e.application = a.key
                     AND coalesce(e.handling, 'graph') <> 'terminal')::int AS triggers
@@ -451,6 +475,10 @@ export function registerCatalogAndCreateRoutes(
            * Both halves are needed. Steps with no event is a workflow that
            * cannot start; an event with no steps is a workflow with nothing
            * to do.
+           *
+           * `nodes` counts steps this application may USE, its own and the
+           * borrowable ones — see the query. ASTRA fails on `triggers`: six
+           * steps in git, no events left in this project.
            */
           authorable: Number(r.nodes) > 0 && Number(r.triggers) > 0,
         })),

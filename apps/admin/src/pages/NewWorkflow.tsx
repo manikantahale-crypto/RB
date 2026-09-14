@@ -679,6 +679,31 @@ export function NewWorkflowPage() {
                   ) : null}
 
                   {/* ── routing ───────────────────────────────────── */}
+                  {/*
+                    ABSENCE HAD TWO MEANINGS AND LOOKED THE SAME.
+
+                    The card only appears when something already answers the
+                    trigger — correctly, since routing is the question "do you
+                    mean to take this event from them" and there is nobody to
+                    take it from otherwise. But it simply was not rendered, so
+                    "no decision needed" and "the screen failed to ask" were
+                    indistinguishable, and the first reading of a missing
+                    section is that it is missing.
+
+                    One line costs nothing and turns the silence into an answer.
+                  */}
+                  {!routingNeeded && trigger ? (
+                    <div className="nw-row">
+                      <span className="nw-row-kind">⇄ Routing</span>
+                      <span className="nw-row-body">
+                        <span className="nw-row-value">nothing to decide</span>
+                        <span className="nw-row-why">
+                          No workflow answers {trigger} today, so there is
+                          nothing to take over.
+                        </span>
+                      </span>
+                    </div>
+                  ) : null}
                   {routingNeeded ? (
                     <>
                       <div className="nw-row">
@@ -877,6 +902,26 @@ export function NewWorkflowPage() {
                         .filter((t) => t.alsoRunsHere.length)
                         .map((t) => {
                           /**
+                           * IT NO LONGER ALWAYS RUNS TWICE.
+                           *
+                           * The runtime enforces each node's declared
+                           * idempotency, scoped to one causal flow, so the
+                           * second copy of a shared step is skipped. Saying
+                           * "one input would be processed twice" regardless
+                           * would be false in the ordinary case, and a warning
+                           * that overstates is one people learn to scroll past
+                           * — including when it is right.
+                           *
+                           * `unabsorbed` is the genuinely-twice set: steps
+                           * whose declared key cannot be built from one of the
+                           * two payloads involved. Those keep the warning. The
+                           * rest become a note, because the wasted RUN is
+                           * still real even when the work is not repeated.
+                           */
+                          const reallyTwice = (t.unabsorbed ?? t.alsoRunsHere);
+                          const isWarning = reallyTwice.length > 0;
+                          const named = isWarning ? reallyTwice : (t.absorbed ?? []);
+                          /**
                            * `alsoRunsHere` names node KEYS. The same key can
                            * appear twice in a flow under different ids, and
                            * dropping "that step" has to mean a step.
@@ -890,18 +935,37 @@ export function NewWorkflowPage() {
 
                           return (
                             <div
-                              className="nw-row nw-row--warn"
+                              className={isWarning ? "nw-row nw-row--warn" : "nw-row"}
                               key={`${t.stepId}-${t.eventType}`}
                             >
-                              <span className="nw-row-kind">⚠ Runs twice</span>
+                              <span className="nw-row-kind">
+                                {isWarning ? "⚠ Runs twice" : "↻ Redundant"}
+                              </span>
                               <span className="nw-row-body">
                                 <span className="nw-row-value">
-                                  {t.alsoRunsHere.join(", ")}
+                                  {named.join(", ")}
                                 </span>
                                 <span className="nw-row-why">
-                                  {t.impl} publishes {t.eventType}, which starts{" "}
-                                  {t.graphKey} — and that runs the same step. One
-                                  input would be processed twice.
+                                  {isWarning ? (
+                                    <>
+                                      {t.impl} publishes {t.eventType}, which
+                                      starts {t.graphKey} — and that runs the
+                                      same step. The platform cannot tell the
+                                      two apart, because the key that step
+                                      declares can't be built from what these
+                                      events carry. One input really would be
+                                      processed twice.
+                                    </>
+                                  ) : (
+                                    <>
+                                      {t.impl} publishes {t.eventType}, which
+                                      starts {t.graphKey} — and that runs the
+                                      same step. The platform skips the second
+                                      copy, so the work happens once, but that
+                                      second run still starts and does nothing.
+                                      Ending here is usually what was meant.
+                                    </>
+                                  )}
                                 </span>
                                 {allDropped ? (
                                   <span className="nw-fixed" role="status">

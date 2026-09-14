@@ -71,6 +71,8 @@ import {
   type Resolution,
 } from "../lib/resolve-before-generate.js";
 import { rankWithGraph } from "../lib/rank-with-graph.js";
+import { isAuthorableStep } from "../lib/authorable-steps.js";
+import { keyDerivableFrom } from "@tekisho/node-contract";
 import {
   decideChain,
   detectTriggeredWorkflows,
@@ -891,11 +893,36 @@ export function registerProposeRoutes(
         // ── what the module may use ─────────────────────────────────────
         const { rows: nodeRows } = await client.query(
           `SELECT key, title, description, side_effect, source, input_schema,
-                  output_schema, config_schema, application AS module, shareable
+                  output_schema, config_schema, application AS module, shareable,
+                  idempotency
              FROM authoring.node_registry
             ORDER BY (application = $1) DESC, application, key`,
           [module],
         );
+
+        /**
+         * THE STEPS A NEW WORKFLOW MAY BE BUILT FROM — NOT EVERY ROW.
+         *
+         * `node_registry` holds three kinds of row and only two can be
+         * authored with. `source = 'legacy'` is a step the engine resolves but
+         * nobody has declared: no trustworthy input schema, no fixture, and —
+         * the part that bites — it hands work downstream by MUTATING
+         * `trigger_event.payload`, while a contract-bridged step returns
+         * `{ result, steps }` and no `trigger_event` at all.
+         *
+         * Asked to "keep matching bench consultants against a new requirement"
+         * the model built `astra.requirement.intake → syntra.continuous.match`.
+         * Both keys resolve at run time, so nothing would have crashed: the
+         * ASTRA step would have written its output where the SYNTRA step does
+         * not read, and the run would have gone green having matched nobody.
+         * A silently wrong run is worse than a refused one.
+         *
+         * Every ASTRA and ORBIT row in this project is legacy — 11 of 22. They
+         * stay in the registry because the graphs that already use them still
+         * run. They are not material for a new one.
+         */
+        const authorableNodes = nodeRows.filter(isAuthorableStep);
+        const withheldSteps = nodeRows.length - authorableNodes.length;
 
         /**
          * What already answers each CANDIDATE, not just the suggested one.
@@ -913,11 +940,26 @@ export function registerProposeRoutes(
          * it says.
          */
         const answeredBy = new Map<string, Array<{ graphKey: string; moduleQueue: string | null }>>();
-        if (ranked.length > 0) {
+        /**
+         * EVERY EVENT THAT COULD REACH THE SCREEN, NOT JUST THE WORD MATCHES.
+         *
+         * This asked only about `ranked`. Once the shape could admit a
+         * candidate the words had filtered out, such an event arrived with an
+         * empty consumer list — indistinguishable from "nobody answers this" —
+         * and the routing card silently did not appear for exactly the
+         * triggers that most needed it, since a shape-admitted event is one
+         * the author never thought to look at.
+         *
+         * The superset is every event this application may start on. Eleven
+         * rows here, one indexed query, and no way for a later change to the
+         * candidate rules to reopen the hole.
+         */
+        const askable = scored.filter((c) => mine(c) && startable(c));
+        if (askable.length > 0) {
           const { rows: bindingRows } = await client.query(
             `SELECT event_type, graph_key, module_queue FROM ${GRAPH_EVENT_BINDINGS}
               WHERE event_type = ANY($1::text[]) AND status = 'active'`,
-            [ranked.map((c) => c.eventType)],
+            [askable.map((c) => c.eventType)],
           );
           for (const r of bindingRows as any[]) {
             const list = answeredBy.get(String(r.event_type)) ?? [];
@@ -928,12 +970,6 @@ export function registerProposeRoutes(
             answeredBy.set(String(r.event_type), list);
           }
         }
-        const routing = {
-          rows: (best ? (answeredBy.get(best.eventType) ?? []) : []).map((b) => ({
-            graph_key: b.graphKey,
-            module_queue: b.moduleQueue,
-          })),
-        };
 
         // ── config a person actually wrote down ─────────────────────────
         const extracted = extractConfig(description);
@@ -1006,9 +1042,8 @@ export function registerProposeRoutes(
             );
 
           const first =
-            nodeRows.find((n: any) => n.source === "contract" && takesConfig(n)) ??
-            nodeRows.find((n: any) => n.source === "contract") ??
-            nodeRows[0];
+            authorableNodes.find((n: any) => takesConfig(n)) ??
+            authorableNodes[0];
 
           const id = String(first?.key ?? "step").split(".").pop() ?? "step";
           // Only settings the chosen step actually declares. Stamping a field
@@ -1147,7 +1182,7 @@ export function registerProposeRoutes(
                * `requirement_id`, which is the field the live ASTRA handoff
                * carries.
                */
-              nodes: nodeRows.map((n: any) => ({
+              nodes: authorableNodes.map((n: any) => ({
                 key: String(n.key),
                 title: String(n.title ?? n.key),
                 description: String(n.description ?? ""),
@@ -1554,6 +1589,61 @@ export function registerProposeRoutes(
           .filter((c): c is NonNullable<typeof c> => Boolean(c));
         const finalBest = ordered[0] ?? null;
         /**
+         * The reasons, kept so the screen can show them.
+         *
+         * `ordered` is rebuilt from the ORIGINAL candidate objects so nothing
+         * the word matcher computed is lost — and that dropped everything the
+         * re-ranking worked out. `syntra.match.completed` came back to the
+         * screen ranked last with `selfTriggering: undefined` and no `why`, so
+         * the one fact worth telling the author — a step in this workflow
+         * publishes it, and triggering on it would restart the workflow for
+         * ever — was computed, used for the sort, and thrown away.
+         */
+        const rankingReason = new Map(reranked.map((r) => [r.eventType, r]));
+
+        /**
+         * WHICH DUPLICATES THE PLATFORM ACTUALLY ABSORBS.
+         *
+         * "One input would be processed twice" was told to the author whenever
+         * two workflows shared a step. It is no longer true in the ordinary
+         * case: the runtime enforces each node's declared idempotency, scoped
+         * to one causal flow, so the second copy is skipped.
+         *
+         * But it is still true sometimes, and the two must not read alike — a
+         * warning that overstates gets dismissed, including on the occasions
+         * it is right.
+         *
+         * BOTH SIDES HAVE TO DERIVE THE SAME KEY. The copy inside this flow is
+         * fed by the chosen trigger; the copy in the other workflow is fed by
+         * the event this flow publishes. They collapse only if the key can be
+         * built from BOTH payloads — so both are checked, not just the one in
+         * front of us.
+         */
+        const contractOf = new Map(
+          nodeRows.map((n: any) => [
+            String(n.key),
+            { sideEffect: String(n.side_effect ?? ""), idempotency: n.idempotency },
+          ]),
+        );
+        const triggerFields = finalBest
+          ? (payloadFieldsOf.get(finalBest.eventType) ?? [])
+          : [];
+
+        const triggeredWithAbsorption = triggeredWorkflows.map((t) => {
+          const emittedFields = payloadFieldsOf.get(t.eventType) ?? [];
+          const absorbed: string[] = [];
+          const unabsorbed: string[] = [];
+          for (const impl of t.alsoRunsHere) {
+            const c = contractOf.get(impl) as any;
+            const ok =
+              Boolean(c) &&
+              keyDerivableFrom(c, triggerFields) &&
+              keyDerivableFrom(c, emittedFields);
+            (ok ? absorbed : unabsorbed).push(impl);
+          }
+          return { ...t, absorbed, unabsorbed };
+        });
+        /**
          * Why the PREVIOUS first choice lost, not why the new one won.
          *
          * The first version cited the winner reason, which produced lines like
@@ -1767,6 +1857,25 @@ export function registerProposeRoutes(
         }
 
         /**
+         * What was kept back, said out loud.
+         *
+         * A shorter list of steps than the registry holds is a decision, and a
+         * decision nobody can see is the thing this ledger exists to prevent.
+         */
+        if (withheldSteps > 0) {
+          ledger.push({
+            kind: "SKIPPED",
+            text: `${withheldSteps} step${withheldSteps === 1 ? "" : "s"} in the registry were not offered`,
+            citation:
+              "They are undeclared: no schema, no worked example, and they " +
+              "pass work downstream in a way a declared step does not read. " +
+              "The workflows already using them still run; a new one built " +
+              "on one would finish green having done nothing.",
+            source: "system",
+          });
+        }
+
+        /**
          * THE MODEL'S LINES. The only entries in this ledger with
          * `source: "model"`, and they are held to a harder standard than the
          * computed ones: the shape is validated against a strict schema, every
@@ -1967,23 +2076,58 @@ export function registerProposeRoutes(
            * knowing: the same input processed twice, two sets of results, and
            * nothing in any log to say so.
            */
-          for (const t of triggeredWorkflows.filter(
-            (x) => x.alsoRunsHere.length > 0,
+          /**
+           * TWO MESSAGES, BECAUSE THERE ARE NOW TWO SITUATIONS.
+           *
+           * This used to say "one input would be processed twice" for every
+           * overlap. Since the runtime enforces declared idempotency, that is
+           * false in the ordinary case — the second copy is skipped — and a
+           * warning that overstates is one people learn to dismiss.
+           *
+           * The genuinely-twice case still exists: a step whose key cannot be
+           * built from one of the two payloads. It keeps the old wording,
+           * which is accurate for it.
+           */
+          for (const t of triggeredWithAbsorption.filter(
+            (x) => x.unabsorbed.length > 0,
           )) {
+            const many = t.unabsorbed.length !== 1;
             ledger.push({
               kind: "SKIPPED",
-              text: `${t.impl} already starts ${t.graphKey} — ${t.alsoRunsHere.join(", ")} would run twice`,
+              text: `${t.impl} already starts ${t.graphKey} — ${t.unabsorbed.join(", ")} would run twice`,
               citation:
                 `${t.impl} publishes ${t.eventType} when it finishes, and that ` +
                 `event starts ${t.graphKey}, which runs ` +
-                `${t.alsoRunsHere.join(", ")}. This flow runs ` +
-                `${t.alsoRunsHere.length === 1 ? "that step" : "those steps"} ` +
-                `too, so one input would be processed twice — once here, once ` +
-                `in ${t.graphKey}. Remove ` +
-                `${t.alsoRunsHere.length === 1 ? "it" : "them"} and let ` +
-                `${t.graphKey} do that part, or keep ` +
-                `${t.alsoRunsHere.length === 1 ? "it" : "them"} and retire that ` +
-                `binding.`,
+                `${t.unabsorbed.join(", ")}. This flow runs ` +
+                `${many ? "those steps" : "that step"} too, and the platform ` +
+                `cannot tell the two apart — the key ${many ? "they declare" : "it declares"} ` +
+                `cannot be built from what these events carry. So one input ` +
+                `really is processed twice. Remove ${many ? "them" : "it"} and ` +
+                `let ${t.graphKey} do that part, or keep ${many ? "them" : "it"} ` +
+                `and retire that binding.`,
+              source: "system",
+            });
+          }
+
+          /**
+           * Redundant, not wrong. Worth saying because the second RUN still
+           * happens — routed, queued, executed and recorded — even though the
+           * step inside it does nothing.
+           */
+          for (const t of triggeredWithAbsorption.filter(
+            (x) => x.unabsorbed.length === 0 && x.absorbed.length > 0,
+          )) {
+            const many = t.absorbed.length !== 1;
+            ledger.push({
+              kind: "CHOSE",
+              text: `${t.absorbed.join(", ")} also runs in ${t.graphKey}, and will be skipped there`,
+              citation:
+                `${t.impl} publishes ${t.eventType}, which starts ${t.graphKey} ` +
+                `as a second run. ${many ? "Those steps" : "That step"} ` +
+                `${many ? "run" : "runs"} in both, so the platform skips the ` +
+                `second copy — the work happens once. The second run still ` +
+                `starts, though, so this shape costs a run that does nothing. ` +
+                `Ending this workflow at ${t.impl} is usually what was meant.`,
               source: "system",
             });
           }
@@ -2065,6 +2209,16 @@ export function registerProposeRoutes(
              * that happened to be suggested first.
              */
             answeredBy: answeredBy.get(c.eventType) ?? [],
+            /**
+             * Why it sits where it sits. `selfTriggering` is the one that
+             * changes an answer rather than explaining it: an event a step in
+             * this workflow publishes cannot be its door, and the author has
+             * to be able to see that rather than wonder why their obvious
+             * choice is at the bottom.
+             */
+            selfTriggering: rankingReason.get(c.eventType)?.selfTriggering ?? false,
+            satisfies: rankingReason.get(c.eventType)?.satisfies ?? null,
+            why: rankingReason.get(c.eventType)?.why ?? null,
           })),
           /** How many shared no wording at all — the drawer is the way to them. */
           notRanked: scored.length - matched.length,
@@ -2085,7 +2239,7 @@ export function registerProposeRoutes(
           spansModules,
           chainDecision,
           borrowedSteps,
-          triggeredWorkflows,
+          triggeredWorkflows: triggeredWithAbsorption,
           selfTriggering,
           suggestedTrigger: finalBest?.eventType ?? null,
           availableNodes: nodeRows.map((n: any) => ({
@@ -2098,9 +2252,28 @@ export function registerProposeRoutes(
           })),
           extractedConfig: extracted,
           routing: {
-            existing: routing.rows.map((r: any) => ({
-              graphKey: r.graph_key,
-              moduleQueue: r.module_queue,
+            /**
+             * Who answers the SUGGESTED trigger, which is `finalBest` and not
+             * `best`.
+             *
+             * This read `best` — the word matcher's winner, chosen before a
+             * single step existed. Once re-ranking could move the suggestion,
+             * the screen's fallback described whoever answered the event the
+             * author had just been moved AWAY from. On the first request tried
+             * it named `syntra.shortlist.workflow`, the consumer of
+             * `syntra.match.completed`, for a proposal suggesting
+             * `syntra.jd.normalized`.
+             *
+             * The per-candidate `answeredBy` above is what the screen normally
+             * uses; this is the fallback for a trigger typed by hand, and a
+             * fallback that names the wrong workflow is worse than none.
+             */
+            existing: (finalBest
+              ? (answeredBy.get(finalBest.eventType) ?? [])
+              : []
+            ).map((b) => ({
+              graphKey: b.graphKey,
+              moduleQueue: b.moduleQueue,
             })),
             /**
              * Fan-out is not available. A unique index permits one active
