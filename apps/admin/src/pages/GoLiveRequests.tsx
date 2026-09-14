@@ -204,6 +204,24 @@ export function GoLiveRequestsPage() {
                   {r.compiledBy ? ` · compiled by ${r.compiledBy}` : ""}
                 </p>
                 {/*
+                  WHAT THE AUTHOR SAID, WHICH IS THE ONE THING THIS SCREEN
+                  CANNOT WORK OUT FOR ITSELF.
+
+                  Everything else here is derived — the version, what it
+                  replaces, the trigger, the step count. Intent is not, and the
+                  approver is never the author: `graph_versions_two_person_ck`
+                  refuses that. Without this they decide from a key, a number
+                  and a checksum, which is how a two-person rule turns into a
+                  rubber stamp.
+
+                  Absent is normal, not a fault. A change that speaks for
+                  itself needs no note, and requests made before notes existed
+                  have none.
+                */}
+                {r.requestNote ? (
+                  <p className="go-live-note">{r.requestNote}</p>
+                ) : null}
+                {/*
                   A version nothing can start goes live and never runs. It is
                   the one failure this screen can catch BEFORE it happens,
                   rather than leaving somebody to wonder later why a live

@@ -41,6 +41,12 @@ export interface OutboxRow {
   producer: string;
   payload_ref: Record<string, unknown>;
   occurred_at: Date;
+  /** Set only by an authoring test fire; null on everything else. */
+  test_pin: {
+    graphKey: string;
+    graphVersion: number;
+    moduleQueue: string;
+  } | null;
 }
 
 /** pg-boss IDatabase adapter over a pg Client already inside BEGIN. */
@@ -70,6 +76,9 @@ export function toEnvelope(row: OutboxRow): EventEnvelope {
     aggregate: { type: row.aggregate_type, id: row.aggregate_id },
     payload_ref: row.payload_ref,
     producer: row.producer,
+    // Carried through so the router can honour it. Undefined, not null, so an
+    // envelope for an ordinary event has no such key at all.
+    ...(row.test_pin ? { test_pin: row.test_pin } : {}),
   };
 }
 
@@ -92,7 +101,7 @@ export async function relayOnce(
     await client.query("BEGIN");
 
     const { rows } = await client.query<OutboxRow>(
-      `SELECT id, event_id, event_type, schema_version, organization_id,
+      `SELECT id, event_id, event_type, schema_version, organization_id, test_pin,
               aggregate_type, aggregate_id, correlation_id, causation_id,
               producer, payload_ref, occurred_at
          FROM orch.event_outbox

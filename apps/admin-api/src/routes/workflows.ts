@@ -571,6 +571,7 @@ export function registerWorkflowRoutes(app: FastifyLike, pool: Pool): void {
                  v.checksum,
                  v.requested_at,
                  coalesce(v.requested_by::text, v.requested_by_label) AS requested_by,
+                 v.request_note,
                  v.compiled_at,
                  coalesce(v.compiled_by::text, v.compiled_by_label)   AS compiled_by,
                  live.version     AS live_version,
@@ -620,6 +621,8 @@ export function registerWorkflowRoutes(app: FastifyLike, pool: Pool): void {
               ? new Date(r.requested_at).toISOString()
               : null,
             requestedBy: r.requested_by ?? null,
+            /** What the author said they changed. The approver is never them. */
+            requestNote: r.request_note ?? null,
             compiledAt: r.compiled_at
               ? new Date(r.compiled_at).toISOString()
               : null,
@@ -877,6 +880,7 @@ export function registerWorkflowRoutes(app: FastifyLike, pool: Pool): void {
           `SELECT v.version, v.definition, v.checksum,
                   v.requested_at, v.compiled_at,
                   coalesce(v.requested_by::text, v.requested_by_label) AS requested_by,
+                  v.request_note,
                   coalesce(v.compiled_by::text, v.compiled_by_label)   AS compiled_by
              FROM authoring.graph_versions v
              JOIN authoring.graphs g ON g.id = v.graph_id
@@ -986,6 +990,7 @@ export function registerWorkflowRoutes(app: FastifyLike, pool: Pool): void {
             ? new Date(row.requested_at).toISOString()
             : null,
           requestedBy: row.requested_by ?? null,
+          requestNote: row.request_note ?? null,
           compiledAt: row.compiled_at
             ? new Date(row.compiled_at).toISOString()
             : null,

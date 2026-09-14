@@ -62,6 +62,14 @@ export type JsonSchema = {
   minimum?: number;
   maximum?: number;
   required?: string[];
+  /**
+   * What the node does when this is left unset.
+   *
+   * Rendered as the field's placeholder rather than its value: a blank box
+   * cannot be reasoned about, but storing the default would freeze today's
+   * answer into the definition and stop the node ever changing its mind.
+   */
+  default?: unknown;
   label?: string;
   adminExposed?: boolean;
   description?: string;
@@ -268,6 +276,24 @@ export type TriggerCandidate = {
    * mean to take it from them" — has to be about the event they actually chose.
    */
   answeredBy: Array<{ graphKey: string; moduleQueue: string | null }>;
+  /**
+   * A step in the proposed workflow publishes this event.
+   *
+   * Ordered last and never dropped — an author who disagrees has to be able to
+   * see it and pick it anyway. The screen's job is to say why it lost.
+   */
+  selfTriggering: boolean;
+  /**
+   * How much of what the first step reads this event carries, 0–1.
+   *
+   * Null when it cannot be known: an undescribed payload, or a first step that
+   * declares no inputs. Null is not zero — eight schemas are placeholders
+   * written at boot, and scoring those zero would punish a gap in the
+   * catalogue harder than a real mismatch.
+   */
+  satisfies: number | null;
+  /** Plain English for the ledger and the picker. Null before a shape exists. */
+  why: string | null;
 };
 
 export type LedgerEntry = {
@@ -381,6 +407,16 @@ export type Proposal = {
     eventType: string;
     graphKey: string;
     alsoRunsHere: string[];
+  /**
+   * The overlap the platform will absorb, and the overlap it will not.
+   *
+   * A shared step is only truly run twice when its declared idempotency key
+   * cannot be built from BOTH payloads involved — the trigger feeding this
+   * flow, and the emitted event feeding the other one. Otherwise the runtime
+   * skips the second copy and the shape is merely redundant.
+   */
+  absorbed?: string[];
+  unabsorbed?: string[];
   }>;
   /**
    * A step publishes the very event that starts this flow.
@@ -678,6 +714,15 @@ export type PendingGoLive = {
   checksum: string | null;
   requestedAt: string | null;
   requestedBy: string | null;
+  /**
+   * What the author said this version changes and why.
+   *
+   * The approver is never the author — `graph_versions_two_person_ck` refuses
+   * that — so without this they open the queue and decide from a key, a number
+   * and a checksum. Null for a request made before notes existed, and for a
+   * change somebody judged spoke for itself.
+   */
+  requestNote: string | null;
   compiledAt: string | null;
   compiledBy: string | null;
   /** What approving would replace, or null when nothing is live yet. */
@@ -703,10 +748,71 @@ export function listPendingGoLive() {
   );
 }
 
-export function requestGoLive(graphKey: string) {
+/**
+ * Freeze the working copy and ask for approval, in one call.
+ *
+ * Was two — compile, then request — and compiling always inserts, so pressing
+ * send twice produced two versions of an identical definition and the panel
+ * that said "v1" sent "v2". The server reuses a version whose checksum matches
+ * the draft, which is the same rule the test pin uses, so what you tested and
+ * what you send are the same version by construction.
+ */
+/**
+ * Everything needed to decide whether to ask somebody to put this live.
+ *
+ * Read-only, including the version: opening the screen must not compile, or
+ * looking at it twice leaves two versions behind. `wouldCompile` says whether
+ * raising the request will freeze a new one.
+ */
+export type ApprovalRequestReview = {
+  graphKey: string;
+  version: number | null;
+  wouldCompile: boolean;
+  liveVersion: number | null;
+  alreadyPending: boolean;
+  trigger: string | null;
+  steps: Array<{ id: string; impl: string }>;
+  /**
+   * Runs of THIS VERSION.
+   *
+   * A fact about the version rather than about the browser tab — the inline
+   * panel used in-session state, so testing and then reloading reported
+   * "nothing yet" for a version with three runs behind it.
+   */
+  tested: {
+    total: number;
+    byStatus: Array<{
+      status: string;
+      count: number;
+      last: string | null;
+      latestRunId: string | null;
+    }>;
+  };
+};
+
+export function loadApprovalRequest(graphKey: string) {
+  return request<ApprovalRequestReview>(
+    `/workflows/${encodeURIComponent(graphKey)}/approval-request`,
+  );
+}
+
+export function sendForApprovalRequest(graphKey: string, note?: string) {
+  return request<{
+    graphKey: string;
+    version: number;
+    status: string;
+    compiled: boolean;
+    note?: string;
+  }>(`/workflows/${encodeURIComponent(graphKey)}/send-for-approval`, {
+    method: "POST",
+    body: JSON.stringify({ note: note ?? null }),
+  });
+}
+
+export function requestGoLive(graphKey: string, note?: string) {
   return request<{ graphKey: string; version: number; status: string; note?: string }>(
     `/workflows/${encodeURIComponent(graphKey)}/request-go-live`,
-    { method: "POST" },
+    { method: "POST", body: JSON.stringify({ note: note ?? null }) },
   );
 }
 

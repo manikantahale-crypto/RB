@@ -25,6 +25,7 @@ import { deriveChain } from "../lib/derive-chain.js";
 import { collectGateEvidence } from "../lib/gate-evidence.js";
 import { diffGraphs } from "../lib/diff-graphs.js";
 import { EVENT_SCHEMAS, GRAPH_DEFINITIONS, GRAPH_EVENT_BINDINGS } from "../lib/authoring-views.js";
+import { versionForDraft } from "../lib/version-for-draft.js";
 import {
   activateVersion,
   approveGoLive,
@@ -539,6 +540,166 @@ export function registerEditorRoutes(app: FastifyLike, pool: Pool): void {
    * about what runs. Approving is the act with consequences, and it is the one
    * that records a name.
    */
+  /**
+   * FREEZE AND ASK, AS ONE ACT — and without minting a version per press.
+   *
+   * The screen did this as two client calls: compile, then request. Compiling
+   * always INSERTS, so withdrawing and sending again produced v2, v3, v4 of an
+   * identical definition — and the panel that said "v1" sent v2. The version
+   * the author reviewed was not the version the approver got.
+   *
+   * `versionForDraft` answers with the version that IS the working copy,
+   * compiling only when the checksum has moved. The same function answers for
+   * a test pin, so the version you tested and the version you send are the
+   * same one by construction rather than by luck.
+   *
+   * Two writes rather than one transaction, deliberately: a compile that
+   * succeeds and a request that fails leaves a compiled version and the button
+   * back at "Send" — recoverable and visible. Wrapping them would need the
+   * write helpers to share a client, which is a bigger change than the fault
+   * justifies.
+   */
+  /**
+   * Everything a person needs before asking somebody else to put this live.
+   *
+   * WHY ONE ENDPOINT RATHER THAN THE PAGE ASSEMBLING IT.
+   *
+   * The facts have to agree. The version being described must be the version
+   * that gets requested, and the runs shown must be runs OF that version —
+   * `versionForDraft` decides it once here, and everything else is read
+   * against that answer.
+   *
+   * READ-ONLY, INCLUDING THE VERSION. `preview` means "what would happen",
+   * so this never compiles: opening a review must not mint a version, or
+   * looking at the request twice leaves two behind. When the working copy has
+   * moved on, it reports the version that WOULD be created rather than
+   * creating it.
+   */
+  app.get("/workflows/:graphKey/approval-request", async (req: any, reply: any) => {
+    const graphKey = String(req.params.graphKey ?? "");
+    if (!graphKey) return reply.code(400).send({ error: "graph_key_required" });
+
+    try {
+      const preview = await versionForDraft(pool, {
+        graphKey,
+        orgId: null,
+        // Never compiles: answers null and the caller reports "a new version".
+        compileDraft: async () => null,
+      });
+
+      const { rows: rowsV } = await pool.query(
+        `SELECT v.version, v.status, v.definition,
+                (SELECT max(v2.version) FROM authoring.graph_versions v2
+                  WHERE v2.graph_id = v.graph_id AND v2.status = 'live') AS live_version
+           FROM authoring.graph_versions v
+           JOIN authoring.graphs g ON g.id = v.graph_id
+          WHERE g.graph_key = $1
+          ORDER BY v.version DESC LIMIT 1`,
+        [graphKey],
+      );
+      const newest = rowsV[0];
+      const version = preview.ok ? preview.version : null;
+
+      /**
+       * Whether this VERSION has been run, not whether this browser tab has
+       * seen a run. The panel used in-session state, so testing and then
+       * reloading reported "nothing yet" for a version with three runs.
+       */
+      const { rows: runs } = version
+        ? await pool.query(
+            `SELECT status, count(*)::int AS n, max(started_at) AS last,
+                    (array_agg(id::text ORDER BY started_at DESC))[1] AS latest_id
+               FROM orch.runs
+              WHERE graph_key = $1 AND graph_version = $2
+              GROUP BY status`,
+            [graphKey, version],
+          )
+        : { rows: [] as any[] };
+
+      const definition: any = newest?.definition ?? {};
+      return {
+        graphKey,
+        version,
+        /** True when raising would freeze a NEW version rather than reuse one. */
+        wouldCompile: !preview.ok,
+        liveVersion: newest?.live_version ?? null,
+        alreadyPending: newest?.status === "pending_go_live",
+        trigger: definition.triggerEventType ?? definition.entryInput ?? null,
+        steps: (definition.nodes ?? []).map((n: any) => ({
+          id: String(n.id),
+          impl: String(n.impl),
+        })),
+        tested: {
+          total: runs.reduce((sum: number, r: any) => sum + Number(r.n), 0),
+          byStatus: runs.map((r: any) => ({
+            status: String(r.status),
+            count: Number(r.n),
+            last: r.last,
+            latestRunId: r.latest_id ? String(r.latest_id) : null,
+          })),
+        },
+      };
+    } catch (err: any) {
+      req.log?.error?.(err);
+      return reply
+        .code(500)
+        .send({ error: "review_failed", message: String(err?.message ?? err) });
+    }
+  });
+
+  app.post("/workflows/:graphKey/send-for-approval", async (req: any, reply: any) => {
+    const graphKey = String(req.params.graphKey ?? "");
+    if (!graphKey) return reply.code(400).send({ error: "graph_key_required" });
+
+    try {
+      const by = String(req.headers["x-admin-id"] ?? "admin-local");
+      const chosen = await versionForDraft(pool, {
+        graphKey,
+        orgId: null,
+        by,
+        compileDraft: (a) => compileDraft(pool, a),
+      });
+      if (!chosen.ok) {
+        return reply.code(409).send({
+          error: "nothing_to_send",
+          message: chosen.message,
+        });
+      }
+
+      const asked = await requestGoLive(pool, {
+        graphKey,
+        orgId: null,
+        version: chosen.version,
+        by,
+        note: req.body?.note ? String(req.body.note) : null,
+      });
+      if (!asked) {
+        return reply.code(409).send({
+          error: "request_refused",
+          message:
+            `v${chosen.version} was taken but could not be sent. It may ` +
+            `already be live, or already waiting for approval.`,
+        });
+      }
+
+      return {
+        graphKey,
+        version: asked.version,
+        status: asked.status,
+        /** True when this press created the version rather than reusing one. */
+        compiled: chosen.compiled,
+        note:
+          `v${asked.version} is waiting for approval. Somebody else has to put ` +
+          `it live.`,
+      };
+    } catch (err: any) {
+      req.log?.error?.(err);
+      return reply
+        .code(500)
+        .send({ error: "send_failed", message: String(err?.message ?? err) });
+    }
+  });
+
   app.post("/workflows/:graphKey/request-go-live", async (req: any, reply: any) => {
     const graphKey = String(req.params?.graphKey ?? "");
     if (!graphKey) return reply.code(400).send({ error: "graph_key_required" });
@@ -550,6 +711,7 @@ export function registerEditorRoutes(app: FastifyLike, pool: Pool): void {
         orgId: null,
         version,
         by: String(req.headers["x-admin-id"] ?? "admin-local"),
+        note: req.body?.note ? String(req.body.note) : null,
       });
 
       if (!asked) {
@@ -1097,19 +1259,23 @@ export function registerEditorRoutes(app: FastifyLike, pool: Pool): void {
         return reply.code(404).send({ error: "workflow_not_found", graphKey });
       }
 
-      if (graphKey.includes(".workflow")) {
-        return {
-          graphKey,
-          version: row.version,
-          status: row.status,
-          applicable: false,
-          reason:
-            "This is a runtime workflow key, seeded by migration. The go-live " +
-            "gate only judges authored workflows — it refuses these by design, " +
-            "so running it here would report failures that mean nothing.",
-          checks: [],
-        };
-      }
+      /**
+       * THE SECOND COPY OF A RULE THAT WAS WRONG IN BOTH PLACES.
+       *
+       * This short-circuited to `applicable: false` for any key containing
+       * `.workflow`, on the grounds that such keys are seeded by migration and
+       * the gate refuses them by design. The gate did refuse them — see
+       * `checkNoRuntimeKeyCollision`, where the same agent-era rule lived — and
+       * both were removed together.
+       *
+       * The unit of authorship is a workflow and the proposer generates
+       * `${module}.${word}.workflow`, so between them these two made the gate
+       * unusable on every workflow this platform can author: the editor's rail
+       * said "not applicable" and approval refused outright.
+       *
+       * Collisions are prevented by `graphs_key_per_org_idx`, which is unique
+       * on (org, graph_key). A name cannot take a key that already exists.
+       */
 
       const artifactSource =
         typeof row.definition === "string"

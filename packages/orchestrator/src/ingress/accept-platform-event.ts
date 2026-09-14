@@ -39,9 +39,9 @@ export async function acceptPlatformEvent(
         `INSERT INTO orch.event_outbox (
            event_id, event_type, schema_version, organization_id,
            aggregate_type, aggregate_id, correlation_id, causation_id,
-           producer, payload_ref, published_at
+           producer, payload_ref, test_pin, published_at
          ) VALUES (
-           $1, $2, $3, $4, $5, $6, $7, $8, $9, $10::jsonb, NULL
+           $1, $2, $3, $4, $5, $6, $7, $8, $9, $10::jsonb, $11::jsonb, NULL
          )
          ON CONFLICT (event_id) DO NOTHING
          RETURNING id`,
@@ -56,6 +56,8 @@ export async function acceptPlatformEvent(
           envelope.causation_id,
           envelope.producer,
           JSON.stringify(envelope.payload_ref),
+          // Null for every real producer. See the note on the schema field.
+          envelope.test_pin ? JSON.stringify(envelope.test_pin) : null,
         ],
       );
       return (result.rowCount ?? 0) > 0;

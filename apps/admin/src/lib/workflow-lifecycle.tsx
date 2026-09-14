@@ -16,8 +16,8 @@ import type { WorkflowRegistryRow } from "../api";
 import {
   approveGoLive,
   cancelGoLiveRequest,
-  compileDraft,
   requestGoLive,
+  sendForApprovalRequest,
   takeOffline,
 } from "../api/editor";
 /**
@@ -31,6 +31,14 @@ export type LifecycleCall = (graphKey: string) => Promise<
 >;
 
 type NextStep = {
+  /**
+   * Which transition this is, so a screen can decline to offer one.
+   *
+   * The editor does not offer `send`: editing and sending for approval are
+   * different jobs, and the way through is the test page — you look at what it
+   * does before you ask somebody to put it live.
+   */
+  id: "send" | "approve" | "offline";
   label: string;
   title: string;
   kind: "normal" | "primary" | "quiet";
@@ -39,11 +47,39 @@ type NextStep = {
   because: string;
 } | null;
 
+/**
+ * Compile and request, as one act.
+ *
+ * THEY WERE TWO BUTTONS AND THERE WAS NEVER A REASON TO PRESS THE FIRST ALONE.
+ *
+ * Compiling takes a frozen numbered copy of the working draft, and freezing is
+ * genuinely load-bearing: runs are pinned to a version, so v4 must mean one
+ * thing for ever; the approver has to be looking at something that cannot
+ * change under them; and rollback needs old versions to still exist.
+ *
+ * None of that is the author's problem. A compiled-and-unrequested version can
+ * not be run, browsed to, or branched from — `startDraft` copies the ACTIVE
+ * version — so the only thing the screen could offer next was "Request it".
+ * Two presses for one intention, the first of which exposed a mechanism.
+ *
+ * The guarantees are untouched: the snapshot is still taken, still numbered,
+ * still immutable while somebody reviews it.
+ *
+ * If the request half fails, the compiled version stands and the next step
+ * becomes "Request v4" — which is exactly where the two-button version left
+ * you, so nothing is lost and nothing is compiled twice.
+ */
+export const sendForApproval =
+  (note?: string): LifecycleCall =>
+  (graphKey) =>
+    sendForApprovalRequest(graphKey, note);
+
 function nextStep(row: WorkflowRegistryRow): NextStep {
   const { hasWorkingCopy, compiledVersion, pendingVersion } = row.lifecycle;
 
   if (pendingVersion != null) {
     return {
+      id: "approve",
       label: `Approve v${pendingVersion}`,
       title:
         `Put v${pendingVersion} on the air and create its binding. Somebody ` +
@@ -53,30 +89,38 @@ function nextStep(row: WorkflowRegistryRow): NextStep {
       because: `v${pendingVersion} is waiting for approval`,
     };
   }
+  /**
+   * Only reachable when the request half of `sendForApproval` failed: the
+   * snapshot exists and nobody has been asked yet. Kept so that state has a
+   * way out, not as a step anyone is meant to walk through.
+   */
   if (compiledVersion != null) {
     return {
-      label: `Request v${compiledVersion}`,
+      id: "send",
+      label: `Raise approval request for v${compiledVersion}`,
       title:
-        `Send v${compiledVersion} for approval. Nothing runs differently ` +
-        `until somebody approves it.`,
-      kind: "normal",
-      run: requestGoLive,
-      because: `v${compiledVersion} is compiled and not yet requested`,
+        `v${compiledVersion} was taken but nobody has been asked yet. ` +
+        `Nothing runs differently until somebody approves it.`,
+      kind: "primary",
+      run: (graphKey: string) => requestGoLive(graphKey),
+      because: `v${compiledVersion} was taken but not sent`,
     };
   }
   if (hasWorkingCopy) {
     return {
-      label: "Compile draft",
+      id: "send",
+      label: "Raise approval request",
       title:
-        "Take a numbered copy of the working copy. The draft is left alone, " +
-        "so editing can carry on.",
-      kind: "normal",
-      run: compileDraft,
-      because: "there are edits that have not been compiled",
+        "Freeze what you have as a numbered version and ask somebody to put " +
+        "it live. Your working copy is left alone, so editing can carry on.",
+      kind: "primary",
+      run: sendForApproval(),
+      because: "there are edits nobody has been asked about",
     };
   }
   if (row.activeVersion != null) {
     return {
+      id: "offline",
       label: "Take offline",
       title:
         "Retire the binding. The versions are untouched, and the workflow " +
@@ -99,16 +143,90 @@ export function LifecycleCell({
   row,
   busy,
   onAct,
+  skip,
+  emptyLabel,
+  showWhy = true,
 }: {
   row: WorkflowRegistryRow;
   busy: boolean;
-  onAct: (graphKey: string, run: LifecycleCall) => void;
+  /**
+   * `id` says WHICH transition, so a screen can intercept one.
+   *
+   * The test page intercepts `send` to show what is about to be sent before
+   * sending it; everything else still acts on the press.
+   */
+  onAct: (
+    graphKey: string,
+    run: LifecycleCall,
+    id: NonNullable<NextStep>["id"],
+  ) => void;
+  /**
+   * Transitions this screen does not offer.
+   *
+   * The editor skips `send`. Asking for approval is a different job from
+   * editing, and the way to it is the test page — you look at what the thing
+   * does before asking somebody to put it live. Testing is not compulsory;
+   * being on the screen that offers it is.
+   */
+  skip?: Array<NonNullable<NextStep>["id"]>;
+  /**
+   * What to say when there is nothing this screen will offer.
+   *
+   * `null` renders nothing at all, which is the right answer on a screen that
+   * declines a step. The editor skips `send`, so while you are editing a draft
+   * there is nothing for it to show — and a control announcing "nothing
+   * waiting" is worse than an absent one: it reads as a status about the
+   * workflow rather than about a button that was never going to appear.
+   */
+  emptyLabel?: string | null;
+  /**
+   * Show the line under the button explaining the current state.
+   *
+   * Worth it where a screen distinguishes states — "live, with nothing
+   * waiting" tells you something the label does not. Not worth it on a screen
+   * built around a single action, where it only says the button again.
+   */
+  showWhy?: boolean;
 }) {
-  const step = nextStep(row);
-  if (!step) {
+  const found = nextStep(row);
+  const step = found && skip?.includes(found.id) ? null : found;
+
+  /**
+   * SENT, AND WAITING FOR SOMEBODY ELSE.
+   *
+   * A screen that declines `approve` still has something true to say when a
+   * version is pending — and the person looking at it is usually the one who
+   * just sent it, for whom Approve is not merely unavailable but FORBIDDEN:
+   * `graph_versions_two_person_ck` refuses an approval by the requester, so
+   * the button would be a control guaranteed to fail.
+   *
+   * Withdraw stays, because taking back your own request is yours to do, and a
+   * request that cannot be taken back is one people hesitate to make.
+   */
+  if (!step && row.lifecycle.pendingVersion != null) {
     return (
       <div className="wf-lifecycle">
-        <span className="wf-muted">nothing to do</span>
+        <span className="wf-muted">
+          v{row.lifecycle.pendingVersion} requested — somebody else approves it
+        </span>
+        <button
+          type="button"
+          className="wf-btn wf-btn--quiet"
+          title="Withdraw the request. The version is kept and can be sent again."
+          disabled={busy}
+          onClick={() => onAct(row.graphKey, cancelGoLiveRequest, "send")}
+        >
+          Withdraw
+        </button>
+      </div>
+    );
+  }
+
+  if (!step) {
+    if (emptyLabel === null) return null;
+    return (
+      <div className="wf-lifecycle">
+        <span className="wf-muted">{emptyLabel ?? "nothing to do"}</span>
       </div>
     );
   }
@@ -119,7 +237,7 @@ export function LifecycleCell({
         className={`wf-btn wf-btn--${step.kind}`}
         title={step.title}
         disabled={busy}
-        onClick={() => onAct(row.graphKey, step.run)}
+        onClick={() => onAct(row.graphKey, step.run, step.id)}
       >
         {busy ? "Working…" : step.label}
       </button>
@@ -129,12 +247,12 @@ export function LifecycleCell({
           className="wf-btn wf-btn--quiet"
           title="Withdraw the request. The version is kept and can be requested again."
           disabled={busy}
-          onClick={() => onAct(row.graphKey, cancelGoLiveRequest)}
+          onClick={() => onAct(row.graphKey, cancelGoLiveRequest, "approve")}
         >
           Withdraw
         </button>
       ) : null}
-      <span className="wf-lifecycle-why">{step.because}</span>
+      {showWhy ? <span className="wf-lifecycle-why">{step.because}</span> : null}
     </div>
   );
 }

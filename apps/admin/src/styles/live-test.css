@@ -67,6 +67,20 @@
   justify-content: space-between;
   gap: var(--space-3);
 }
+/*
+ * The version chip and the lifecycle action, stacked at the right.
+ *
+ * Right-aligned so the button lines up with the header edge rather than
+ * floating in the middle of the gap, and `end` on the cross axis so a one-word
+ * chip and a wide button share a right margin instead of a left one.
+ */
+.lt-head-actions {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: var(--space-2);
+}
+
 .lt-crumb {
   font-family: var(--font-family-mono);
   font-size: var(--font-size-xs);
@@ -229,4 +243,128 @@
   padding: var(--space-3);
   border: 1px dashed var(--border-subtle);
   border-radius: var(--radius-md);
+}
+
+/*
+ * The rest of the event's payload, folded.
+ *
+ * Quiet on purpose: these are fields this workflow does not read, kept within
+ * reach for somebody testing a specific case rather than presented as work.
+ */
+.lt-more {
+  margin-top: var(--space-3);
+  border-top: 1px solid var(--border-subtle);
+  padding-top: var(--space-3);
+}
+
+.lt-more > summary {
+  cursor: pointer;
+  font-size: var(--font-size-sm);
+  color: var(--text-muted);
+  list-style: revert;
+}
+
+.lt-more > summary:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring);
+  border-radius: var(--control-radius);
+}
+
+.lt-more > .lt-fields {
+  margin-top: var(--space-3);
+}
+
+/*
+ * An answer the screen already has, rather than a question.
+ *
+ * The organisation belongs to whoever is signed in; nothing here knows that
+ * yet, so it is answered from the event being replayed and shown as a fact.
+ */
+.lt-answered {
+  margin: 0 0 var(--space-4);
+  font-size: var(--font-size-sm);
+  color: var(--text-secondary);
+}
+
+.lt-inline-change {
+  border: none;
+  background: none;
+  padding: 0;
+  font: inherit;
+  color: var(--status-info-fg);
+  text-decoration: underline;
+  cursor: pointer;
+}
+
+.lt-inline-change:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring);
+  border-radius: var(--radius-sm);
+}
+
+/*
+ * Fields the system fills in: shown so nothing looks hidden, not editable
+ * because nobody testing a workflow has an opinion about a parser version.
+ */
+.lt-carried {
+  margin: var(--space-3) 0 var(--space-2);
+  display: grid;
+  gap: var(--space-2);
+}
+
+.lt-carried-row {
+  display: grid;
+  grid-template-columns: minmax(0, 12rem) minmax(0, 1fr);
+  gap: var(--space-3);
+  align-items: baseline;
+}
+
+.lt-carried dt {
+  font-size: var(--font-size-sm);
+  font-weight: var(--font-weight-semibold);
+}
+
+.lt-carried dd {
+  margin: 0;
+  font-family: var(--font-family-mono);
+  font-size: var(--font-size-xs);
+  color: var(--text-secondary);
+  overflow-wrap: anywhere;
+}
+
+.lt-carried-empty {
+  font-family: var(--font-family-body);
+  color: var(--text-muted);
+}
+
+/*
+ * Where the run got to, on the screen that fired it.
+ *
+ * This page used to navigate to the run as soon as one started. Asking for
+ * approval happens here, so leaving stranded you one screen away from the
+ * button you needed next.
+ */
+.lt-outcome {
+  margin-top: var(--space-3);
+  padding: var(--space-3);
+  border: 1px solid var(--border-subtle);
+  border-left: 3px solid var(--border-strong);
+  border-radius: var(--control-radius);
+  display: grid;
+  gap: var(--space-2);
+}
+
+.lt-outcome--completed { border-left-color: var(--status-success-border); }
+.lt-outcome--failed { border-left-color: var(--status-danger-border); }
+.lt-outcome--waiting_approval,
+.lt-outcome--parked { border-left-color: var(--status-warning-border); }
+
+.lt-outcome-what {
+  margin: 0;
+  font-size: var(--font-size-sm);
+}
+
+.lt-outcome-links {
+  margin: 0;
+  font-size: var(--font-size-sm);
 }

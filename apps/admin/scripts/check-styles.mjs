@@ -37,6 +37,11 @@ const OWNS = {
   "new-workflow.css": ["nw"],
   "live-test.css": ["lt"],
   "platform-health.css": ["ph"],
+  // Screen 10, the release console. Added late — the stylesheet shipped
+  // without a line here, so the guard failed on it rather than on anything
+  // being in the wrong place, which is the guard telling the truth awkwardly.
+  "release.css": ["rc"],
+  "raise-request.css": ["rq"],
 };
 
 /**

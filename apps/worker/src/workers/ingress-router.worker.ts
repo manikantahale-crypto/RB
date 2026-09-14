@@ -68,9 +68,51 @@ export async function startIngressRouter(args: {
          * so an unloaded table falls back to the single-binding path below.
          */
         const table = routingTable();
-        let targets: Array<{ graphKey: string; moduleQueue: string; via: string }> = [];
+        let targets: Array<{
+          graphKey: string;
+          moduleQueue: string;
+          via: string;
+          version?: number;
+        }> = [];
 
-        if (table) {
+        /**
+         * A TEST SAID WHERE IT MEANT TO GO.
+         *
+         * Screen 5 fires a real event through the real front door, and this
+         * router then answered with the BINDING — which names the live version.
+         * So testing an edit ran the version already in production, and a
+         * workflow that had never been live could not be tried at all: its
+         * event was acked and dropped, or it started somebody else's flow.
+         *
+         * The pin replaces the ANSWER, not the path. This event still came
+         * through ingress, the outbox and the relay, and still gets enqueued on
+         * a real module queue — because the thing most likely to be wrong about
+         * a new workflow is whether anything reaches it, and a test that
+         * skipped delivery would be blind to exactly that.
+         *
+         * Only an authoring test fire sets it; `test_pin` is null on every
+         * event a real producer writes, and the column has a CHECK that refuses
+         * a half-filled one.
+         */
+        const pin = (envelope as EventEnvelope & {
+          test_pin?: { graphKey: string; graphVersion: number; moduleQueue: string };
+        }).test_pin;
+
+        if (pin) {
+          orchStory(
+            'ROUTE',
+            `${envelope.event_type}  PINNED → ${pin.graphKey}@${pin.graphVersion} ` +
+              `on ${pin.moduleQueue}  (authoring test — bindings not consulted)`,
+          );
+          targets = [
+            {
+              graphKey: pin.graphKey,
+              moduleQueue: pin.moduleQueue,
+              via: 'authoring-test',
+              version: pin.graphVersion,
+            },
+          ];
+        } else if (table) {
           try {
             // Entitlements are empty until platform.features is populated, so
             // a binding with `requires_feature` set is skipped. That is the
@@ -137,10 +179,15 @@ export async function startIngressRouter(args: {
         const graphKey = target.graphKey;
         const moduleQueue = target.moduleQueue;
 
-        const graphVersion = await compiler.resolveActiveVersion(
-          graphKey,
-          envelope.organization_id,
-        );
+        /**
+         * A pinned target already knows its version, and must not be asked
+         * again: `resolveActiveVersion` answers with whatever is LIVE, which
+         * for a draft under test is either the old version or nothing at all —
+         * the exact substitution this pin exists to prevent.
+         */
+        const graphVersion =
+          target.version ??
+          (await compiler.resolveActiveVersion(graphKey, envelope.organization_id));
 
         const routed: RoutedEnvelope = {
           ...envelope,

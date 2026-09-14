@@ -2266,6 +2266,22 @@ code {
 }
 
 .go-live-agent-trigger,
+/*
+ * What the author said they changed.
+ *
+ * Given weight rather than tucked into the metadata line: it is the only thing
+ * on this card the screen cannot derive, and the approver is never the person
+ * who wrote it.
+ */
+.go-live-note {
+  margin: var(--space-2) 0 0;
+  padding: var(--space-2) var(--space-3);
+  border-left: 2px solid var(--border-strong);
+  font-size: var(--font-size-sm);
+  line-height: var(--line-height-normal);
+  white-space: pre-wrap;
+}
+
 .go-live-agent-meta {
   margin: 0.35rem 0 0;
   font-size: 0.88rem;
@@ -3911,7 +3927,27 @@ code {
   box-shadow: var(--focus-ring);
 }
 
+/*
+ * Works on a <button> AND on an <a>, which it did not.
+ *
+ * A <button> is inline-block by default and centres its own label, so `height`
+ * and vertical padding landed correctly and nobody noticed the rule was
+ * relying on that. An <a> is `display: inline`: height does nothing, the label
+ * sits on the baseline instead of in the middle, and the link underline stays.
+ * Beside real buttons in the same row, the editor's "Test…" link read as a
+ * different kind of control — which it is not.
+ *
+ * inline-flex rather than inline-block so the label centres on both axes
+ * whatever the element, and `text-decoration: none` so an anchor stops
+ * announcing itself as text.
+ */
 .wf-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  text-decoration: none;
+  white-space: nowrap;
+  box-sizing: border-box;
   height: var(--control-height);
   padding: 0 var(--space-4);
   border: 1px solid var(--action-secondary-border);

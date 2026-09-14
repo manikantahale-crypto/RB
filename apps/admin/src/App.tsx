@@ -22,6 +22,7 @@
  */
 import { BrowserRouter, Link, Navigate, Route, Routes, useLocation } from "react-router-dom";
 import { GoLiveRequestsPage } from "./pages/GoLiveRequests";
+import { RaiseRequestPage } from "./pages/RaiseRequest";
 import { ReleaseConsolePage } from "./pages/ReleaseConsole";
 import { PlatformHealthPage } from "./pages/PlatformHealth";
 import { WorkflowTestPage } from "./pages/WorkflowTestPage";
@@ -69,6 +70,9 @@ function AppShell() {
         {/* Screen 13 — one run and the path it took. */}
         <Route path="/runs/:runId" element={<RunDetailPage />} />
         <Route path="/workflows/:graphKey/test" element={<LiveTestPage />} />
+        {/* Screen 6 — raise an approval request. Not a GitHub PR: see §6 of
+            Orchestrator_Decisions.md for why that was cancelled. */}
+        <Route path="/workflows/:graphKey/request" element={<RaiseRequestPage />} />
         {/* Screen 4 — the graph editor. */}
         {/* Screen 2 — describe or clone, then one proposal. */}
         <Route path="/workflows/new" element={<NewWorkflowPage />} />

@@ -60,6 +60,21 @@ export const EVENT_TYPES = {
     aggregate: EventAggregate;
     payload_ref: TPayload;
     producer: string;
+    /**
+     * Where this one event must go, instead of wherever its binding says.
+     *
+     * Set only by an authoring test fire. Optional everywhere else, and null
+     * on every event a real producer writes — the router consults it before
+     * the binding table and ignores its absence.
+     *
+     * It replaces the router's answer, not the delivery path: the event still
+     * goes through ingress, the outbox, the relay and a real module queue.
+     */
+    test_pin?: {
+      graphKey: string;
+      graphVersion: number;
+      moduleQueue: string;
+    } | null;
   }
   
   // Per-event payload types — mirror the JSON Schemas in the seed.

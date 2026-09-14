@@ -19,6 +19,7 @@ import "./styles/new-workflow.css";
 import "./styles/event-catalog.css";
 import "./styles/graph-editor.css";
 import "./styles/live-test.css";
+import "./styles/raise-request.css";
 import "./styles/release.css";
 import "./styles/platform-health.css";
 

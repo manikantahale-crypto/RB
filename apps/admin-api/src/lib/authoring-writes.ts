@@ -292,6 +292,14 @@ export async function requestGoLive(
     /** Defaults to the highest version that is not live and not retired. */
     version?: number;
     by?: string | null;
+    /**
+     * What the author says this changes and why.
+     *
+     * Optional on purpose. An empty note is honest about a change that speaks
+     * for itself; forcing one produces "update" a thousand times, which is
+     * worse than nothing because it looks like an answer.
+     */
+    note?: string | null;
   },
 ): Promise<{ version: number; status: string } | null> {
   const { userId, label } = await attribution(db, args.by);
@@ -322,7 +330,10 @@ export async function requestGoLive(
         SET status             = 'pending_go_live',
             requested_by       = $4::uuid,
             requested_by_label = $5,
-            requested_at       = now()
+            requested_at       = now(),
+            -- The approver is never the author, so without this they open the
+            -- queue and see a key, a number and a checksum.
+            request_note       = $6
        FROM authoring.graphs g
       WHERE g.id = v.graph_id
         AND g.graph_key = $1
@@ -332,7 +343,14 @@ export async function requestGoLive(
           SELECT max(v2.version) FROM authoring.graph_versions v2
            WHERE v2.graph_id = v.graph_id AND v2.status = 'compiled'))
       RETURNING v.version, v.status`,
-    [args.graphKey, args.orgId, args.version ?? null, userId, label],
+    [
+      args.graphKey,
+      args.orgId,
+      args.version ?? null,
+      userId,
+      label,
+      args.note?.trim() ? args.note.trim() : null,
+    ],
   );
   return rows[0] ?? null;
 }

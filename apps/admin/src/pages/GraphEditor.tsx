@@ -281,10 +281,16 @@ function FormField({
         <label className="ge-check">
           <input
             type="checkbox"
-            checked={value === true}
+            checked={value === undefined ? schema.default === true : value === true}
             onChange={(e) => onChange(e.target.checked)}
           />
-          <span>{value === true ? "on" : "off"}</span>
+          <span>
+            {value === undefined
+              ? `${schema.default === true ? "on" : "off"} (default)`
+              : value === true
+                ? "on"
+                : "off"}
+          </span>
         </label>
       );
     }
@@ -294,6 +300,18 @@ function FormField({
           className="ge-input"
           type="number"
           value={value === undefined || value === null ? "" : String(value)}
+          /*
+            THE DEFAULT, SHOWN RATHER THAN LEFT BLANK.
+            An empty box says "nothing here"; what it means is "whatever the
+            node does when you say nothing", and that is a number the contract
+            already declares. A person deciding whether to change a threshold
+            cannot decide against a blank.
+            Placeholder, not value: typing nothing must keep storing nothing,
+            so the step does not freeze today's default into the definition.
+          */
+          placeholder={
+            schema.default === undefined ? undefined : String(schema.default)
+          }
           min={schema.minimum}
           max={schema.maximum}
           step={schema.type === "integer" ? 1 : 0.01}
@@ -326,6 +344,9 @@ function FormField({
         className="ge-input"
         type="text"
         value={value === undefined || value === null ? "" : String(value)}
+        placeholder={
+          schema.default === undefined ? undefined : String(schema.default)
+        }
         onChange={(e) => onChange(e.target.value || undefined)}
       />
     );
@@ -814,6 +835,47 @@ export function GraphEditorPage() {
     setSaving(false);
   };
 
+  /**
+   * SAVING IS NOT A DECISION, SO IT IS NOT A BUTTON.
+   *
+   * There was a "Save draft" button and a warning next to the title when you
+   * had not pressed it. That asks the author to remember something the screen
+   * already knows, and the penalty for forgetting is losing work — which is
+   * never a reasonable thing to make a person responsible for.
+   *
+   * WHY THIS IS SAFE HERE, AND WOULD NOT BE ELSEWHERE. A draft cannot run: the
+   * router reads active bindings, and compiling takes a separate numbered copy.
+   * So a save changes nothing anybody is depending on. The dangerous verbs on
+   * this screen are Compile, Request and Approve, and all three stay explicit.
+   *
+   * THREE THINGS IT WILL NOT DO:
+   *
+   *   - save a graph the validator rejects. `blocking` means a real error —
+   *     a step whose impl does not exist, an unreachable node — and storing
+   *     that would replace a working draft with one that cannot compile.
+   *     Edits stay on screen and go in as soon as the error is fixed.
+   *   - save a version that is not a draft. `editable` is false for compiled
+   *     and active versions, which are immutable on purpose.
+   *   - overlap with itself. A save in flight defers the next one to the
+   *     round after it lands, so a fast typist cannot start three PUTs whose
+   *     order the server would decide.
+   *
+   * The delay is deliberate. Dragging a node fires a change per frame, and
+   * saving each would be hundreds of writes for one gesture; 800ms is past the
+   * end of a drag and well inside the gap before someone looks away.
+   */
+  const saveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  useEffect(() => {
+    if (!dirty || saving || blocking || !loaded?.editable) return;
+    if (saveTimer.current) clearTimeout(saveTimer.current);
+    saveTimer.current = setTimeout(() => void onSave(), 800);
+    return () => {
+      if (saveTimer.current) clearTimeout(saveTimer.current);
+    };
+    // `onSave` closes over draft and loaded, both of which are in the list.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [dirty, saving, blocking, loaded?.editable, draft, loaded?.version]);
+
   /** The fork on the selected step, if it has one. */
   const selectedFork = draft && selected ? forkAt(draft, selected) : null;
 
@@ -904,19 +966,6 @@ export function GraphEditorPage() {
           <Link to="/workflows" className="run-back">
             ← All workflows
           </Link>
-          {/*
-            Runs and history. There was no way to reach them from here at all:
-            the only entry was the health number on the list, which reads as a
-            statistic rather than a link and says "never" on a workflow that
-            has not run — exactly the one you most want the history of.
-          */}
-          <Link
-            to={`/workflows/${encodeURIComponent(graphKey)}/runs`}
-            className="run-back"
-            title="Every run of this workflow, newest first"
-          >
-            History →
-          </Link>
           <h1 className="ge-title">
             {graphKey}
             {loaded ? (
@@ -934,16 +983,31 @@ export function GraphEditorPage() {
                 </span>
               </>
             ) : null}
-            {dirty ? <span className="ge-dirty">unsaved changes</span> : null}
+            {/*
+              The save state, not a nag. "unsaved changes" used to sit here and
+              meant "you have not pressed the button" — a instruction dressed as
+              a status. Now nothing is expected of the author, so this only
+              reports: it is going in, it went in, or it cannot go in yet.
+            */}
+            {!loaded?.editable ? null : blocking && dirty ? (
+              <span className="ge-dirty" title="Fix the errors in the validation panel and this saves itself.">
+                not saved — fix the errors below
+              </span>
+            ) : saving || dirty ? (
+              <span className="ge-dirty">saving…</span>
+            ) : savedAt ? (
+              <span className="wf-updated">saved {savedAt.toLocaleTimeString()}</span>
+            ) : null}
           </h1>
         </div>
         <div className="ge-actions">
           {/*
-            Screen 5. A link rather than a button, and deliberately not the
-            primary one: firing runs the workflow for real, and a control level
-            with "Save draft" would invite being pressed with the same
-            expectations. The warning lives on that screen, where there is room
-            to say it properly.
+            Screen 5. A link rather than a button, and deliberately quiet:
+            firing runs the workflow FOR REAL, against live SYNTRA. Now that
+            saving happens by itself, this is one of only two controls up here
+            that does something irreversible, and it should not look like the
+            ordinary next thing to press. The warning lives on that screen,
+            where there is room to say it properly.
 
             Enabled for a draft too. A draft has no binding, so firing its
             trigger runs whatever IS bound to that event — which may be a
@@ -951,38 +1015,20 @@ export function GraphEditorPage() {
             prevented from finding out; screen 5 says so before the button.
           */}
           <Link
-            className="wf-btn"
+            className={
+              registryRow?.lifecycle.hasWorkingCopy
+                ? "wf-btn wf-btn--primary"
+                : "wf-btn"
+            }
             to={`/workflows/${encodeURIComponent(graphKey)}/test`}
-            title={`Fire a real ${graphKey} event`}
-          >
-            Test…
-          </Link>
-          <button
-            type="button"
-            className="wf-btn"
-            disabled
-            title="Screen 6 is not built — it needs a decision on how the platform talks to GitHub."
-          >
-            Review →
-          </button>
-          <button
-            type="button"
-            className="wf-btn wf-btn--primary"
-            onClick={() => void onSave()}
-            disabled={!dirty || saving || !loaded?.editable || blocking}
             title={
-              loaded && !loaded.editable
-                ? "This version is not a draft and cannot be edited."
-                : blocking
-                  ? "Fix the errors in the validation panel first."
-                  : undefined
+              registryRow?.lifecycle.hasWorkingCopy
+                ? "Try it, and raise the approval request from there"
+                : `Fire a real ${graphKey} event`
             }
           >
-            {saving ? "Saving…" : "Save draft"}
-          </button>
-          {savedAt && !dirty ? (
-            <span className="wf-updated">saved {savedAt.toLocaleTimeString()}</span>
-          ) : null}
+            Test
+          </Link>
           {/*
             The lifecycle, next to the flow it acts on rather than on the list.
             One button: whatever this workflow can do next.
@@ -992,6 +1038,14 @@ export function GraphEditorPage() {
               row={registryRow}
               busy={acting}
               onAct={(_key, call) => void runLifecycle(call)}
+              /*
+                Not from here. Editing and asking for approval are different
+                jobs, and the route between them is the test page — where you
+                can see what the thing actually does first. Testing is not
+                compulsory; passing through the screen that offers it is.
+              */
+              skip={["send"]}
+              emptyLabel={null}
             />
           ) : null}
           {/*
