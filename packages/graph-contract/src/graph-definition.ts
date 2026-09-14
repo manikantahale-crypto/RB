@@ -1,5 +1,5 @@
-import { createHash } from "node:crypto";
 import { z } from "zod";
+import { sha256Hex } from "./sha256.js";
 
 /**
  * Canonical graph topology stored in agent_versions.artifact_source and
@@ -11,6 +11,16 @@ export const GraphDefinitionSchema = z.object({
   agentName: z.string().min(1).optional(),
   stateSchema: z.string().min(1).optional(),
   entryInput: z.string().min(1).optional(),
+  /**
+   * The event this workflow is FOR.
+   *
+   * Not a binding — a binding is the live fact that this event currently
+   * starts this workflow, and it is created at go-live. This is the author's
+   * intent, recorded when the workflow is accepted so that go-live knows what
+   * to bind it to. Without it the trigger was collected at accept time and
+   * then dropped, and a workflow could be promoted with nothing routing to it.
+   */
+  triggerEventType: z.string().min(1).optional(),
   nodes: z
     .array(
       z.object({
@@ -57,7 +67,10 @@ export const GraphDefinitionSchema = z.object({
 export type GraphDefinition = z.infer<typeof GraphDefinitionSchema>;
 
 export function checksumOf(definition: unknown): string {
-  return createHash("sha256").update(JSON.stringify(definition)).digest("hex");
+  // sha256Hex rather than node:crypto: this package is imported by the admin
+  // UI for ROUTER_DEFINITIONS, and a top-level `node:crypto` import made the
+  // whole page render white in the browser. See sha256.ts.
+  return sha256Hex(JSON.stringify(definition));
 }
 
 /* ─────────────────────── where an input comes from ────────────────────── */

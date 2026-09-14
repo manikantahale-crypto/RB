@@ -1,4 +1,5 @@
 const { PgBoss } = require("pg-boss");
+const { sslFor } = require("./ssl");
 const env = require("./env");
 const log = require("../utils/logger");
 const { withPgRetry } = require("../utils/pgRetry");
@@ -24,7 +25,7 @@ async function startBoss() {
   boss = new PgBoss({
     connectionString: env.DATABASE_URL,
     schema: "pgboss",
-    ssl: { rejectUnauthorized: false },
+    ssl: sslFor(env.DATABASE_URL),
     // Session pooler allows ~15 clients total — share budget with Node + Python pools
     max: 1,
     connectionTimeoutMillis: 20000,

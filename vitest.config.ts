@@ -23,6 +23,16 @@ import { defineConfig } from "vitest/config";
  *
  * `node-api/structure.test.js` IS a real suite and still runs — it sits outside
  * `tests/` deliberately.
+ *
+ * THE SAME PROBLEM, FROM THE OTHER DIRECTION: `apps/admin/e2e/` holds
+ * Playwright specs. They are real tests, but they are Playwright's — their
+ * `test.beforeEach` takes `{ request }`, a fixture only Playwright supplies —
+ * so vitest loads them, fails to construct the suite, and reports two failures
+ * on every run. `npx vitest run` has therefore ended in red regardless of the
+ * state of the code, which is the same lesson learned twice: a suite that is
+ * always red teaches people not to read it.
+ *
+ * They run under `npm run test:e2e -w @tekisho/admin`, which is Playwright.
  */
 export default defineConfig({
   test: {
@@ -31,6 +41,8 @@ export default defineConfig({
       "**/dist/**",
       // Not tests. See above.
       "node-api/tests/**",
+      // Tests, but Playwright's. See above.
+      "**/e2e/**",
     ],
   },
 });

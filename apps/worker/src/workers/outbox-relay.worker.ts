@@ -5,6 +5,7 @@
 // published_at update (pg-boss `db` option), then COMMITs — so enqueue + mark
 // published succeed or fail together (true transactional outbox on one DB).
 
+import { sslFor } from "@tekisho/authoring";
 import { Pool } from "pg";
 import type { PgBoss } from "pg-boss";
 import { env } from "../env.js";
@@ -334,14 +335,14 @@ export async function startOutboxRelay(
   } else if (relayUrl.length > 0) {
     pool = new Pool({
       connectionString: relayUrl,
-      ssl: { rejectUnauthorized: false },
+      ssl: sslFor(relayUrl),
       max: 1,
     });
     ownsPool = true;
   } else {
     pool = new Pool({
       connectionString: env.DATABASE_MIGRATOR_URL,
-      ssl: { rejectUnauthorized: false },
+      ssl: sslFor(env.DATABASE_MIGRATOR_URL),
       max: 1,
     });
     ownsPool = true;

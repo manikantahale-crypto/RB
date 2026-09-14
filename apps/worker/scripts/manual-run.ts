@@ -27,6 +27,7 @@
  * DATABASE_MIGRATOR_URL points at, including any HTTP calls and AI spend the
  * nodes make. It is not a dry run — no such mode exists, by design.
  */
+import { sslFor } from "@tekisho/authoring";
 import "dotenv/config";
 import pg from "pg";
 import { SimpleRunbookResolver } from "@tekisho/orchestrator/src/resolver/runbook.js";
@@ -44,7 +45,7 @@ async function main() {
 
   const pool = new pg.Pool({
     connectionString: process.env.DATABASE_MIGRATOR_URL,
-    ssl: { rejectUnauthorized: false },
+    ssl: sslFor(process.env.DATABASE_MIGRATOR_URL),
   });
 
   // The same registry the worker runs. Without this the script would silently

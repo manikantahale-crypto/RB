@@ -1,21 +1,24 @@
 # Ownership boundaries, enforced by GitHub. Last matching pattern wins.
 #
-# The boundary is drawn on the paths that already exist. This file moves NO
-# files and changes no code — it only decides who reviews what.
+# Three roles, individuals rather than teams: one owner for the orchestrator
+# runtime, one for the authoring platform, one or two covering all the modules.
+# Teams can come later; a team with one person in it is a team for no reason.
 #
 # ─────────────────────────────────────────────────────────────────────────────
-# BEFORE ENABLING: the team handles below are placeholders. Replace them with
-# real GitHub teams under the AI-BenchSales org (or individual @usernames),
-# then turn on Settings → Branches → "Require review from Code Owners".
+# ⚠ BEFORE ENABLING — VERIFY EVERY HANDLE RESOLVES.
 #
-#   @AI-BenchSales/orch-authoring   orchestrator authoring layer + admin UI
-#   @AI-BenchSales/product-modules  SYNTRA / ASTRA / ORBIT services and UIs
-#   @SuhasGangireddy                authoring lead
-#   @<modules-lead>                 modules lead — set this before enabling
+# GitHub SILENTLY IGNORES a pattern whose owner does not resolve. It does not
+# warn, it does not fail: the line simply stops requiring a review. So a typo
+# here does not read as an error, it reads as "anyone may merge this" — on
+# whichever path you typed it against.
 #
-# A pattern with an unresolvable owner is silently ignored by GitHub, so a typo
-# here reads as "no review required" rather than as an error. Check the
-# Settings → Code owners page after the first push.
+# Check them at Settings → Code owners after the first push. That page lists
+# every unresolvable pattern. Do not turn on "Require review from Code Owners"
+# until it is empty.
+#
+# @SuhasGangireddy is known good — it is already in use on this repository.
+# The others below are inferred from git author names and have NOT been
+# confirmed as GitHub logins.
 # ─────────────────────────────────────────────────────────────────────────────
 
 
@@ -23,50 +26,61 @@
 # Anything not claimed below reaches a lead rather than nobody.
 *                                   @SuhasGangireddy
 
-# ── orchestrator authoring ───────────────────────────────────────────────────
-# The authoring layer, the admin surfaces, and the contracts they build on.
-/packages/authoring/                @AI-BenchSales/orch-authoring
-/apps/admin/                        @AI-BenchSales/orch-authoring
-/apps/admin-api/                    @AI-BenchSales/orch-authoring
 
-# The two contract packages define what a node and a routing rule ARE, so
-# everything else is written against them. Lead review.
-/packages/node-contract/            @SuhasGangireddy
-/packages/routing-contract/         @SuhasGangireddy
+# ── the authoring platform ───────────────────────────────────────────────────
+# Screens 1-5, the proposal pipeline, the go-live gate. 23 of the commits here
+# are the lead's; this is the area they own outright.
+/packages/authoring/                @SuhasGangireddy
+/apps/admin/                        @SuhasGangireddy
+/apps/admin-api/                    @SuhasGangireddy
 
-# ── shared runtime · both groups ─────────────────────────────────────────────
-# Actively developed from both sides — authoring changes wire into it, module
-# work extends it. Neither side should land here alone.
-/packages/orchestrator/             @AI-BenchSales/orch-authoring @AI-BenchSales/product-modules
-/apps/worker/                       @AI-BenchSales/orch-authoring @AI-BenchSales/product-modules
-/apps/api/                          @AI-BenchSales/orch-authoring @AI-BenchSales/product-modules
 
-# ── adapters ─────────────────────────────────────────────────────────────────
-# The shell and its rules are platform work. An individual node contract
-# declares the shape of a service endpoint, so it belongs with whoever owns
-# that endpoint — otherwise a response field changes on one side and the
-# contract fails closed on the other.
-/adapters/                          @AI-BenchSales/orch-authoring
-/adapters/syntra/                   @AI-BenchSales/product-modules
-/adapters/astra/                    @AI-BenchSales/product-modules
+# ── the orchestrator runtime ─────────────────────────────────────────────────
+# The engine, the workers, ingress, and the contracts everything is written
+# against. Top committer by a distance is @sunitha-tekisho (20 commits).
+/packages/orchestrator/             @sunitha-tekisho
+/apps/worker/                       @sunitha-tekisho
+/apps/api/                          @sunitha-tekisho
 
-# ── product modules ──────────────────────────────────────────────────────────
-/node-api/                          @AI-BenchSales/product-modules
-/Front/                             @AI-BenchSales/product-modules
-/packages/agents/                   @AI-BenchSales/product-modules
-/packages/observability/            @AI-BenchSales/product-modules
+# The contract packages define what a node and a routing rule ARE, so every
+# other package is written against them. Both owners.
+/packages/node-contract/            @SuhasGangireddy @sunitha-tekisho
+/packages/routing-contract/         @SuhasGangireddy @sunitha-tekisho
 
-# ── the chokepoint · BOTH LEADS REQUIRED ─────────────────────────────────────
+
+# ── the modules ──────────────────────────────────────────────────────────────
+# SYNTRA, ASTRA, ORBIT and the customer-facing UI. One owner for all of them
+# for now; per-module owners when there is a person per module to name.
+/node-api/                          @sunitha-tekisho
+/Front/                             @sunitha-tekisho
+/packages/agents/                   @sunitha-tekisho
+/packages/observability/            @sunitha-tekisho
+
+# Adapters are the orchestrator's shells for a module's HTTP endpoints. The
+# directory and its rules are platform work; an individual node contract
+# declares the shape of an endpoint the module owns and changes, so it belongs
+# with whoever owns that endpoint — otherwise a response field changes on one
+# side and the contract fails closed on the other.
+/adapters/                          @SuhasGangireddy
+/adapters/syntra/                   @sunitha-tekisho
+/adapters/astra/                    @sunitha-tekisho
+/adapters/orbit/                    @sunitha-tekisho
+
+
+# ── the chokepoint · BOTH OWNERS REQUIRED ────────────────────────────────────
 # These cannot be duplicated without the system drifting apart, and this
-# repository has already proved it: two migration numbering series, no runner,
-# a tracking table maintained by hand, and at least one migration
+# repository has already proved it: two migration numbering series, no runner
+# that has ever run, a tracking table maintained by hand, and a migration
 # (V28__ml_scoring_log.sql) applied to the database whose file exists in no
-# branch. That is what an unowned shared resource looks like.
-/packages/db/                       @SuhasGangireddy @<modules-lead>
-/packages/db/migrations/            @SuhasGangireddy @<modules-lead>
-/packages/domain/                   @SuhasGangireddy @<modules-lead>
-/packages/graph-contract/           @SuhasGangireddy @<modules-lead>
+# branch. Two of the seed migrations would have deleted twelve live rows.
+#
+# That is what an unowned shared resource looks like.
+/packages/db/                       @SuhasGangireddy @sunitha-tekisho
+/packages/domain/                   @SuhasGangireddy @sunitha-tekisho
+/packages/graph-contract/           @SuhasGangireddy @sunitha-tekisho
+
 
 # ── governance ───────────────────────────────────────────────────────────────
+# The rules themselves, and the record of why they are the rules.
 /.github/                           @SuhasGangireddy
-/docs/adr/                          @SuhasGangireddy
+/docs/                              @SuhasGangireddy

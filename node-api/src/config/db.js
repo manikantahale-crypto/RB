@@ -1,11 +1,12 @@
 const { Pool } = require("pg");
+const { sslFor } = require("./ssl");
 const env = require("./env");
 
 // Supabase session pooler caps ~15 clients TOTAL across all apps/processes.
 // Keep this small: Node HTTP pool + pg-boss pool + Python must fit under the cap.
 const pool = new Pool({
   connectionString: env.DATABASE_URL,
-  ssl: { rejectUnauthorized: false }, // Supabase requires SSL
+  ssl: sslFor(env.DATABASE_URL), // Supabase requires SSL
   max: 2,
   idleTimeoutMillis: 8000,
   connectionTimeoutMillis: 15000,

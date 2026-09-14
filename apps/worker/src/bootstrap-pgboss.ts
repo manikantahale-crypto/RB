@@ -15,6 +15,7 @@ import {
   resolveActiveEventBinding,
   withPgRetry,
   devPoolOpts,
+  sslFor,
   type DbQueryable,
 } from "@tekisho/authoring";
 import { startOutboxRelay } from "./workers/outbox-relay.worker.js";
@@ -46,7 +47,7 @@ async function bootstrapPgBoss(): Promise<void> {
   const boss = new PgBossModule.PgBoss({
     connectionString: env.DATABASE_MIGRATOR_URL,
     schema: "pgboss",
-    ssl: { rejectUnauthorized: false },
+    ssl: sslFor(env.DATABASE_MIGRATOR_URL),
     max: 1,
   });
 
@@ -147,17 +148,37 @@ async function bootstrapPgBoss(): Promise<void> {
     boss,
     pool,
     resolvePin: async (eventType, organizationId, db) => {
-      const graphKey = await resolveGraphKey(eventType, organizationId, db);
-      if (!graphKey) return null;
+      // The binding already answers half of this. A pinned binding names the
+      // version it wants; an unpinned one follows whichever version is live,
+      // and only then is a second query needed.
+      const binding = await resolveActiveEventBinding(
+        db,
+        eventType,
+        organizationId,
+      );
+      if (!binding) return null;
+      const graphKey = binding.graph_key;
+
+      if (Number.isFinite(Number(binding.version))) {
+        return { graphKey, graphVersion: Number(binding.version) };
+      }
+
       // Query on the same TX client — pool.max is 1, so compiler.resolveActiveVersion
       // would block waiting for this connection to be released.
+      //
+      // Reads authoring directly. This said `public.graph_definitions` with
+      // `status = 'active'`, which is a compatibility VIEW that exists only in
+      // the old database — in a project built from the new baseline there is
+      // nothing in `public` at all, so every pin resolved to null and every
+      // relayed event ran unpinned.
       const { rows } = await db.query(
-        `SELECT version
-           FROM public.graph_definitions
-          WHERE graph_key = $1
-            AND status = 'active'
-            AND (org_id = $2 OR org_id IS NULL)
-          ORDER BY org_id NULLS LAST
+        `SELECT v.version
+           FROM authoring.graph_versions v
+           JOIN authoring.graphs g ON g.id = v.graph_id
+          WHERE g.graph_key = $1
+            AND v.status = 'live'
+            AND (v.org_id = $2 OR v.org_id IS NULL)
+          ORDER BY v.org_id NULLS LAST, v.version DESC
           LIMIT 1`,
         [graphKey, organizationId],
       );

@@ -32,7 +32,7 @@ loadEnv({ path: resolve(process.cwd(), ".env") });
 loadEnv({ path: resolve(process.cwd(), "../../.env") });
 import { toRegistryRow, checksumOf, MODULES } from "@tekisho/node-contract";
 import { nodeRegistry } from "@tekisho/orchestrator/src/nodes/registry.js";
-import { getToolCatalog } from "@tekisho/authoring";
+import { getToolCatalog, sslFor } from "@tekisho/authoring";
 import { contractNodes } from "../src/node-registry.js";
 import { declaredNodes } from "../../../adapters/index.js";
 
@@ -78,7 +78,7 @@ async function main() {
   }
   const pool = new pg.Pool({
     connectionString: url,
-    ssl: { rejectUnauthorized: false },
+    ssl: sslFor(url),
   });
 
   try {
@@ -99,17 +99,24 @@ async function main() {
       const checksum = checksumOf(row);
       await pool.query(
         `INSERT INTO authoring.node_registry (
-           registry_key, key, version, module, shareable, title, description,
+           registry_key, key, version, application, shareable, title, description,
            tags, input_schema, output_schema, config_schema, admin_exposed,
            side_effect, idempotency, execution, llm, dependencies, persistence,
            fixture_names, has_stub, source, checksum, emits, updated_at
          ) VALUES (
-           $1,$2,$3,$4,$5,$6,$7,$8::jsonb,$9::jsonb,$10::jsonb,$11::jsonb,
+           -- application is a foreign key onto platform.applications. Looking
+           -- it up rather than passing it straight through means a node
+           -- declaring an application nobody has registered lands as NULL and
+           -- shows up in the platform checks, instead of failing the build.
+           $1,$2,$3,(SELECT a.key FROM platform.applications a WHERE a.key = $4),
+           $5,$6,$7,$8::jsonb,$9::jsonb,$10::jsonb,$11::jsonb,
            $12::jsonb,$13,$14::jsonb,$15::jsonb,$16::jsonb,$17::jsonb,
            $18::jsonb,$19::jsonb,$20,$22,$21,$23::jsonb, now()
          )
          ON CONFLICT (registry_key) DO UPDATE SET
-           key=$2, version=$3, module=$4, shareable=$5, title=$6,
+           key=$2, version=$3,
+           application=(SELECT a.key FROM platform.applications a WHERE a.key = $4),
+           shareable=$5, title=$6,
            description=$7, tags=$8::jsonb, input_schema=$9::jsonb,
            output_schema=$10::jsonb, config_schema=$11::jsonb,
            admin_exposed=$12::jsonb, side_effect=$13, idempotency=$14::jsonb,
@@ -167,11 +174,14 @@ async function main() {
       const entry = catalog.find((t) => t.key === key);
       await pool.query(
         `INSERT INTO authoring.node_registry (
-           registry_key, key, version, module, shareable, title, description,
+           registry_key, key, version, application, shareable, title, description,
            source, updated_at
-         ) VALUES ($1,$2,'1.0.0',$3,false,$4,$5,'legacy', now())
+         ) VALUES ($1,$2,'1.0.0',
+                   (SELECT a.key FROM platform.applications a WHERE a.key = $3),
+                   false,$4,$5,'legacy', now())
          ON CONFLICT (registry_key) DO UPDATE SET
-           module=$3, title=$4, description=$5, source='legacy', updated_at=now()`,
+           application=(SELECT a.key FROM platform.applications a WHERE a.key = $3),
+           title=$4, description=$5, source='legacy', updated_at=now()`,
         [
           `${key}@1`,
           key,

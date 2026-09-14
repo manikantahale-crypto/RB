@@ -1,3 +1,4 @@
+import { sslFor } from "@tekisho/authoring";
 import { Pool } from 'pg';
 import { readFileSync } from 'fs';
 import { env } from '../src/env.js';
@@ -12,7 +13,7 @@ const __dirname = dirname(__filename);
 async function seed() {
   const pool = new Pool({
     connectionString: env.DATABASE_MIGRATOR_URL,
-    ssl: { rejectUnauthorized: false }
+    ssl: sslFor(env.DATABASE_MIGRATOR_URL)
   });
 
   try {

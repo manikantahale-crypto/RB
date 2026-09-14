@@ -1,3 +1,4 @@
+import { sslFor } from "@tekisho/authoring";
 import 'dotenv/config';
 import * as PgBossModule from "pg-boss";
 import { EVENT_TYPES } from '@tekisho/domain';
@@ -10,7 +11,7 @@ async function sendMsg() {
   const boss = new PgBossModule.PgBoss({
     connectionString: env.DATABASE_MIGRATOR_URL,
     schema: "pgboss",
-    ssl: { rejectUnauthorized: false },
+    ssl: sslFor(env.DATABASE_MIGRATOR_URL),
   });
 
   await boss.start();

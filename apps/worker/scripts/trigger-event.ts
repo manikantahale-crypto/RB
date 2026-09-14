@@ -1,3 +1,4 @@
+import { sslFor } from "@tekisho/authoring";
 import { PgBoss } from "pg-boss";
 import { env } from "../src/env.js";
 import type { EventEnvelope } from "@tekisho/domain";
@@ -5,7 +6,7 @@ import type { EventEnvelope } from "@tekisho/domain";
 const boss = new PgBoss({
   connectionString: env.DATABASE_MIGRATOR_URL,
   schema: "pgboss",
-  ssl: { rejectUnauthorized: false }
+  ssl: sslFor(env.DATABASE_MIGRATOR_URL)
 });
 
 async function run() {
