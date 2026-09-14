@@ -217,11 +217,12 @@ export {
   type GenerateGraphResult,
 } from "./generate-graph.js";
 export { generateAgentTs, type GenerateResult } from "./generate-agent-ts.js";
-export { ensureAuthoringSchema, seedAgentTemplates, seedProductAgentDefinitions, seedDefaultEntitlements, applyAuthoringRls } from "./ensure-schema.js";
+export { ensureAuthoringSchema, seedAgentTemplates, seedProductAgentDefinitions, seedDefaultEntitlements } from "./ensure-schema.js";
 export {
   isPgPoolExhausted,
   withPgRetry,
   devPoolOpts,
+  sslFor,
 } from "./pg-retry.js";
 export {
   MOCK_PRODUCT_AGENT_IDS,

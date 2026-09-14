@@ -63,12 +63,9 @@ import type { Pool } from "pg";
 import { withOrgScope } from "../with-org-scope.js";
 import {
   MODULE_REGISTRY,
+  resolveEmits,
   type EmitDeclaration,
 } from "@tekisho/node-contract";
-import {
-  buildPlan,
-  type EventFacts,
-} from "../lib/build-plan.js";
 import {
   resolveAgainstExisting,
   type Resolution,
@@ -84,6 +81,7 @@ import {
 import { checksumOf } from "@tekisho/graph-contract";
 import { EVENT_SCHEMAS, GRAPH_DEFINITIONS, GRAPH_EVENT_BINDINGS } from "../lib/authoring-views.js";
 import { saveDraft } from "../lib/authoring-writes.js";
+import { savePlanFromLinks } from "../lib/plans.js";
 import {
   GenerationFailedError,
   generateGraphFromLlm,
@@ -303,6 +301,15 @@ export function scoreEvent(
 /** A scored catalogue row, before it becomes a candidate on the wire. */
 type Scored = {
   eventType: string;
+  /** The application that publishes it. Null for platform-level events. */
+  application: string | null;
+  /**
+   * What the platform DOES with this event: graph, resume, fail, terminal.
+   *
+   * `terminal` is acked and dropped before any binding is read, so a workflow
+   * bound to one can never run — however sensible the event sounds.
+   */
+  handling: string | null;
   description: string;
   producedWhen: string;
   score: number;
@@ -754,6 +761,8 @@ export function registerProposeRoutes(
                   s.description,
                   s.produced_when,
                   s.payload_schema,
+                  s.application,
+                  s.handling,
                   coalesce(p.n, 0)::int AS publish_count
              FROM ${EVENT_SCHEMAS} s
              LEFT JOIN (
@@ -793,6 +802,8 @@ export function registerProposeRoutes(
               Object.keys(e.payload_schema?.properties ?? {}).length > 0;
             return {
               eventType: e.event_type,
+              application: e.application ?? null,
+              handling: e.handling ?? null,
               description,
               producedWhen,
               score,
@@ -805,7 +816,57 @@ export function registerProposeRoutes(
           { adminId: readAdminId(req.headers), orgId: readOrgId(req.headers) },
         );
 
-        const matched = scored.filter((c) => c.matchedOn.length > 0);
+        /**
+         * YOUR APPLICATION, AND THE PLATFORM. NOT EVERYBODY ELSE.
+         *
+         * The catalogue holds 45 events across five applications. Ranking all
+         * of them on word overlap put ASTRA, ORBIT, RELAY and INTERVIEW events
+         * in front of somebody authoring in SYNTRA — six of the eight
+         * candidates for "match the candidates for a job requirement" belonged
+         * to applications that author cannot see, deploy or test.
+         *
+         * Word overlap has no sense of meaning, so it cannot tell that
+         * `ASTRA_JOB_MATCH_DISCOVERED` is another team is business. It scored
+         * highest of everything, on the word "job".
+         *
+         * A null application is a platform event — those belong to everyone and
+         * stay. Another application is event is still REACHABLE: it is in the
+         * catalogue drawer, one click away, and choosing one deliberately is
+         * how a cross-application flow starts. What it should not be is the
+         * default suggestion.
+         */
+        const mine = (c: Scored) =>
+          c.application === null || c.application === module;
+
+        /**
+         * A TERMINAL EVENT CANNOT START ANYTHING.
+         *
+         * `handling` says what the platform does when the event arrives.
+         * `terminal` means it is acked and dropped BEFORE any binding is read,
+         * so a workflow bound to one is created, looks correct, and never runs.
+         * Every one of the 20 events that actually starts a live workflow today
+         * is `graph` (or `fail`/`resume`, the two platform paths); not one is
+         * terminal.
+         *
+         * This is also what removes the three catalogue rows with no
+         * application at all — `unknown.event`, `golden.test.requested`, and
+         * `ASTRA_JOB_MATCH_DISCOVERED`, whose description is the placeholder
+         * "Syntra platform event: ASTRA_JOB_MATCH_DISCOVERED". The last of
+         * those was being SUGGESTED as the trigger for SYNTRA workflows,
+         * because a null application reads as "platform, belongs to everyone"
+         * and it has been published 270 times. Filtering on what the platform
+         * will actually do with it is the honest rule; filtering on the name
+         * would be a guess that happens to work today.
+         */
+        const startable = (c: Scored) => c.handling !== "terminal";
+
+        const matchedAll = scored.filter((c) => c.matchedOn.length > 0);
+        const matched = matchedAll.filter((c) => mine(c) && startable(c));
+        /** Named in the ledger, so the filter is visible rather than silent. */
+        const otherApplications = matchedAll.filter((c) => !mine(c)).length;
+        const notStartable = matchedAll.filter(
+          (c) => mine(c) && !startable(c),
+        ).length;
         /**
          * Eight, not five. Word overlap has no semantics, so the correct event
          * can sit outside a tight cut purely because the catalogue phrases it
@@ -821,20 +882,49 @@ export function registerProposeRoutes(
         // ── what the module may use ─────────────────────────────────────
         const { rows: nodeRows } = await client.query(
           `SELECT key, title, description, side_effect, source, input_schema,
-                  output_schema, config_schema, module, shareable
+                  output_schema, config_schema, application AS module, shareable
              FROM authoring.node_registry
-            ORDER BY (module = $1) DESC, module, key`,
+            ORDER BY (application = $1) DESC, application, key`,
           [module],
         );
 
-        // ── routing: what already answers this event ────────────────────
-        const routing = best
-          ? await client.query(
-              `SELECT graph_key, module_queue, status FROM ${GRAPH_EVENT_BINDINGS}
-                WHERE event_type = $1 AND status = 'active'`,
-              [best.eventType],
-            )
-          : { rows: [] as any[] };
+        /**
+         * What already answers each CANDIDATE, not just the suggested one.
+         *
+         * This asked about `best.eventType` alone, and the answer was sent as
+         * one `routing.existing` for the whole proposal. The author can change
+         * the trigger on screen — that is the point of the picker — and nothing
+         * recomputed it. So after changing the trigger the routing decision was
+         * either about the event they had just moved away from, or absent
+         * entirely because the first one happened to have no consumer.
+         *
+         * Routing is the question "somebody already answers this — do you
+         * intend to take it from them", and asking it about the wrong event is
+         * worse than not asking: it is a confirmation that does not mean what
+         * it says.
+         */
+        const answeredBy = new Map<string, Array<{ graphKey: string; moduleQueue: string | null }>>();
+        if (ranked.length > 0) {
+          const { rows: bindingRows } = await client.query(
+            `SELECT event_type, graph_key, module_queue FROM ${GRAPH_EVENT_BINDINGS}
+              WHERE event_type = ANY($1::text[]) AND status = 'active'`,
+            [ranked.map((c) => c.eventType)],
+          );
+          for (const r of bindingRows as any[]) {
+            const list = answeredBy.get(String(r.event_type)) ?? [];
+            list.push({
+              graphKey: String(r.graph_key),
+              moduleQueue: r.module_queue ?? null,
+            });
+            answeredBy.set(String(r.event_type), list);
+          }
+        }
+        const routing = {
+          rows: (best ? (answeredBy.get(best.eventType) ?? []) : []).map((b) => ({
+            graph_key: b.graphKey,
+            module_queue: b.moduleQueue,
+          })),
+        };
 
         // ── config a person actually wrote down ─────────────────────────
         const extracted = extractConfig(description);
@@ -1135,7 +1225,7 @@ export function registerProposeRoutes(
          * what the screen shows.
          */
         const { rows: ownerRows } = await client.query(
-          `SELECT key, module, shareable, emits FROM authoring.node_registry`,
+          `SELECT key, application AS module, shareable, emits FROM authoring.node_registry`,
         );
         /**
          * What each node declared it may publish.
@@ -1207,18 +1297,6 @@ export function registerProposeRoutes(
           "module.syntra.match",
           "module.orbit.bench",
         ]);
-        const eventFacts = new Map<string, EventFacts>(
-          eventRows.map((e: any) => [
-            String(e.event_type),
-            {
-              eventType: String(e.event_type),
-              description: e.description ?? null,
-              producedWhen: e.produced_when ?? null,
-              publishCount: Number(e.publish_count ?? 0),
-            },
-          ]),
-        );
-
         const implsOf = new Map<string, readonly string[]>(
           activeDefs.map((d: any) => [
             String(d.graph_key),
@@ -1306,35 +1384,37 @@ export function registerProposeRoutes(
         });
 
         /**
-         * The plan, built whether or not the flow is stored as a chain.
+         * DOES THIS FLOW START ITSELF?
          *
-         * The author asked for an outcome. Whether the platform stores that as
-         * one workflow or three is a storage decision made later and lower
-         * down; it must not change what they are shown. So the plan is derived
-         * from the segments — the applications the work passes through —
-         * rather than from `chain`, which only exists when we split.
+         * `detectTriggeredWorkflows` finds steps that set OTHER workflows
+         * going. This is the case it cannot see, because the workflow does not
+         * exist yet and so is not in `boundTo`: a step that publishes the very
+         * event this flow is triggered on. Every run would start another.
+         *
+         * It is not theoretical. Asking for "match the candidates for a job
+         * requirement" produced exactly this — trigger `syntra.match.completed`
+         * over a flow containing `syntra.continuous.match`, which emits
+         * `syntra.match.completed` on every run. Two "runs twice" warnings
+         * appeared and this, the one that matters, did not.
+         *
+         * Reported rather than silently re-ranked. The trigger is the author's
+         * to choose, and swapping it underneath them would be a decision made
+         * where they cannot see it — but Accept is blocked until they change
+         * it, because there is nothing sensible to build from here.
          */
-        const plan =
-          split && split.segments.length > 0
-            ? buildPlan({
-                chain: split.segments.map((seg, i) => ({
-                  module: seg.module,
-                  yours: seg.module === module,
-                  steps: seg.stepIds,
-                  nodes: seg.stepIds
-                    .map((id) => graph.nodes.find((n) => n.id === id))
-                    .filter((n): n is NonNullable<typeof n> => Boolean(n)),
-                  startsWith: handoffs[i] ?? null,
-                  alreadyBuilt: handoffs[i]?.handledBy ?? null,
-                })),
-                triggerEventType: best?.eventType ?? null,
-                eventFacts,
-                boundTo,
-                queueOf,
-                workedQueues,
-                versionOf,
-                emitsOf,
+        const selfTriggeringSteps = best
+          ? graph.nodes
+              .filter((n) => {
+                const declared = emitsOf.get(n.impl);
+                return declared
+                  ? resolveEmits(declared, n.config).includes(best.eventType)
+                  : false;
               })
+              .map((n) => ({ stepId: n.id, impl: n.impl }))
+          : [];
+        const selfTriggering =
+          selfTriggeringSteps.length > 0 && best
+            ? { eventType: best.eventType, steps: selfTriggeringSteps }
             : null;
 
         const borrowedSteps = graph.nodes
@@ -1449,14 +1529,28 @@ export function registerProposeRoutes(
           },
           {
             kind: "SEARCHED",
-            text: `${scored.length} events in the catalogue · ${matched.length} share wording with your description`,
+            text: `${scored.length} events in the catalogue · ${matched.length} could start a ${module} workflow and share wording with your description`,
+            /**
+             * Both filters are named, because a candidate that never appears is
+             * one nobody can reconsider. Silently narrowing the list would make
+             * the ledger — whose whole promise is that every line is checkable
+             * — quietly incomplete.
+             */
             citation:
-              scored.length === matched.length
-                ? "Every event was considered."
-                : `${scored.length - matched.length} shared no words at all and were not ranked. ` +
-                  "Word overlap has no sense of meaning, so if the right event phrases " +
-                  "things differently from you it is in the catalogue, not in this list — " +
-                  "open it and search.",
+              [
+                scored.length - matchedAll.length > 0
+                  ? `${scored.length - matchedAll.length} shared no words at all and were not ranked.`
+                  : "",
+                otherApplications > 0
+                  ? `${otherApplications} matched but belong to another application — they are in the catalogue drawer, and choosing one deliberately is how a cross-application flow starts.`
+                  : "",
+                notStartable > 0
+                  ? `${notStartable} matched but the platform acks and drops them, so a workflow bound to one would never run.`
+                  : "",
+                "Word overlap has no sense of meaning, so if the right event phrases things differently from you it is in the catalogue — open it and search.",
+              ]
+                .filter(Boolean)
+                .join(" "),
             source: "system",
           },
         ];
@@ -1768,6 +1862,13 @@ export function registerProposeRoutes(
             matchedOn: c.matchedOn,
             publishCount: c.publishCount,
             everPublished: c.everPublished,
+            /**
+             * Workflows that already answer THIS event. Carried per candidate
+             * so the screen can ask the routing question about whichever
+             * trigger the author ends up choosing, rather than about the one
+             * that happened to be suggested first.
+             */
+            answeredBy: answeredBy.get(c.eventType) ?? [],
           })),
           /** How many shared no wording at all — the drawer is the way to them. */
           notRanked: scored.length - matched.length,
@@ -1785,11 +1886,11 @@ export function registerProposeRoutes(
            * case — a concept nobody needs today should cost them no attention.
            */
           chain,
-          plan,
           spansModules,
           chainDecision,
           borrowedSteps,
           triggeredWorkflows,
+          selfTriggering,
           suggestedTrigger: best?.eventType ?? null,
           availableNodes: nodeRows.map((n: any) => ({
             key: n.key,
@@ -1957,7 +2058,10 @@ export function registerProposeRoutes(
               // The trigger lives in the definition because a draft binding
               // cannot be stored. For links after the first this IS the
               // handoff, which is what makes the chain recoverable later.
-              entryInput: trigger,
+              //
+              // `triggerEventType`, not `entryInput`: entryInput names a
+              // payload schema, and an event type there is rejected at invoke.
+              triggerEventType: trigger,
               nodes: nodes.map((n) => ({
                 id: String(n.id),
                 impl: String(n.impl),
@@ -1976,10 +2080,35 @@ export function registerProposeRoutes(
             created.push({ graphKey, module: String(link.module ?? "") });
           }
 
+          /**
+           * The plan, recorded with the sentence it came from.
+           *
+           * In the same transaction as the drafts, because a chain whose
+           * workflows exist and whose plan does not is a chain nobody can
+           * release as a unit — and releasing it a piece at a time is the
+           * failure authoring.plans exists to prevent.
+           *
+           * `existing` for a link that names a workflow already built, `new`
+           * for one this request created. A step in another application is
+           * marked with its owner, which is what makes that owner's approval
+           * a precondition of release rather than an etiquette.
+           */
+          const planId = await savePlanFromLinks(client, {
+            orgId: readOrgId(req.headers),
+            requestText:
+              String(body.requestText ?? body.description ?? "").trim() ||
+              `chain of ${links.length} workflows`,
+            authorModule: String(body.module ?? links[0]?.module ?? ""),
+            links,
+            createdKeys: new Set(created.map((c) => c.graphKey)),
+            by: String(req.headers["x-admin-id"] ?? "admin-local"),
+          });
+
           await client.query("COMMIT");
           return {
             created,
             createdEvents,
+            planId,
             status: "draft",
             /**
              * Said plainly because it is the thing people assume otherwise:
@@ -1987,7 +2116,9 @@ export function registerProposeRoutes(
              */
             note:
               "Every workflow is a draft. Nothing runs until each one goes " +
-              "live, and each go-live is checked on its own.",
+              "live. They can go live one at a time, or together by approving " +
+              "and releasing the plan — which is the only way to avoid a " +
+              "window where half the chain is wired up.",
           };
         } catch (err) {
           await client.query("ROLLBACK");
@@ -2049,9 +2180,19 @@ export function registerProposeRoutes(
 
         const definition = {
           graphKey,
-          // The trigger lives here because a draft binding cannot be stored —
-          // see the header. Go-live reads it to create the binding.
-          entryInput: triggerEventType,
+          /**
+           * The trigger lives in the definition because a draft binding cannot
+           * be stored, and go-live reads it to create the binding.
+           *
+           * In `triggerEventType`, NOT `entryInput`. It was written to
+           * entryInput, which names a PAYLOAD SCHEMA — one of the five in
+           * packages/orchestrator/src/contracts/payloads.ts — so every
+           * workflow created this way failed at invoke time with
+           * `DEFINITION_INVALID: unknown entryInput "syntra.x.y"`. The two
+           * fields answer different questions: which event starts this, and
+           * what shape its payload has.
+           */
+          triggerEventType,
           nodes: nodes.map((n: any) => ({
             id: String(n.id),
             impl: String(n.impl),

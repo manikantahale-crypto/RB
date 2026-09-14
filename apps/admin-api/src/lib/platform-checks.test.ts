@@ -11,6 +11,7 @@ import {
   checkBindingsRoutable,
   checkEmittedEventsAnswered,
   checkEventsHandled,
+  checkLiveMeansReachable,
   checkImplsPermitted,
   runPlatformChecks,
   type PlatformFacts,
@@ -29,8 +30,21 @@ const base: PlatformFacts = {
       moduleQueue: "module.syntra.match",
     },
   ],
+  /**
+   * Every bound workflow appears here, and every workflow here is bound.
+   *
+   * The fixture used to list one graph while the bindings named two others,
+   * which made "a clean run passes" assert against a platform that could not
+   * exist: two events routed to workflows with no live version, and one live
+   * workflow nothing could reach. `live_means_reachable` reported exactly
+   * that, correctly, and three tests built on the fixture went red.
+   */
   graphs: [
-    { graphKey: "syntra.authored", impls: ["syntra.jd.process", "human.gate"] },
+    { graphKey: "syntra.jd.workflow", impls: ["syntra.jd.process"] },
+    {
+      graphKey: "syntra.continuous.match",
+      impls: ["syntra.jd.process", "human.gate"],
+    },
   ],
   registry: [
     {
@@ -307,9 +321,9 @@ describe("routing_hazards", () => {
 });
 
 describe("runPlatformChecks", () => {
-  it("returns all four, and a clean run passes", () => {
+  it("returns all five, and a clean run passes", () => {
     const out = runPlatformChecks(facts());
-    expect(out).toHaveLength(4);
+    expect(out).toHaveLength(5);
     expect(allPassed(out)).toBe(true);
   });
 
@@ -328,5 +342,85 @@ describe("runPlatformChecks", () => {
       }),
     );
     expect(allPassed(out)).toBe(false);
+  });
+});
+
+/**
+ * Check 5 — does "live" still mean reachable?
+ *
+ * The case is real: thirteen workflows in the new project were live with no
+ * active binding, `syntra.authored` among them — 262 runs, last used on
+ * 1 September, and unreachable ever since its binding was retired. Nothing
+ * had decided that. `take-offline` retired the binding and deliberately left
+ * the version live, so the two halves drifted in one direction with nothing
+ * to pull them back.
+ */
+describe("live_means_reachable", () => {
+  it("passes when every live workflow is bound and every binding is live", () => {
+    expect(checkLiveMeansReachable(facts()).status).toBe("pass");
+  });
+
+  it("catches a workflow that is live and can never fire", () => {
+    const out = checkLiveMeansReachable(
+      facts({
+        graphs: [
+          { graphKey: "syntra.jd.workflow", impls: [] },
+          { graphKey: "syntra.continuous.match", impls: [] },
+          // Bound to nothing — the syntra.authored case.
+          { graphKey: "syntra.authored", impls: [] },
+        ],
+      }),
+    );
+    expect(out.status).toBe("fail");
+    // The detail names the workflow; the summary says what it means.
+    expect(out.detail.join(" ")).toContain("syntra.authored");
+    expect(out.detail.join(" ")).toContain("no active binding");
+    expect(out.message).toContain("never fire");
+  });
+
+  it("catches a binding pointing at a workflow with no live version", () => {
+    // The quieter fault: the router accepts these events and drops them.
+    const out = checkLiveMeansReachable(
+      facts({
+        bindings: [
+          {
+            eventType: "syntra.jd.received",
+            graphKey: "syntra.jd.workflow",
+            moduleQueue: "module.syntra.jd",
+          },
+          {
+            eventType: "relay.consent.requested",
+            graphKey: "relay.gone.workflow",
+            moduleQueue: "module.relay",
+          },
+        ],
+        graphs: [{ graphKey: "syntra.jd.workflow", impls: [] }],
+      }),
+    );
+    expect(out.status).toBe("fail");
+    expect(out.detail.join(" ")).toContain("relay.gone.workflow");
+    expect(out.detail.join(" ")).toContain("no live version");
+  });
+
+  it("reports both directions in one finding", () => {
+    const out = checkLiveMeansReachable(
+      facts({
+        bindings: [
+          {
+            eventType: "relay.consent.requested",
+            graphKey: "relay.gone.workflow",
+            moduleQueue: "module.relay",
+          },
+        ],
+        graphs: [{ graphKey: "syntra.authored", impls: [] }],
+      }),
+    );
+    expect(out.status).toBe("fail");
+    expect(out.detail).toHaveLength(2);
+  });
+
+  it("says it could not check rather than passing an empty platform", () => {
+    const out = checkLiveMeansReachable(facts({ graphs: [] }));
+    expect(out.status).toBe("unchecked");
   });
 });

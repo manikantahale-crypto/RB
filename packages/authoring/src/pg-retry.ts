@@ -30,11 +30,42 @@ export async function withPgRetry<T>(
   throw lastErr;
 }
 
+/**
+ * Whether to ask for SSL, decided from where we are connecting.
+ *
+ * Supabase requires it. A Postgres running in a container on this machine
+ * cannot offer it at all, and asking fails the connection outright with
+ * "The server does not support SSL connections" — which is what stopped the
+ * whole stack from running against a local database.
+ *
+ * So it is a property of the host, not a constant. Anything that is not
+ * plainly this machine gets SSL, because the failure modes are not symmetric:
+ * connecting to a remote database without TLS is a real problem, and
+ * connecting to one on loopback with it is merely impossible.
+ *
+ * `sslmode=disable` in the URL wins either way, for the case this does not
+ * anticipate.
+ */
+export function sslFor(connectionString: string): { rejectUnauthorized: false } | false {
+  let host = "";
+  try {
+    const u = new URL(connectionString);
+    if (u.searchParams.get("sslmode") === "disable") return false;
+    host = u.hostname;
+  } catch {
+    return { rejectUnauthorized: false };
+  }
+  const local =
+    host === "localhost" || host === "127.0.0.1" || host === "::1" ||
+    host === "[::1]" || host === "host.docker.internal";
+  return local ? false : { rejectUnauthorized: false };
+}
+
 /** Shared local-dev pool defaults — keep total connections under Supabase session cap. */
 export function devPoolOpts(connectionString: string, max = 1) {
   return {
     connectionString,
-    ssl: { rejectUnauthorized: false as const },
+    ssl: sslFor(connectionString),
     max,
     idleTimeoutMillis: 10_000,
     connectionTimeoutMillis: 20_000,

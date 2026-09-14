@@ -77,11 +77,28 @@ export function registerBuilderOverviewRoutes(app: FastifyLike, pool: Pool): voi
            ORDER BY generated_at DESC NULLS LAST, version DESC
            LIMIT 1
         ) v ON true
+        /**
+         * The binding on this agent's workflow. Same correction as the one in
+         * routes/agents.ts: a binding names a WORKFLOW, not an agent, so
+         * filtering on agent_id resolved to nothing here and fell through to
+         * the outer laterals -- three of which expose version -- and the query
+         * died with "column reference version is ambiguous". The Builder page
+         * 500'd on a name lookup.
+         */
         LEFT JOIN LATERAL (
-          SELECT event_type, graph_key, version, module_queue, source
-            FROM ${GRAPH_EVENT_BINDINGS}
-           WHERE agent_id = d.id AND status = 'active'
-           ORDER BY updated_at DESC LIMIT 1
+          SELECT gb.event_type,
+                 gb.graph_key,
+                 (SELECT max(gv.version)
+                    FROM authoring.graph_versions gv
+                    JOIN authoring.graphs gg ON gg.id = gv.graph_id
+                   WHERE gg.graph_key = gb.graph_key AND gv.status = 'live'
+                 ) AS version,
+                 gb.module_queue,
+                 gb.source
+            FROM ${GRAPH_EVENT_BINDINGS} gb
+           WHERE gb.graph_key = t.agent_key || '.authored'
+             AND gb.status = 'active'
+           ORDER BY gb.updated_at DESC LIMIT 1
         ) geb ON true
         WHERE d.is_active = true
         ORDER BY COALESCE(t.display_name, d.name)

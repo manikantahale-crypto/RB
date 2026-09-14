@@ -19,12 +19,20 @@ import {
   validateGraphTopology,
   checksumOf,
 } from "@tekisho/graph-contract";
+import { upsertActiveEventBinding } from "@tekisho/authoring";
 import { withOrgScope } from "../with-org-scope.js";
 import { deriveChain } from "../lib/derive-chain.js";
 import { collectGateEvidence } from "../lib/gate-evidence.js";
 import { diffGraphs } from "../lib/diff-graphs.js";
 import { EVENT_SCHEMAS, GRAPH_DEFINITIONS, GRAPH_EVENT_BINDINGS } from "../lib/authoring-views.js";
-import { activateVersion, saveDraft } from "../lib/authoring-writes.js";
+import {
+  activateVersion,
+  approveGoLive,
+  compileDraft,
+  cancelGoLiveRequest,
+  requestGoLive,
+  saveDraft,
+} from "../lib/authoring-writes.js";
 import {
   evaluateGoLiveGate,
   oneActiveIndexIsPerGraphKey,
@@ -102,10 +110,10 @@ export function registerEditorRoutes(app: FastifyLike, pool: Pool): void {
     try {
       const { rows } = await pool.query(
         module
-          ? `SELECT * FROM authoring.node_registry
-              WHERE module = $1 OR shareable = true
-              ORDER BY (module = $1) DESC, module, key`
-          : `SELECT * FROM authoring.node_registry ORDER BY module, key`,
+          ? `SELECT *, application AS module FROM authoring.node_registry
+              WHERE application = $1 OR shareable = true
+              ORDER BY (application = $1) DESC, application, key`
+          : `SELECT *, application AS module FROM authoring.node_registry ORDER BY application, key`,
         module ? [module] : [],
       );
 
@@ -301,9 +309,21 @@ export function registerEditorRoutes(app: FastifyLike, pool: Pool): void {
            * events reach it today, pending means the binding appears at
            * go-live.
            */
+          /**
+           * TWO NAMES FOR THE CHOSEN TRIGGER, AND THIS READ ONLY ONE.
+           *
+           * `entryInput` is what the seeds and older definitions carry;
+           * `triggerEventType` is what the graph contract added and what
+           * `/workflows/accept` writes. Neither name appears in both sets, so
+           * reading `entryInput` alone showed "no trigger bound" on the canvas
+           * for every workflow created through the current create path — the
+           * exact workflows somebody is most likely to be editing.
+           */
+          const chosenInDefinition =
+            row.definition?.triggerEventType ?? row.definition?.entryInput;
           const pending =
-            bound.length === 0 && row.definition?.entryInput
-              ? [String(row.definition.entryInput)]
+            bound.length === 0 && chosenInDefinition
+              ? [String(chosenInDefinition)]
               : [];
 
           /**
@@ -437,6 +457,347 @@ export function registerEditorRoutes(app: FastifyLike, pool: Pool): void {
    * a while may be looking at a binding that has since changed, and taking the
    * wrong event offline is not something to discover afterwards.
    */
+  /**
+   * Turn the working copy into a numbered version.
+   *
+   * The editor could create a draft and save it, and nothing could turn one
+   * into a version — `compileVersion` was reachable only from the agent path.
+   * So `request-go-live` had nothing to act on for a workflow authored here,
+   * and the lifecycle stopped one step short of being usable.
+   *
+   * It validates first. A version that cannot compile is worse than no
+   * version: it sits in the list looking promotable, and fails at the moment
+   * somebody puts it live.
+   */
+  app.post("/workflows/:graphKey/compile", async (req: any, reply: any) => {
+    const graphKey = String(req.params?.graphKey ?? "");
+    if (!graphKey) return reply.code(400).send({ error: "graph_key_required" });
+
+    try {
+      const { rows: draft } = await pool.query(
+        `SELECT definition FROM ${GRAPH_DEFINITIONS} gd
+          WHERE gd.graph_key = $1 AND gd.version = 0`,
+        [graphKey],
+      );
+      if (!draft[0]) {
+        return reply.code(409).send({
+          error: "no_draft",
+          message:
+            `${graphKey} has no working copy to compile. Open it in the ` +
+            `editor and save something first.`,
+        });
+      }
+
+      try {
+        validateGraphTopology(draft[0].definition);
+      } catch (err: any) {
+        return reply.code(422).send({
+          error: "definition_invalid",
+          message: String(err?.message ?? err),
+          note:
+            "Nothing was compiled. A version that cannot run is worse than " +
+            "no version — it looks promotable until somebody puts it live.",
+        });
+      }
+
+      const built = await compileDraft(pool, {
+        graphKey,
+        orgId: null,
+        by: String(req.headers["x-admin-id"] ?? "admin-local"),
+      });
+      if (!built) {
+        return reply.code(409).send({ error: "no_draft" });
+      }
+
+      return {
+        graphKey,
+        version: built.version,
+        checksum: built.checksum,
+        status: "compiled",
+        note:
+          "The draft is untouched — compiling takes a copy. Nothing runs " +
+          "until this version is requested and approved.",
+      };
+    } catch (err: any) {
+      req.log?.error?.(err);
+      return reply
+        .code(500)
+        .send({ error: "compile_failed", message: String(err) });
+    }
+  });
+
+  /**
+   * Ask, decide, withdraw.
+   *
+   * The agent side has had these three since `agent_policies.status` grew
+   * `pending_go_live`. The workflow side could not until V20260909.48 gave
+   * `authoring.graph_versions.status` the same state — a build somebody had
+   * asked to promote and a build nobody had looked at were both `compiled`,
+   * so the request left no trace in the table that decides what runs.
+   *
+   * Requesting is offered to anyone who can edit, because it changes nothing
+   * about what runs. Approving is the act with consequences, and it is the one
+   * that records a name.
+   */
+  app.post("/workflows/:graphKey/request-go-live", async (req: any, reply: any) => {
+    const graphKey = String(req.params?.graphKey ?? "");
+    if (!graphKey) return reply.code(400).send({ error: "graph_key_required" });
+    const version = req.body?.version != null ? Number(req.body.version) : undefined;
+
+    try {
+      const asked = await requestGoLive(pool, {
+        graphKey,
+        orgId: null,
+        version,
+        by: String(req.headers["x-admin-id"] ?? "admin-local"),
+      });
+
+      if (!asked) {
+        return reply.code(409).send({
+          error: "nothing_to_request",
+          message:
+            version != null
+              ? `${graphKey}@${version} is not a compiled version waiting to be ` +
+                `promoted. A version that is already live, retired, or already ` +
+                `requested cannot be requested again.`
+              : `${graphKey} has no compiled version to promote. Save and ` +
+                `compile a draft first.`,
+        });
+      }
+
+      return {
+        graphKey,
+        version: asked.version,
+        status: asked.status,
+        note:
+          "Nothing runs differently yet. Somebody has to approve it, and the " +
+          "approval is what puts it on the air.",
+      };
+    } catch (err: any) {
+      req.log?.error?.(err);
+      return reply
+        .code(500)
+        .send({ error: "request_failed", message: String(err) });
+    }
+  });
+
+  app.post("/workflows/:graphKey/approve-go-live", async (req: any, reply: any) => {
+    const graphKey = String(req.params?.graphKey ?? "");
+    if (!graphKey) return reply.code(400).send({ error: "graph_key_required" });
+    const version = req.body?.version != null ? Number(req.body.version) : undefined;
+
+    const client = await pool.connect();
+    try {
+      // Standing one version down and another up is one act: the one-live
+      // index refuses the pair in the wrong order, and a half-applied
+      // promotion leaves the workflow off the air entirely.
+      await client.query("BEGIN");
+
+      /**
+       * THE GATE RUNS HERE, AND UNTIL NOW IT DID NOT RUN AT ALL.
+       *
+       * `evaluateGoLiveGate` was wired into exactly one write path — the
+       * agent one, in routes/agents.ts. On the workflow path it was advisory:
+       * the checks screen displayed it, and approving ignored it. So every
+       * check in it, including the self-trigger rule that stops a workflow
+       * restarting itself for ever, could be read and then walked straight
+       * past by pressing Approve.
+       *
+       * That is the gap this screen exists to close. A console that shows
+       * evidence beside a button which does not consult it is theatre.
+       *
+       * INSIDE THE TRANSACTION, before anything is promoted, so a refusal
+       * leaves the version exactly where it was.
+       *
+       * WHEN THE EVIDENCE CANNOT BE GATHERED the gate reports "not checked"
+       * rather than passing — that is `collectGateEvidence`'s contract — so a
+       * database that cannot answer produces a visible gap, not a silent
+       * approval.
+       */
+      const { rows: candidate } = await client.query(
+        `SELECT v.version, v.definition, v.checksum
+           FROM authoring.graph_versions v
+           JOIN authoring.graphs g ON g.id = v.graph_id
+          WHERE g.graph_key = $1
+            AND v.status = 'pending_go_live'
+            AND ($2::int IS NULL OR v.version = $2)
+          ORDER BY v.requested_at ASC NULLS LAST
+          LIMIT 1`,
+        [graphKey, version ?? null],
+      );
+
+      if (candidate[0]) {
+        const artifactSource = `${JSON.stringify(candidate[0].definition, null, 2)}\n`;
+        const evidence = await collectGateEvidence(
+          client,
+          artifactSource,
+          graphKey,
+        );
+        const gate = evaluateGoLiveGate({
+          artifactSource,
+          storedChecksum: candidate[0].checksum ?? "",
+          expectedGraphKey: graphKey,
+          artifactKind: "workflow",
+          gapAck: null,
+          ...evidence,
+        });
+
+        if (!gate.ok) {
+          await client.query("ROLLBACK");
+          return reply.code(409).send({
+            error: "blocked_by_checks",
+            blockedBy: gate.blockedBy,
+            message: gate.message,
+            // Every check, not only the failures: the approver needs to see
+            // what was examined, or a refusal reads as the platform being
+            // arbitrary.
+            checks: gate.checks.map((c) => ({
+              id: c.id,
+              ok: c.ok,
+              message: c.message,
+            })),
+          });
+        }
+      }
+
+      const promoted = await approveGoLive(client, {
+        graphKey,
+        orgId: null,
+        version,
+        by: String(req.headers["x-admin-id"] ?? "admin-local"),
+      });
+
+      if (!promoted) {
+        await client.query("ROLLBACK");
+        return reply.code(409).send({
+          error: "nothing_to_approve",
+          message:
+            version != null
+              ? `${graphKey}@${version} is not waiting for approval.`
+              : `${graphKey} has no version waiting for approval.`,
+        });
+      }
+      /**
+       * The two-person rule, refused in words rather than by a constraint.
+       *
+       * The database refuses it too (V20260909.53), but a constraint violation
+       * arrives here as a 500 naming a column. Whoever hit this needs to know
+       * that somebody else has to approve it, not that
+       * `graph_versions_two_person_ck` failed.
+       */
+      if ("refused" in promoted) {
+        await client.query("ROLLBACK");
+        return reply.code(409).send({
+          error: "same_person",
+          message:
+            `${graphKey}@${promoted.version} was requested by ${promoted.requestedBy}, ` +
+            `so ${promoted.requestedBy} cannot approve it. Somebody else has to. ` +
+            `Nothing was changed.`,
+        });
+      }
+      /**
+       * The binding, created here and nowhere else.
+       *
+       * A draft binding cannot be stored — an active one would put an
+       * unreviewed workflow into production — so the trigger waits in the
+       * definition from the moment the workflow is accepted until somebody
+       * approves it. This is that moment. Without this the version went live
+       * and nothing routed to it: live, and unreachable.
+       *
+       * In the same transaction as the promotion, because a promoted version
+       * with no binding and a binding onto an unpromoted version are both
+       * worse than neither.
+       */
+      const { rows: def } = await client.query(
+        `SELECT definition FROM ${GRAPH_DEFINITIONS} gd
+          WHERE gd.graph_key = $1 AND gd.version = $2`,
+        [graphKey, promoted.version],
+      );
+      const trigger = def[0]?.definition?.triggerEventType
+        ? String(def[0].definition.triggerEventType)
+        : null;
+
+      let boundTo: string | null = null;
+      if (trigger) {
+        await upsertActiveEventBinding(client, {
+          eventType: trigger,
+          orgId: null,
+          graphKey,
+          version: promoted.version,
+          // Approving IS the confirmation. The takeover guard exists so that
+          // taking an event is never accidental, and somebody has just been
+          // shown this workflow and said yes to it.
+          allowTakeover: true,
+        });
+        boundTo = trigger;
+      }
+
+      await client.query("COMMIT");
+
+      return {
+        graphKey,
+        version: promoted.version,
+        previousLive: promoted.previousLive,
+        boundTo,
+        live: true,
+        note:
+          (boundTo
+            ? `${boundTo} now starts this workflow. `
+            : "This workflow names no trigger, so nothing routes to it yet. ") +
+          (promoted.previousLive != null
+            ? `v${promoted.previousLive} was retired, not deleted — rolling ` +
+              `back is the same call with the other version number.`
+            : "This is the first version of this workflow to go live."),
+      };
+    } catch (err: any) {
+      await client.query("ROLLBACK").catch(() => {});
+      req.log?.error?.(err);
+      return reply
+        .code(500)
+        .send({ error: "approve_failed", message: String(err) });
+    } finally {
+      client.release();
+    }
+  });
+
+  app.post(
+    "/workflows/:graphKey/cancel-go-live-request",
+    async (req: any, reply: any) => {
+      const graphKey = String(req.params?.graphKey ?? "");
+      if (!graphKey) return reply.code(400).send({ error: "graph_key_required" });
+      const version = req.body?.version != null ? Number(req.body.version) : undefined;
+
+      try {
+        const withdrawn = await cancelGoLiveRequest(pool, {
+          graphKey,
+          orgId: null,
+          version,
+        });
+
+        if (!withdrawn) {
+          return reply.code(409).send({
+            error: "nothing_to_cancel",
+            message: `${graphKey} has no go-live request outstanding.`,
+          });
+        }
+
+        return {
+          graphKey,
+          version: withdrawn.version,
+          status: "compiled",
+          note:
+            "The version is untouched and can be requested again. Withdrawing " +
+            "means not yet, not never.",
+        };
+      } catch (err: any) {
+        req.log?.error?.(err);
+        return reply
+          .code(500)
+          .send({ error: "cancel_failed", message: String(err) });
+      }
+    },
+  );
+
   app.post("/workflows/:graphKey/take-offline", async (req: any, reply: any) => {
     const graphKey = String(req.params?.graphKey ?? "");
     const expected = req.body?.expectedEventType
@@ -468,25 +829,86 @@ export function registerEditorRoutes(app: FastifyLike, pool: Pool): void {
         });
       }
 
-      const { rowCount } = await pool.query(
-        `UPDATE authoring.event_bindings b
-            SET status = 'retired', updated_at = now()
-           FROM authoring.graphs g
-          WHERE g.id = b.graph_id
-            AND g.graph_key = $1
-            AND b.status = 'active'`,
-        [graphKey],
-      );
+      /**
+       * THE BINDING AND THE VERSION GO TOGETHER, IN BOTH DIRECTIONS.
+       *
+       * This used to retire the binding and leave the version `live`, and said
+       * so: "The workflow and all its versions are untouched." That made
+       * "live" mean two different things depending on which table you asked —
+       * and the two drifted, because nothing kept them in step.
+       *
+       * `syntra.authored` v124 is the evidence: 262 runs, last on 1 September,
+       * still marked live, and nothing has been able to reach it since its
+       * binding was retired. Nobody decided that; the halves just came apart.
+       * Thirteen workflows are in that state.
+       *
+       * Approving already does both together (approve-go-live activates the
+       * version and creates the binding in one transaction). This is the other
+       * direction, and without it the invariant only held on the way up.
+       *
+       * ONE TRANSACTION, because a workflow that is unbound but still live is
+       * exactly the state being removed — producing it halfway through would
+       * be the bug rather than the fix.
+       *
+       * The version is RETIRED, not deleted. Rollback re-activates a retired
+       * version, so nothing here is one-way.
+       */
+      const client = await pool.connect();
+      let retiredVersion: number | null = null;
+      let rowsChanged = 0;
+      try {
+        await client.query("BEGIN");
+
+        const { rowCount } = await client.query(
+          `UPDATE authoring.event_bindings b
+              SET status = 'retired', updated_at = now()
+             FROM authoring.graphs g
+            WHERE g.id = b.graph_id
+              AND g.graph_key = $1
+              AND b.status = 'active'`,
+          [graphKey],
+        );
+        rowsChanged = rowCount ?? 0;
+
+        const { rows: stepped } = await client.query(
+          `UPDATE authoring.graph_versions v
+              SET status = 'retired'
+             FROM authoring.graphs g
+            WHERE g.id = v.graph_id
+              AND g.graph_key = $1
+              AND v.status = 'live'
+            RETURNING v.version`,
+          [graphKey],
+        );
+        retiredVersion = stepped[0] ? Number(stepped[0].version) : null;
+
+        await client.query(
+          `UPDATE authoring.graphs SET status = 'retired', updated_at = now()
+            WHERE graph_key = $1 AND status = 'active'`,
+          [graphKey],
+        );
+
+        await client.query("COMMIT");
+      } catch (err) {
+        await client.query("ROLLBACK");
+        throw err;
+      } finally {
+        client.release();
+      }
 
       return {
         graphKey,
         offline: true,
         retired: bindings.map((b: any) => b.event_type),
-        rowsChanged: rowCount ?? 0,
+        retiredVersion,
+        rowsChanged,
         note:
-          "The workflow and all its versions are untouched — only the binding " +
-          "was retired. Events of that type will now be acknowledged and go " +
-          "nowhere until something is bound again.",
+          retiredVersion !== null
+            ? `Binding retired and v${retiredVersion} stepped down. Nothing of ` +
+              `this workflow is live now, which is what offline means — the ` +
+              `version is retired, not deleted, so rolling it back puts it ` +
+              `straight back.`
+            : "The binding was retired. No version was live, so nothing stepped down.",
       };
     } catch (err: any) {
       req.log?.error?.(err);
@@ -721,6 +1143,16 @@ export function registerEditorRoutes(app: FastifyLike, pool: Pool): void {
         artifactSource,
         storedChecksum: row.checksum ?? "",
         expectedGraphKey: graphKey,
+        /**
+         * A workflow, not an agent artifact.
+         *
+         * Without this, three checks fail on every workflow for reasons that
+         * are about the agent model rather than about the workflow: a key that
+         * does not end `.authored`, a checksum that cannot be recomputed from
+         * jsonb, and a gap record only the agent flow writes. This screen has
+         * been showing those three reds since it was built.
+         */
+        artifactKind: "workflow",
         // Gaps are acknowledged when go-live is REQUESTED, not while looking.
         // Reporting the unacknowledged state is the point of looking early.
         gapAck: null,

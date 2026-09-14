@@ -26,7 +26,8 @@ export type CheckFinding = {
     | "routing_hazards"
     | "bindings_routable"
     | "impls_permitted"
-    | "emitted_events_answered";
+    | "emitted_events_answered"
+    | "live_means_reachable";
   status: CheckStatus;
   /** One sentence, true whichever way it went. */
   message: string;
@@ -365,12 +366,82 @@ export function checkEmittedEventsAnswered(facts: PlatformFacts): CheckFinding {
 }
 
 /** All four, in the order they are worth reading. */
+/**
+ * Check 5 — does "live" still mean reachable?
+ *
+ * Two tables record whether a workflow runs: a version is `live`, and a
+ * binding is `active`. Both have to be true. They are written by different
+ * code paths, so nothing but discipline keeps them together — and discipline
+ * lost: thirteen workflows were live with no binding, including
+ * `syntra.authored`, which had run 262 times and was last used on 1 September.
+ *
+ * Nobody decided to switch those off. `take-offline` retired the binding and
+ * left the version alone, by design, and said so in its own response. Every
+ * screen that reads "live" then reported them as running for weeks.
+ *
+ * This cannot be a database constraint: the two rows are in different tables,
+ * so a CHECK cannot see across, and a trigger would fire mid-transaction
+ * during approve-go-live, which legitimately writes both. V20260909.54
+ * corrected the existing rows and both code paths are now transactional. This
+ * is what notices if that ever stops being true.
+ *
+ * BOTH DIRECTIONS ARE FAULTS. A live version nothing can reach never runs; an
+ * active binding with no live version is an event the router accepts and then
+ * drops. The second is the quieter one.
+ */
+export function checkLiveMeansReachable(facts: PlatformFacts): CheckFinding {
+  if (facts.graphs.length === 0) {
+    return {
+      id: "live_means_reachable",
+      status: "unchecked",
+      message:
+        "Not checked — no live workflows were supplied, so an unreachable one " +
+        "cannot be told apart from an empty platform.",
+      detail: [],
+    };
+  }
+
+  const boundKeys = new Set(facts.bindings.map((b) => b.graphKey));
+  const liveKeys = new Set(facts.graphs.map((g) => g.graphKey));
+
+  const unreachable = facts.graphs
+    .filter((g) => !boundKeys.has(g.graphKey))
+    .map((g) => `${g.graphKey} is live and no active binding points at it`);
+
+  const dangling = facts.bindings
+    .filter((b) => !liveKeys.has(b.graphKey))
+    .map(
+      (b) =>
+        `${b.eventType} → ${b.graphKey} is bound, but that workflow has no live version`,
+    );
+
+  const bad = [...unreachable, ...dangling];
+
+  return bad.length === 0
+    ? {
+        id: "live_means_reachable",
+        status: "pass",
+        message: `All ${facts.graphs.length} live workflows have a binding, and every binding points at a live workflow.`,
+        detail: [],
+      }
+    : {
+        id: "live_means_reachable",
+        status: "fail",
+        message:
+          `${bad.length} workflow${bad.length === 1 ? "" : "s"} where "live" and "reachable" disagree. ` +
+          `${unreachable.length} look live and can never fire; ` +
+          `${dangling.length} accept events that are then dropped.`,
+        detail: bad,
+      };
+}
+
 export function runPlatformChecks(facts: PlatformFacts): CheckFinding[] {
   return [
     checkBindingsRoutable(facts),
     checkImplsPermitted(facts),
     checkEmittedEventsAnswered(facts),
     checkEventsHandled(facts),
+    checkLiveMeansReachable(facts),
   ];
 }
 

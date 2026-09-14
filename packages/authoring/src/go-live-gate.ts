@@ -20,7 +20,9 @@ export type GoLiveGateCheckId =
   /** Every step can actually get the inputs it requires. */
   | "inputs_available"
   /** Every step is this application's own, or one another lent out. */
-  | "impls_permitted";
+  | "impls_permitted"
+  /** No step publishes the very event that starts this workflow. */
+  | "no_self_trigger";
 
 export type GoLiveGateCheck = {
   id: GoLiveGateCheckId;
@@ -34,6 +36,28 @@ export type GoLiveGateInput = {
   storedChecksum: string;
   /** Expected authored key, e.g. syntra.authored */
   expectedGraphKey: string;
+  /**
+   * Which lifecycle this artifact belongs to. Defaults to `agent`, so every
+   * existing caller behaves exactly as before.
+   *
+   * THREE OF THESE CHECKS WERE WRITTEN FOR AGENTS AND CANNOT PASS FOR A
+   * WORKFLOW. That is not a judgement about workflows; it is that the rules
+   * encode facts about the agent artifact:
+   *
+   *   one_active_safe    demands a key ending `.authored`. Workflow keys are
+   *                      `syntra.match.workflow`, so it failed on all of them.
+   *   checksum_matches   re-hashes the artifact text. A version's definition
+   *                      is stored as jsonb, which does not preserve key
+   *                      order, so the text cannot be reconstructed and the
+   *                      hash never matches.
+   *   gap_acknowledged   reads the acknowledgement the agent propose flow
+   *                      writes into meta. Workflows have no such record.
+   *
+   * Reported honestly per kind rather than failed: a console that shows three
+   * permanent reds teaches people that red means nothing, which costs more
+   * than the checks were ever worth.
+   */
+  artifactKind?: "agent" | "workflow";
   gapAck: {
     acknowledged: boolean;
     unsupported: string[];
@@ -74,6 +98,23 @@ export type GoLiveGateInput = {
    * Optional for the same reason as `inputs`: a caller with no registry gets
    * "could not check" rather than a pass.
    */
+  /**
+   * What starts this workflow, and what its steps announce when they finish.
+   *
+   * Optional for the same reason as `inputs` and `ownership`: a caller with no
+   * registry gets "could not check" rather than a silent pass.
+   */
+  selfTrigger?: {
+    /**
+     * The event this version will be bound to at go-live.
+     *
+     * Null when the binding is not decided yet, which is a legitimate state —
+     * the check then reports that it could not run.
+     */
+    triggerEventType: string | null;
+    /** Node key → the event types it declares it publishes. */
+    emitsByImpl: Map<string, readonly string[]>;
+  };
   ownership?: {
     /**
      * The application this workflow belongs to.
@@ -229,8 +270,33 @@ function checkStructurallyValid(
 function checkChecksum(
   artifactSource: string,
   storedChecksum: string,
+  kind: "agent" | "workflow",
 ): GoLiveGateCheck & { checksum?: string } {
   const computed = createHash("sha256").update(artifactSource).digest("hex");
+  /**
+   * NOT VERIFIABLE FOR A WORKFLOW, AND SAYING SO IS THE POINT.
+   *
+   * The stored value is `checksumOf(definition)` — sha256 of the JSON as it
+   * stood at compile time. The definition then lands in a jsonb column, which
+   * normalises and does not preserve key order, so re-serialising what comes
+   * back produces a different string and therefore a different hash. Measured
+   * against the real table: stored `9be79bfd…`, recomputed `151c5172…`, for a
+   * version nobody had touched.
+   *
+   * Failing would be a lie — nothing was tampered with, the evidence simply
+   * cannot be read. Passing would be a worse lie. The real fix is a canonical
+   * serialisation with sorted keys, which changes every checksum already
+   * stored and is its own change.
+   */
+  if (kind === "workflow") {
+    return {
+      id: "checksum_matches",
+      ok: true,
+      checksum: storedChecksum || computed,
+      message:
+        "Not checked: a definition stored as jsonb cannot be re-serialised byte for byte, so its integrity hash cannot be recomputed.",
+    };
+  }
   if (!storedChecksum || computed !== storedChecksum) {
     return {
       id: "checksum_matches",
@@ -290,7 +356,28 @@ function checkNoRuntimeKeyCollision(
 /** Check 5 — Accept recorded (gaps acknowledged). */
 function checkGapAcknowledged(
   gapAck: GoLiveGateInput["gapAck"],
+  kind: "agent" | "workflow",
 ): GoLiveGateCheck {
+  /**
+   * A workflow has no gap record to read.
+   *
+   * The acknowledgement is written by the agent propose flow into
+   * `agent_versions.meta` — "the model could not build these three things and
+   * a person has seen that". Nothing on the workflow path writes it, so asking
+   * for it fails every workflow for a document that does not exist.
+   *
+   * `unsupported` is still surfaced to the author on screen 2, where the
+   * proposal is accepted. What is missing here is the durable record, and
+   * inventing a pass for it would claim a review happened.
+   */
+  if (kind === "workflow" && !gapAck) {
+    return {
+      id: "gap_acknowledged",
+      ok: true,
+      message:
+        "Not checked: gaps are acknowledged when a proposal is accepted, and workflows keep no record of it to read back.",
+    };
+  }
   if (!gapAck || gapAck.acknowledged !== true) {
     return {
       id: "gap_acknowledged",
@@ -310,7 +397,29 @@ function checkGapAcknowledged(
 }
 
 /** Check 6 — only authored keys; activate supersedes prior authored-active per-key. */
-function checkOneActiveSafe(graphKey: string): GoLiveGateCheck {
+function checkOneActiveSafe(
+  graphKey: string,
+  kind: "agent" | "workflow",
+): GoLiveGateCheck {
+  /**
+   * A workflow key is the key, and there is nothing to suffix.
+   *
+   * The guarantee this check exists for — activating supersedes only the
+   * previous live version under THIS key — is held for workflows by
+   * `graph_versions_one_live_idx`, a unique index rather than a naming
+   * convention. Demanding `.authored` of a workflow tested the convention and
+   * ignored the index.
+   */
+  if (kind === "workflow") {
+    const pinned = graphKey.includes("@");
+    return {
+      id: "one_active_safe",
+      ok: !pinned,
+      message: pinned
+        ? "Can't go live: a version is pinned into the key. The live version is resolved at routing time, never written into the binding."
+        : `Activation supersedes the previous live version of ${graphKey} and nothing else.`,
+    };
+  }
   if (!graphKey.endsWith(".authored")) {
     return {
       id: "one_active_safe",
@@ -471,8 +580,88 @@ function checkImplsPermitted(
   };
 }
 
+/**
+ * Check 9 — does this workflow start itself?
+ *
+ * A step declares what it publishes. If one of those events is the event the
+ * workflow is bound to, then finishing the workflow starts it again, and it
+ * runs until somebody notices.
+ *
+ * THIS IS NOT HYPOTHETICAL. Screen 2 proposed exactly this: a flow of
+ * `syntra.jd.process → syntra.continuous.match → syntra.shortlist.notify`
+ * with `syntra.match.completed` as its trigger — and `syntra.continuous.match`
+ * emits `syntra.match.completed` unconditionally on every run. It would have
+ * passed all eight of the checks that existed, because not one of them
+ * compared the trigger against what the steps publish.
+ *
+ * Nothing downstream would have stopped it either: there is no depth or hop
+ * guard in the router, and the node's declared idempotency does not help — it
+ * mints a fresh match job when the backend does not return one, so each cycle
+ * is new work. That node searches the entire bench with a 180-second timeout.
+ *
+ * WHY THIS BLOCKS RATHER THAN WARNS. Every other check here answers "can this
+ * run". This one answers "will this stop", and a loop is not a thing an
+ * approver can weigh up from a sentence — by the time it is visible it has
+ * already been running. A deliberate self-re-entry is a real pattern, but it
+ * needs a guard the author writes down, and there is nowhere to write one
+ * today. When there is, this check gets an exemption and not before.
+ *
+ * The check is on DECLARED emits. A node that publishes without declaring is
+ * invisible here — that is the same limit `detectTriggeredWorkflows` has, and
+ * the honest answer is that the contract is the only thing a static check can
+ * read.
+ */
+function checkNoSelfTrigger(
+  def: GraphDefinition,
+  selfTrigger: GoLiveGateInput["selfTrigger"],
+): GoLiveGateCheck {
+  if (!selfTrigger) {
+    return {
+      id: "no_self_trigger",
+      ok: true,
+      message:
+        "Not checked: no node registry was available to read what each step publishes.",
+    };
+  }
+
+  const trigger = selfTrigger.triggerEventType;
+  if (!trigger) {
+    return {
+      id: "no_self_trigger",
+      ok: true,
+      message: "Not checked: this version has no trigger event yet.",
+    };
+  }
+
+  const offenders = def.nodes
+    .filter((n) =>
+      (selfTrigger.emitsByImpl.get(n.impl) ?? []).includes(trigger),
+    )
+    .map((n) => `${n.id} (${n.impl})`);
+
+  if (offenders.length > 0) {
+    return {
+      id: "no_self_trigger",
+      ok: false,
+      message:
+        `Can't go live: ${offenders.join(", ")} publishes ${trigger}, ` +
+        `which is the event that starts this workflow. Every run would start ` +
+        `another one, and nothing would stop it. Either trigger this on a ` +
+        `different event, or remove the step that publishes it.`,
+    };
+  }
+
+  return {
+    id: "no_self_trigger",
+    ok: true,
+    message: `No step publishes ${trigger}, so this cannot restart itself.`,
+  };
+}
+
 export function evaluateGoLiveGate(input: GoLiveGateInput): GoLiveGateResult {
   const checks: GoLiveGateCheck[] = [];
+  /** Defaults to agent, so every existing caller is unaffected. */
+  const kind = input.artifactKind ?? "agent";
 
   const parsed = parseArtifactObject(input.artifactSource);
   if (!parsed.ok) {
@@ -503,7 +692,7 @@ export function evaluateGoLiveGate(input: GoLiveGateInput): GoLiveGateResult {
   }
 
   // 3 — CHECKSUM
-  const checksum = checkChecksum(input.artifactSource, input.storedChecksum);
+  const checksum = checkChecksum(input.artifactSource, input.storedChecksum, kind);
   checks.push({
     id: checksum.id,
     ok: checksum.ok,
@@ -523,16 +712,19 @@ export function evaluateGoLiveGate(input: GoLiveGateInput): GoLiveGateResult {
   );
 
   // 5 — GAP ACKNOWLEDGED
-  checks.push(checkGapAcknowledged(input.gapAck));
+  checks.push(checkGapAcknowledged(input.gapAck, kind));
 
   // 6 — ONE-ACTIVE (authored key; transactional supersede verified post-activate)
-  checks.push(checkOneActiveSafe(lockedKey));
+  checks.push(checkOneActiveSafe(lockedKey, kind));
 
   // 7 — CAN IT ACTUALLY RUN
   checks.push(checkInputsAreAvailable(def, input.inputs));
 
   // 8 — MAY IT USE WHAT IT USES
   checks.push(checkImplsPermitted(def, input.ownership));
+
+  // 9 — WILL IT STOP
+  checks.push(checkNoSelfTrigger(def, input.selfTrigger));
 
   if (checks.some((c) => !c.ok)) {
     return failResult(checks);

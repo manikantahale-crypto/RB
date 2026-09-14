@@ -153,10 +153,20 @@ export function registerRuntimeRoutes(app: FastifyLike, pool: Pool): void {
       );
 
       const bindings = await pool.query(
-        `SELECT event_type, graph_key, version, status, source, updated_at
-           FROM ${GRAPH_EVENT_BINDINGS}
-          WHERE agent_id = $1::uuid
-          ORDER BY updated_at DESC NULLS LAST
+        // By graph key, not agent id: a binding names a workflow now.
+        `SELECT gb.event_type, gb.graph_key,
+                (SELECT max(gv.version) FROM authoring.graph_versions gv
+                   JOIN authoring.graphs gg ON gg.id = gv.graph_id
+                  WHERE gg.graph_key = gb.graph_key AND gv.status = 'live') AS version,
+                gb.status, gb.source, gb.updated_at
+           FROM ${GRAPH_EVENT_BINDINGS} gb
+          WHERE gb.graph_key = (
+                  SELECT t.agent_key || '.authored'
+                    FROM builder.agent_templates t
+                   WHERE t.agent_id = $1::uuid AND t.is_active = true
+                   ORDER BY t.version DESC LIMIT 1
+                )
+          ORDER BY gb.updated_at DESC NULLS LAST
           LIMIT 20`,
         [agentId],
       );

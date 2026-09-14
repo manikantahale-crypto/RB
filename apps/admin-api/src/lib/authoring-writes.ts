@@ -272,3 +272,283 @@ export async function retireActive(
   );
   return rowCount ?? 0;
 }
+
+/**
+ * Ask for a version to go live.
+ *
+ * A request is cheap and reversible; promoting is neither. So this only moves
+ * a `compiled` build to `pending_go_live` and records who asked — it changes
+ * nothing about what runs, which is what makes it safe to offer to anyone who
+ * can edit.
+ *
+ * Returns null when there is no such version to request, so the caller answers
+ * 404 rather than reporting a request nobody can act on.
+ */
+export async function requestGoLive(
+  db: Queryable,
+  args: {
+    graphKey: string;
+    orgId: string | null;
+    /** Defaults to the highest version that is not live and not retired. */
+    version?: number;
+    by?: string | null;
+  },
+): Promise<{ version: number; status: string } | null> {
+  const { userId, label } = await attribution(db, args.by);
+
+  /**
+   * A RETIRED VERSION CAN BE ASKED FOR AGAIN, AND THAT IS THE WAY BACK.
+   *
+   * This accepted only `compiled`, which left taking a workflow offline as a
+   * one-way door: the binding was gone, and now the version is retired too, so
+   * there was nothing in a requestable state and no screen that could put it
+   * back. (The dead end predates the change — a live-but-unbound workflow had
+   * no re-bind path either — but making the state honest also has to make the
+   * exit honest.)
+   *
+   * So coming back online is the ordinary route, not a special one: request,
+   * then somebody else approves. That keeps the two-person rule and the whole
+   * go-live gate on the act of putting something into production, which is
+   * exactly where they belong. A `bring-online` button that skipped them would
+   * be a second, quieter way to change what runs.
+   *
+   * The default still prefers the newest COMPILED version — the common case is
+   * releasing new work, not restoring old. A retired one has to be asked for
+   * by number, which is the right amount of friction for "put last month's
+   * version back".
+   */
+  const { rows } = await db.query<{ version: number; status: string }>(
+    `UPDATE authoring.graph_versions v
+        SET status             = 'pending_go_live',
+            requested_by       = $4::uuid,
+            requested_by_label = $5,
+            requested_at       = now()
+       FROM authoring.graphs g
+      WHERE g.id = v.graph_id
+        AND g.graph_key = $1
+        AND g.org_id IS NOT DISTINCT FROM $2::uuid
+        AND v.status IN ('compiled', 'retired')
+        AND v.version = coalesce($3, (
+          SELECT max(v2.version) FROM authoring.graph_versions v2
+           WHERE v2.graph_id = v.graph_id AND v2.status = 'compiled'))
+      RETURNING v.version, v.status`,
+    [args.graphKey, args.orgId, args.version ?? null, userId, label],
+  );
+  return rows[0] ?? null;
+}
+
+/**
+ * Is the approver the person who asked?
+ *
+ * Pure, and separate from the query, because it is the whole rule and the
+ * subtlety is all here rather than in the SQL.
+ *
+ * ONE IDENTITY, TWO COLUMNS. `attribution()` writes a uuid into `*_by` when
+ * the caller resolves to a row in `platform.users` and a free-text label into
+ * `*_by_label` otherwise. Both sides are compared after that collapse, so
+ * `alice` approving `alice` is caught even though neither is a uuid — which is
+ * every request the admin screens make today.
+ *
+ * UNKNOWN IS NOT A SECOND PERSON. When either side is missing this returns
+ * false and the approval proceeds: the caller cannot show the two are the same
+ * person, and refusing every unattributed approval would block the seeded and
+ * deployment-labelled versions that make up most of the table. The database
+ * constraint takes the stricter line for rows where both acts are recorded and
+ * neither identity is — see V20260909.53.
+ */
+export function isSamePerson(
+  approver: string | null,
+  requester: string | null,
+): boolean {
+  if (approver === null || requester === null) return false;
+  return approver.trim() === requester.trim();
+}
+
+/**
+ * Say yes, and put it on the air.
+ *
+ * Approval and promotion are one act deliberately. Separating them would leave
+ * a fourth state — approved but not running — that nothing else in the system
+ * understands, and somebody would eventually have to ask which of the two
+ * mattered.
+ *
+ * Whatever was live steps down first: `graph_versions_one_live_idx` allows a
+ * single live version per workflow, so the order is not a preference.
+ *
+ * THE TWO-PERSON RULE IS ENFORCED HERE, AND UNTIL NOW IT WAS ENFORCED NOWHERE.
+ *
+ * V20260909.49 added `requested_by` / `approved_by` and the comments around
+ * them describe a rule that the person who asks cannot be the person who says
+ * yes. The CHECK constraint those comments name was never written, and this
+ * function never compared the two — so one person could request and approve
+ * their own workflow into production, which is exactly what the columns exist
+ * to prevent. V20260909.53 adds the constraint as the backstop; this is the
+ * half that can explain itself to whoever hit it.
+ *
+ * It compares the EFFECTIVE identity, not the uuid. `attribution()` writes a
+ * uuid for a known user and a free-text label for everyone else, and the admin
+ * screens send a label — so a rule comparing only the uuid columns would find
+ * NULL on both sides of every request the UI makes and pass every time.
+ */
+export async function approveGoLive(
+  db: Queryable,
+  args: {
+    graphKey: string;
+    orgId: string | null;
+    /** Defaults to the version that has been waiting longest. */
+    version?: number;
+    by?: string | null;
+  },
+): Promise<
+  | { version: number; previousLive: number | null }
+  /** The approver is the person who asked. Nothing was changed. */
+  | { refused: "same_person"; version: number; requestedBy: string }
+  | null
+> {
+  const { rows: pending } = await db.query<{
+    graph_id: string;
+    version: number;
+    asked_by: string | null;
+  }>(
+    `SELECT v.graph_id::text AS graph_id, v.version,
+            coalesce(v.requested_by::text, v.requested_by_label) AS asked_by
+       FROM authoring.graph_versions v
+       JOIN authoring.graphs g ON g.id = v.graph_id
+      WHERE g.graph_key = $1
+        AND g.org_id IS NOT DISTINCT FROM $2::uuid
+        AND v.status = 'pending_go_live'
+        AND ($3::int IS NULL OR v.version = $3)
+      ORDER BY v.requested_at ASC NULLS LAST
+      LIMIT 1`,
+    [args.graphKey, args.orgId, args.version ?? null],
+  );
+  if (!pending[0]) return null;
+
+  const { graph_id: graphId, version } = pending[0];
+  const { userId, label } = await attribution(db, args.by);
+
+  // Whoever the approver is, under whichever column they landed in.
+  const asked = pending[0].asked_by;
+  if (isSamePerson(userId ?? label ?? null, asked)) {
+    return {
+      refused: "same_person",
+      version: Number(version),
+      requestedBy: asked ?? "whoever requested it",
+    };
+  }
+
+  const { rows: steppedDown } = await db.query<{ version: number }>(
+    `UPDATE authoring.graph_versions
+        SET status = 'retired'
+      WHERE graph_id = $1::uuid AND status = 'live' AND version <> $2
+      RETURNING version`,
+    [graphId, version],
+  );
+
+  await db.query(
+    `UPDATE authoring.graph_versions
+        SET status            = 'live',
+            approved_by       = $3::uuid,
+            approved_by_label = $4,
+            approved_at       = now()
+      WHERE graph_id = $1::uuid AND version = $2`,
+    [graphId, version, userId, label],
+  );
+
+  await db.query(
+    `UPDATE authoring.graphs SET status = 'active', updated_at = now()
+      WHERE id = $1::uuid AND status <> 'active'`,
+    [graphId],
+  );
+
+  return {
+    version: Number(version),
+    previousLive: steppedDown[0] ? Number(steppedDown[0].version) : null,
+  };
+}
+
+/**
+ * Withdraw the request. The build stays exactly where it was.
+ *
+ * Back to `compiled`, not to retired: withdrawing is "not yet", and throwing
+ * the version away would mean recompiling to ask again.
+ */
+export async function cancelGoLiveRequest(
+  db: Queryable,
+  args: { graphKey: string; orgId: string | null; version?: number },
+): Promise<{ version: number } | null> {
+  const { rows } = await db.query<{ version: number }>(
+    `UPDATE authoring.graph_versions v
+        SET status             = 'compiled',
+            requested_by       = NULL,
+            requested_by_label = NULL,
+            requested_at       = NULL
+       FROM authoring.graphs g
+      WHERE g.id = v.graph_id
+        AND g.graph_key = $1
+        AND g.org_id IS NOT DISTINCT FROM $2::uuid
+        AND v.status = 'pending_go_live'
+        AND ($3::int IS NULL OR v.version = $3)
+      RETURNING v.version`,
+    [args.graphKey, args.orgId, args.version ?? null],
+  );
+  return rows[0] ? { version: Number(rows[0].version) } : null;
+}
+
+/**
+ * Turn the working copy into a numbered version.
+ *
+ * The step the editor was missing. `compileVersion` above is the agent path,
+ * where the number comes from the policy; a workflow authored in the editor
+ * has no policy, so the number is allocated here — the next one after the
+ * highest that exists, counting retired ones, because a version number must
+ * never be reused. A run pinned to v4 has to mean one thing for ever.
+ *
+ * The draft is left exactly where it is. Compiling is taking a copy, not
+ * moving it: the author carries on editing, and what they were working on is
+ * not silently different from what they just sent for review.
+ *
+ * Returns null when there is no draft, so the caller says so rather than
+ * creating an empty version nobody can run.
+ */
+export async function compileDraft(
+  db: Queryable,
+  args: { graphKey: string; orgId: string | null; by?: string | null },
+): Promise<{ version: number; checksum: string } | null> {
+  const { rows: draft } = await db.query<{
+    graph_id: string;
+    definition: unknown;
+    checksum: string;
+  }>(
+    `SELECT d.graph_id::text AS graph_id, d.definition, d.checksum
+       FROM authoring.graph_drafts d
+       JOIN authoring.graphs g ON g.id = d.graph_id
+      WHERE g.graph_key = $1 AND g.org_id IS NOT DISTINCT FROM $2::uuid`,
+    [args.graphKey, args.orgId],
+  );
+  if (!draft[0]) return null;
+
+  const { userId, label } = await attribution(db, args.by);
+
+  const { rows } = await db.query<{ version: number }>(
+    `INSERT INTO authoring.graph_versions
+       (graph_id, org_id, version, definition, checksum, status,
+        compiled_by, compiled_by_label, compiled_at)
+     SELECT $1::uuid, $2::uuid,
+            coalesce(max(v.version), 0) + 1,
+            $3::jsonb, $4, 'compiled', $5::uuid, $6, now()
+       FROM authoring.graph_versions v
+      WHERE v.graph_id = $1::uuid
+     RETURNING version`,
+    [
+      draft[0].graph_id,
+      args.orgId,
+      JSON.stringify(draft[0].definition),
+      draft[0].checksum,
+      userId,
+      label,
+    ],
+  );
+
+  return { version: Number(rows[0]!.version), checksum: draft[0].checksum };
+}

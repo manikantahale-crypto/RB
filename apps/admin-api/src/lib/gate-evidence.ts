@@ -1,11 +1,17 @@
 /**
- * Evidence for the two go-live checks that ask about more than shape.
+ * Evidence for the go-live checks that ask about more than shape.
  *
  * `evaluateGoLiveGate` is a pure function: same input, same verdict, no
  * database, no clock. That is what makes it testable and what stops a check
- * quietly depending on the state of the machine it ran on. But checks 7 and 8
- * — can every step get what it needs, and is every step one this application
- * is allowed to use — need the node registry and the trigger's payload schema.
+ * quietly depending on the state of the machine it ran on. But three of its
+ * checks need the node registry and the event catalogue:
+ *
+ *   7  can every step get what it needs
+ *   8  is every step one this application may use
+ *   9  does any step publish the event that starts this workflow
+ *
+ * The last is the one that keeps a workflow from restarting itself for ever,
+ * and it needs each node's declared `emits`.
  *
  * So the lookups happen here and are handed in.
  *
@@ -38,19 +44,35 @@ export async function collectGateEvidence(
     moduleByImpl: Map<string, string>;
     shareableImpls: Set<string>;
   };
+  selfTrigger?: {
+    triggerEventType: string | null;
+    emitsByImpl: Map<string, readonly string[]>;
+  };
 }> {
   try {
     const def = JSON.parse(artifactSource) as {
       entryInput?: string;
+      triggerEventType?: string;
       nodes?: Array<{ impl?: string }>;
     };
+    /**
+     * TWO NAMES FOR THE TRIGGER, AND THIS READ ONLY ONE.
+     *
+     * `entryInput` is what the seeds and older definitions carry;
+     * `triggerEventType` is what the graph contract added and what
+     * `/workflows/accept` writes. Neither name appears in both sets, so
+     * reading `entryInput` alone meant check 7 reported "not checked" for
+     * every workflow created through the current path — the ones most likely
+     * to be going live.
+     */
+    const trigger = def.triggerEventType ?? def.entryInput ?? null;
     const impls = [
       ...new Set((def.nodes ?? []).map((n) => String(n.impl ?? ""))),
     ].filter(Boolean);
     if (impls.length === 0) return {};
 
     const { rows } = await client.query(
-      `SELECT key, module, shareable, input_schema
+      `SELECT key, application AS module, shareable, input_schema, emits
          FROM authoring.node_registry WHERE key = ANY($1::text[])`,
       [impls],
     );
@@ -58,12 +80,28 @@ export async function collectGateEvidence(
     const requiredByImpl = new Map<string, readonly string[]>();
     const moduleByImpl = new Map<string, string>();
     const shareableImpls = new Set<string>();
+    /** Node key -> the events it declares it publishes. Check 9 reads this. */
+    const emitsByImpl = new Map<string, readonly string[]>();
     for (const r of rows) {
       const key = String(r.key);
       moduleByImpl.set(key, String(r.module));
       if (r.shareable === true) shareableImpls.add(key);
       const required = r.input_schema?.required;
       requiredByImpl.set(key, Array.isArray(required) ? required : []);
+      /**
+       * `emits` is jsonb and holds either plain strings or declarations with
+       * a conditional shape. Only the unconditional ones are a certainty, and
+       * a check that blocks go-live has to rest on certainties.
+       */
+      const emits = Array.isArray(r.emits) ? r.emits : [];
+      emitsByImpl.set(
+        key,
+        emits
+          .map((e: unknown) =>
+            typeof e === "string" ? e : String((e as any)?.event_type ?? ""),
+          )
+          .filter(Boolean),
+      );
     }
 
     /**
@@ -97,10 +135,10 @@ export async function collectGateEvidence(
 
     let triggerFields: string[] = [];
     let triggerDeclared = false;
-    if (def.entryInput) {
+    if (trigger) {
       const ev = await client.query(
         `SELECT payload_schema FROM ${EVENT_SCHEMAS} WHERE event_type = $1 LIMIT 1`,
-        [def.entryInput],
+        [trigger],
       );
       const props = ev.rows[0]?.payload_schema?.properties;
       triggerFields = Object.keys(props ?? {});
@@ -112,10 +150,11 @@ export async function collectGateEvidence(
     return {
       // Without a trigger there is nothing to check availability against, and
       // claiming every field is missing would be noise, not a finding.
-      ...(def.entryInput
+      ...(trigger
         ? { inputs: { triggerDeclared, triggerFields, requiredByImpl } }
         : {}),
       ownership: { graphModule, moduleByImpl, shareableImpls },
+      selfTrigger: { triggerEventType: trigger, emitsByImpl },
     };
   } catch {
     return {};

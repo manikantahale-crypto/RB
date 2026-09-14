@@ -1,12 +1,17 @@
 /**
- * Taking an event away from whoever currently answers it.
+ * Taking an event away from whoever currently answers it — within one group.
  *
- * One event starts exactly ONE workflow — `graph_event_bindings_one_active` is
- * a unique index — so binding an event somebody else holds does not add a
- * listener, it replaces them. The previous workflow stops running and nothing
- * says so: no failed run, no error, no alert.
+ * One event starts one workflow PER CONSUMING APPLICATION. That is the routing
+ * group, and `event_bindings_one_active_idx` is a unique index on
+ * (org, event_type, consuming_application), so exclusivity is structural but
+ * scoped: two applications answering the same fact independently is normal,
+ * and two workflows in one application competing for it is not.
  *
- * The guard used to refuse only when the holder was authored, which meant the
+ * Inside a group, binding an event somebody else holds does not add a
+ * listener, it replaces them — and the previous workflow stops running with no
+ * failed run, no error and no alert. Hence the guard.
+ *
+ * It used to refuse only when the holder was authored, which meant the
  * bindings with real production work behind them (all of them seeded by
  * migration) were precisely the ones it let go silently.
  */
@@ -38,19 +43,39 @@ const row = (over: Partial<EventBindingRow> = {}): EventBindingRow => ({
  */
 function fakeClient(
   existing: EventBindingRow | null,
-  opts: { catalogue?: boolean; siblingQueue?: string | null } = {},
+  opts: {
+    catalogue?: boolean;
+    siblingQueue?: string | null;
+    /** Which application owns the target queue — the routing group. */
+    queueApplication?: string | null;
+  } = {},
 ) {
   /** Whether the event catalogue knows this event. */
   const catalogue = opts.catalogue ?? true;
   /** The queue this application's other triggers already use, if any. */
   const siblingQueue = opts.siblingQueue ?? null;
+  const queueApplication = opts.queueApplication ?? "astra";
   const statements: string[] = [];
+  /** Full SQL, so a test can assert on a WHERE clause and not just a verb. */
+  const sql: string[] = [];
+  const params: unknown[][] = [];
   return {
     statements,
-    query: async (text: string) => {
+    sql,
+    params,
+    query: async (text: string, p?: unknown[]) => {
       const t = text.trim();
       statements.push(t.split("\n")[0]!.trim());
+      sql.push(t);
+      params.push(p ?? []);
 
+      // "Which application owns this queue?" — the routing group.
+      if (/FROM platform\.queues/i.test(t)) {
+        return {
+          rows: [{ consuming_application: queueApplication }],
+          rowCount: 1,
+        };
+      }
       // "Is this event in the catalogue at all?"
       if (/event_catalog/i.test(t)) {
         return { rows: catalogue ? [{ ok: 1 }] : [], rowCount: catalogue ? 1 : 0 };
@@ -234,5 +259,82 @@ describe("binding an event the hardcoded catalogue has never heard of", () => {
     expect(
       client.statements.some((q) => /SELECT 1 FROM authoring.event_catalog/i.test(q)),
     ).toBe(false);
+  });
+});
+
+/**
+ * One event, two applications, no collision.
+ *
+ * This is the whole of docs/adr/bindings-allow-fanout.md. Exclusivity is real
+ * but scoped to a routing group — one per consuming application — so ORBIT
+ * answering a fact SYNTRA already answers is normal rather than a takeover.
+ * Before this, the retire was scoped to (event_type, org) and binding the
+ * second application silently switched the first one off.
+ */
+describe("routing groups", () => {
+  it("retires only bindings in the same application's group", async () => {
+    const client = fakeClient(null, { queueApplication: "orbit" });
+    await upsertActiveEventBinding(client as never, {
+      eventType: "astra.requirement.published",
+      orgId: null,
+      graphKey: "orbit.bench.workflow",
+      moduleQueue: "module.orbit.bench",
+      version: 1,
+    });
+
+    const retire = client.sql.find((q) => /^UPDATE authoring\.event_bindings/i.test(q));
+    expect(retire).toBeDefined();
+    // Without this clause the statement switches off every other application
+    // answering the same event, which is the coupling fan-out exists to remove.
+    expect(retire).toMatch(/consuming_application/);
+  });
+
+  it("asks who holds the event for THIS application, not who holds the event", async () => {
+    const client = fakeClient(null, { queueApplication: "orbit" });
+    await upsertActiveEventBinding(client as never, {
+      eventType: "astra.requirement.published",
+      orgId: null,
+      graphKey: "orbit.bench.workflow",
+      moduleQueue: "module.orbit.bench",
+      version: 1,
+    });
+
+    const holder = client.sql.find(
+      (q) => /FROM authoring\.event_bindings b/i.test(q) && /status = 'active'/i.test(q),
+    );
+    expect(holder).toMatch(/consuming_application/);
+  });
+
+  it("writes the group onto the binding", async () => {
+    const client = fakeClient(null, { queueApplication: "orbit" });
+    await upsertActiveEventBinding(client as never, {
+      eventType: "astra.requirement.published",
+      orgId: null,
+      graphKey: "orbit.bench.workflow",
+      moduleQueue: "module.orbit.bench",
+      version: 1,
+    });
+
+    // The binding insert, not the queue insert that precedes it — both carry
+    // the queue name, and only one carries the event.
+    const i = client.sql.findIndex((q) => /^WITH pinned/i.test(q));
+    expect(i).toBeGreaterThan(-1);
+    // A binding with no group sits in the '~none~' slot with every other
+    // ungrouped binding, and the unique index makes them fight.
+    expect(client.params[i]).toContain("orbit");
+    expect(client.params[i]).toContain("astra.requirement.published");
+  });
+
+  it("groups an unclaimed queue under nothing, rather than guessing", async () => {
+    const client = fakeClient(null, { queueApplication: null });
+    await expect(
+      upsertActiveEventBinding(client as never, {
+        eventType: "astra.requirement.published",
+        orgId: null,
+        graphKey: "some.workflow",
+        moduleQueue: "module.unclaimed",
+        version: 1,
+      }),
+    ).resolves.toBeTruthy();
   });
 });

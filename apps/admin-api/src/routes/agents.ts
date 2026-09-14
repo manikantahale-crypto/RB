@@ -384,7 +384,9 @@ export function registerAgentRoutes(
           b.source AS binding_source
         FROM builder.agent_definitions d
         LEFT JOIN LATERAL (
-          SELECT display_name
+          -- agent_key as well as the label: the bindings lateral below needs
+          -- it to find this agent's workflow.
+          SELECT display_name, agent_key
             FROM builder.agent_templates
            WHERE agent_id = d.id
              AND is_active = true
@@ -416,12 +418,35 @@ export function registerAgentRoutes(
            ORDER BY generated_at DESC, version DESC
            LIMIT 1
         ) g ON true
+        /**
+         * The binding on this agent's workflow.
+         *
+         * It filtered on agent_id = d.id, and a binding has no agent any
+         * more: it names a WORKFLOW, because the platform's unit of authorship
+         * is a workflow and the agent_* model is being retired. Inside a
+         * LATERAL an unresolvable bare column falls through to the outer FROM
+         * items rather than erroring, and three of those expose version -- so
+         * the query died with "column reference version is ambiguous" and the
+         * whole Builder page 500'd on a name lookup.
+         *
+         * Matched on the graph key instead, which is the same convention every
+         * other route in this file builds: <agentKey>.authored. The version
+         * comes from the workflow's live version, since the binding no longer
+         * carries one.
+         */
         LEFT JOIN LATERAL (
-          SELECT event_type, graph_key, version, source
-            FROM ${GRAPH_EVENT_BINDINGS}
-           WHERE agent_id = d.id
-             AND status = 'active'
-           ORDER BY updated_at DESC
+          SELECT gb.event_type,
+                 gb.graph_key,
+                 (SELECT max(gv.version)
+                    FROM authoring.graph_versions gv
+                    JOIN authoring.graphs gg ON gg.id = gv.graph_id
+                   WHERE gg.graph_key = gb.graph_key AND gv.status = 'live'
+                 ) AS version,
+                 gb.source
+            FROM ${GRAPH_EVENT_BINDINGS} gb
+           WHERE gb.graph_key = t.agent_key || '.authored'
+             AND gb.status = 'active'
+           ORDER BY gb.updated_at DESC
            LIMIT 1
         ) b ON true
         WHERE d.is_active = true
@@ -577,11 +602,21 @@ export function registerAgentRoutes(
       }
 
       const runtimeBinding = await client.query(
-        `SELECT event_type, graph_key, module_queue, version, source, status
-           FROM ${GRAPH_EVENT_BINDINGS}
-          WHERE agent_id = $1::uuid
-            AND status = 'active'
-          ORDER BY updated_at DESC
+        // By graph key, not agent id: a binding names a workflow now.
+        `SELECT gb.event_type, gb.graph_key, gb.module_queue,
+                (SELECT max(gv.version) FROM authoring.graph_versions gv
+                   JOIN authoring.graphs gg ON gg.id = gv.graph_id
+                  WHERE gg.graph_key = gb.graph_key AND gv.status = 'live') AS version,
+                gb.source, gb.status
+           FROM ${GRAPH_EVENT_BINDINGS} gb
+          WHERE gb.graph_key = (
+                  SELECT t.agent_key || '.authored'
+                    FROM builder.agent_templates t
+                   WHERE t.agent_id = $1::uuid AND t.is_active = true
+                   ORDER BY t.version DESC LIMIT 1
+                )
+            AND gb.status = 'active'
+          ORDER BY gb.updated_at DESC
           LIMIT 1`,
         [agentId],
       );
@@ -1690,7 +1725,9 @@ export function registerAgentRoutes(
         FROM builder.agent_policies p
         INNER JOIN builder.agent_definitions d ON d.id = p.agent_id AND d.is_active = true
         LEFT JOIN LATERAL (
-          SELECT display_name
+          -- agent_key as well as the label: the bindings lateral below needs
+          -- it to find this agent's workflow.
+          SELECT display_name, agent_key
             FROM builder.agent_templates
            WHERE agent_id = d.id AND is_active = true
            ORDER BY version DESC

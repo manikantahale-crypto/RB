@@ -135,6 +135,64 @@ describe("shared steps do not cut the flow", () => {
     expect(out.segments).toHaveLength(1);
     expect(out.segments[0]!.module).toBe("platform");
   });
+
+  /**
+   * The case that was mislabelled on screen 2.
+   *
+   * Nine of the 22 nodes in the registry are shareable AND declare an
+   * application — `syntra.jd.process` is both. A flow made of three of them
+   * came back as PLATFORM, in a proposal where the author had just chosen
+   * SYNTRA from the module dropdown. `shareable` means "others may borrow
+   * this", not "nobody owns it".
+   */
+  it("names the application when every step is shareable but agrees", () => {
+    const mods = new Map<string, string>([
+      ["syntra.jd.process", "syntra"],
+      ["syntra.continuous.match", "syntra"],
+      ["syntra.shortlist.notify", "syntra"],
+    ]);
+    const shared = new Set([...mods.keys()]);
+    const { nodes, edges } = linear([
+      ["process_jd", "syntra.jd.process"],
+      ["continuous_match", "syntra.continuous.match"],
+      ["notify_shortlist", "syntra.shortlist.notify"],
+    ]);
+    const out = splitByModule({ nodes, edges, moduleOf: mods, shareable: shared });
+    expect(out.segments).toHaveLength(1);
+    expect(out.segments[0]!.module).toBe("syntra");
+    // Still one segment: shareable must not cut the flow, which is the reason
+    // ownerOf returns null in the first place.
+    expect(out.segments[0]!.stepIds).toEqual([
+      "process_jd",
+      "continuous_match",
+      "notify_shortlist",
+    ]);
+  });
+
+  it("falls back to platform only when the applications disagree", () => {
+    const mods = new Map<string, string>([
+      ["syntra.shortlist.notify", "syntra"],
+      ["astra.route.decision", "astra"],
+    ]);
+    const shared = new Set([...mods.keys()]);
+    const { nodes, edges } = linear([
+      ["a", "syntra.shortlist.notify"],
+      ["b", "astra.route.decision"],
+    ]);
+    const out = splitByModule({ nodes, edges, moduleOf: mods, shareable: shared });
+    expect(out.segments[0]!.module).toBe("platform");
+  });
+
+  it("falls back to platform when the registry has never heard of the steps", () => {
+    const { nodes, edges } = linear([["mystery", "nobody.knows.this"]]);
+    const out = splitByModule({
+      nodes,
+      edges,
+      moduleOf: new Map(),
+      shareable: new Set(["nobody.knows.this"]),
+    });
+    expect(out.segments[0]!.module).toBe("platform");
+  });
 });
 
 describe("orderedSteps", () => {

@@ -20,6 +20,10 @@ import type { Pool } from "pg";
 import { withOrgScope } from "../with-org-scope.js";
 
 import { GRAPH_DEFINITIONS, GRAPH_EVENT_BINDINGS } from "../lib/authoring-views.js";
+import { orderSteps } from "../lib/outline-order.js";
+import { collectGateEvidence } from "../lib/gate-evidence.js";
+import { evaluateGoLiveGate } from "@tekisho/authoring";
+import { previewRelease, type StoredBinding } from "../lib/release-preview.js";
 type FastifyLike = {
   get: (path: string, handler: any) => void;
 };
@@ -74,6 +78,23 @@ export type WorkflowRegistryRow = {
   orgActiveVersion: number | null;
   draftCount: number;
   versionCount: number;
+  /**
+   * The lifecycle, read from the authoring tables rather than the view.
+   *
+   * GRAPH_DEFINITIONS maps both a numbered `compiled` build and the unnumbered
+   * working copy to 'draft', which is right for anything that only wants to
+   * know "is this live". It is not enough to drive the lifecycle: "you have
+   * unsaved edits" and "you have a build waiting to be sent for review" are
+   * different sentences with different buttons under them.
+   */
+  lifecycle: {
+    /** There is a working copy to compile. */
+    hasWorkingCopy: boolean;
+    /** Highest compiled version, ready to be requested. */
+    compiledVersion: number | null;
+    /** Version awaiting somebody's approval. */
+    pendingVersion: number | null;
+  };
   health: {
     runs24h: number;
     failed24h: number;
@@ -130,6 +151,23 @@ export function registerWorkflowRoutes(app: FastifyLike, pool: Pool): void {
             ) AS active_org,
             count(*) FILTER (WHERE d.status = 'draft')  AS draft_count,
             count(*)                                    AS version_count,
+            -- Straight from authoring, because the view cannot tell a compiled
+            -- build from an unsaved edit and the buttons differ.
+            (
+              SELECT count(*) > 0 FROM authoring.graph_drafts gd
+              JOIN authoring.graphs gg ON gg.id = gd.graph_id
+              WHERE gg.graph_key = d.graph_key
+            ) AS has_working_copy,
+            (
+              SELECT max(v.version) FROM authoring.graph_versions v
+              JOIN authoring.graphs gg ON gg.id = v.graph_id
+              WHERE gg.graph_key = d.graph_key AND v.status = 'compiled'
+            ) AS compiled_version,
+            (
+              SELECT max(v.version) FROM authoring.graph_versions v
+              JOIN authoring.graphs gg ON gg.id = v.graph_id
+              WHERE gg.graph_key = d.graph_key AND v.status = 'pending_go_live'
+            ) AS pending_version,
             (
               SELECT coalesce(array_agg(DISTINCT b.event_type), '{}')
               FROM ${GRAPH_EVENT_BINDINGS} b
@@ -170,6 +208,13 @@ export function registerWorkflowRoutes(app: FastifyLike, pool: Pool): void {
             graphKey: r.graph_key,
             module: moduleOf(r.graph_key),
             triggers,
+            lifecycle: {
+              hasWorkingCopy: Boolean(r.has_working_copy),
+              compiledVersion:
+                r.compiled_version == null ? null : Number(r.compiled_version),
+              pendingVersion:
+                r.pending_version == null ? null : Number(r.pending_version),
+            },
             activeVersion,
             orgActiveVersion: r.active_org ?? null,
             draftCount: Number(r.draft_count ?? 0),
@@ -486,6 +531,504 @@ export function registerWorkflowRoutes(app: FastifyLike, pool: Pool): void {
       return reply
         .code(500)
         .send({ error: "run_query_failed", message: String(err) });
+    }
+  });
+  /**
+   * Screen 10 — what is waiting for an approver.
+   *
+   * THE REQUEST EXISTED AND THE QUEUE DID NOT.
+   *
+   * `POST /workflows/:key/request-go-live` has moved a compiled build to
+   * `pending_go_live` since V20260909.48, and `approve-go-live` has promoted
+   * it. Both are reachable only from inside one workflow's editor, so a
+   * request could be made and then seen by nobody: an approver had no screen
+   * answering "what is waiting for me". The two-person rule was enforced
+   * (`graph_versions_two_person_ck`) and simultaneously unusable, because the
+   * second person had no way to find the thing they were required to approve.
+   *
+   * WHY EACH ROW CARRIES THE LIVE VERSION TOO.
+   *
+   * Approving replaces what is running. An approver deciding from the request
+   * alone is deciding from half the picture — "v7 of syntra.jd.workflow" says
+   * nothing about whether v6 has been live for a year or went up an hour ago.
+   * So each row names what it would replace, and the screen links to the diff
+   * between the two.
+   *
+   * `requested_by` comes back as text rather than a uuid because that is what
+   * the column holds for most rows: `attribution()` writes a uuid for a known
+   * user and a free-text label otherwise, and several hundred existing rows
+   * are deployment labels like `stage-v31-relay`.
+   */
+  app.get("/workflows/pending-go-live", async (req: any, reply: any) => {
+    const orgId = readOrgId(req.headers);
+
+    try {
+      return await withOrgScope(pool, orgId, async (client) => {
+        const { rows } = await client.query(
+          `
+          SELECT g.graph_key,
+                 v.version,
+                 v.checksum,
+                 v.requested_at,
+                 coalesce(v.requested_by::text, v.requested_by_label) AS requested_by,
+                 v.compiled_at,
+                 coalesce(v.compiled_by::text, v.compiled_by_label)   AS compiled_by,
+                 live.version     AS live_version,
+                 live.compiled_at AS live_since,
+                 (
+                   SELECT coalesce(array_agg(DISTINCT b.event_type), '{}')
+                     FROM ${GRAPH_EVENT_BINDINGS} b
+                    WHERE b.graph_key = g.graph_key AND b.status = 'active'
+                 ) AS triggers,
+                 -- The trigger the definition CHOSE, which is not the same as
+                 -- a binding. A binding is created at go-live, not before, so
+                 -- a pending version has none by design — reading bindings
+                 -- alone reports every row on this screen as unreachable and
+                 -- the warning becomes noise.
+                 --
+                 -- TWO NAMES, BOTH REAL. entryInput is what the seeds and the
+                 -- older definitions carry (6 of 527 versions in the new
+                 -- project); triggerEventType is what the graph contract added
+                 -- and what /workflows/accept writes today. Neither name
+                 -- appears in both sets, so reading one finds nothing for
+                 -- everything authored by the other.
+                 coalesce(v.definition->>'triggerEventType',
+                          v.definition->>'entryInput') AS chosen_trigger,
+                 jsonb_array_length(coalesce(v.definition->'nodes', '[]'::jsonb)) AS step_count
+            FROM authoring.graph_versions v
+            JOIN authoring.graphs g ON g.id = v.graph_id
+            LEFT JOIN LATERAL (
+              SELECT v2.version, v2.compiled_at
+                FROM authoring.graph_versions v2
+               WHERE v2.graph_id = v.graph_id AND v2.status = 'live'
+               LIMIT 1
+            ) live ON true
+           WHERE v.status = 'pending_go_live'
+             AND g.org_id IS NOT DISTINCT FROM $1::uuid
+           ORDER BY v.requested_at ASC NULLS LAST, g.graph_key ASC
+          `,
+          [orgId],
+        );
+
+        return {
+          requests: rows.map((r: any) => ({
+            graphKey: r.graph_key,
+            module: moduleOf(r.graph_key),
+            version: Number(r.version),
+            checksum: r.checksum ?? null,
+            requestedAt: r.requested_at
+              ? new Date(r.requested_at).toISOString()
+              : null,
+            requestedBy: r.requested_by ?? null,
+            compiledAt: r.compiled_at
+              ? new Date(r.compiled_at).toISOString()
+              : null,
+            compiledBy: r.compiled_by ?? null,
+            /** What approving would replace. Null when nothing is live yet. */
+            liveVersion: r.live_version == null ? null : Number(r.live_version),
+            liveSince: r.live_since ? new Date(r.live_since).toISOString() : null,
+            /**
+             * What will start it, whether that is already bound or is about
+             * to be. `triggerSource` says which, because the distinction is
+             * real: `binding` means events reach the workflow today, `draft`
+             * means the binding is created when this is approved.
+             */
+            triggers:
+              ((r.triggers ?? []) as string[]).length > 0
+                ? (r.triggers as string[])
+                : r.chosen_trigger
+                  ? [String(r.chosen_trigger)]
+                  : [],
+            triggerSource:
+              ((r.triggers ?? []) as string[]).length > 0
+                ? ("binding" as const)
+                : r.chosen_trigger
+                  ? ("draft" as const)
+                  : ("none" as const),
+            stepCount: Number(r.step_count ?? 0),
+            /**
+             * Nothing will start it, even after approval — no binding now and
+             * no trigger chosen in the definition. It would go live and never
+             * run, which is the one failure this screen can catch before it
+             * happens rather than after.
+             */
+            unreachable:
+              ((r.triggers ?? []) as string[]).length === 0 && !r.chosen_trigger,
+          })),
+          orgId,
+        };
+      });
+    } catch (err) {
+      req.log?.error?.(err);
+      return reply
+        .code(500)
+        .send({ error: "pending_query_failed", message: String(err) });
+    }
+  });
+  /**
+   * What this workflow IS, at a glance, for the top of its history page.
+   *
+   * THE QUESTION THIS ANSWERS IS "IS THIS THE ONE I WANT".
+   *
+   * Somebody looking at a list of runs has usually arrived from a search and
+   * needs to know what the workflow does before deciding whether to read any
+   * of them. Opening a run to find that out is the wrong way round: a run page
+   * carries logs, per-node input and output and timings, all of which are
+   * about one execution rather than about the workflow.
+   *
+   * So this is deliberately small. Order of the steps, what each one is, what
+   * starts it, which version is live. No payloads, no timings, no per-run
+   * anything — those already have a screen, and putting them here would make
+   * the history page the cluttered thing it is meant to save people from.
+   *
+   * WHY THE SERVER FLATTENS IT RATHER THAN SENDING THE DEFINITION.
+   *
+   * A definition is nodes plus edges plus conditionalEdges, and turning that
+   * into "first this, then this, and here it splits three ways" is a topological
+   * sort. Doing it in the browser would mean shipping the whole definition —
+   * configs, input mappings and all — to draw a strip of five names, and every
+   * screen that wanted the same summary would implement the sort again.
+   *
+   * Falls back to the newest version when nothing is live, because a workflow
+   * with runs and no live version is exactly the case somebody is investigating.
+   */
+  app.get("/workflows/:graphKey/outline", async (req: any, reply: any) => {
+    const graphKey = String(req.params?.graphKey ?? "");
+    if (!graphKey) return reply.code(400).send({ error: "graph_key_required" });
+    const orgId = readOrgId(req.headers);
+
+    try {
+      return await withOrgScope(pool, orgId, async (client) => {
+        const { rows } = await client.query(
+          `
+          SELECT v.version, v.status, v.definition, v.compiled_at
+            FROM authoring.graph_versions v
+            JOIN authoring.graphs g ON g.id = v.graph_id
+           WHERE g.graph_key = $1
+             AND g.org_id IS NOT DISTINCT FROM $2::uuid
+           ORDER BY (v.status = 'live') DESC, v.version DESC
+           LIMIT 1
+          `,
+          [graphKey, orgId],
+        );
+
+        const row = rows[0] as any;
+        if (!row) {
+          return reply
+            .code(404)
+            .send({ error: "workflow_not_found", graphKey });
+        }
+
+        const definition = (row.definition ?? {}) as {
+          nodes?: Array<{ id?: string; impl?: string }>;
+          edges?: Array<[string, string]>;
+          conditionalEdges?: Array<{
+            from?: string;
+            router?: string;
+            map?: Record<string, string>;
+          }>;
+          triggerEventType?: string;
+          entryInput?: string;
+        };
+
+        const nodes = Array.isArray(definition.nodes) ? definition.nodes : [];
+        const edges = Array.isArray(definition.edges) ? definition.edges : [];
+        const conditional = Array.isArray(definition.conditionalEdges)
+          ? definition.conditionalEdges
+          : [];
+
+        // The order somebody reads the workflow in, which is not the order the
+        // nodes are stored in. See lib/outline-order.ts — it is tested there
+        // against the shapes this actually has to survive.
+        const known = new Map(nodes.map((n) => [String(n.id ?? ""), n]));
+        const ordered = orderSteps(definition);
+
+        /** Which steps fan out, and into what. This is the shape of the flow. */
+        const branchOf = new Map<string, string[]>();
+        for (const c of conditional) {
+          branchOf.set(String(c.from ?? ""), Object.keys(c.map ?? {}));
+        }
+
+        /**
+         * The connections, so the caller can DRAW the workflow rather than
+         * list it.
+         *
+         * A list of steps in order is a lie about a branching workflow: three
+         * arms that each do something different read as three consecutive
+         * steps. These carry the arm name as a label, which is the only thing
+         * that says which way the flow went and why.
+         *
+         * `__start__` and `__end__` come through as edges but not as steps.
+         * They are where the flow enters and leaves, and dropping the edges
+         * would leave the first and last steps looking unconnected.
+         */
+        const drawnEdges: Array<{ from: string; to: string; label: string | null }> =
+          [];
+        const seenEdge = new Set<string>();
+        const pushEdge = (from: string, to: string, label: string | null) => {
+          if (!from || !to) return;
+          // Two arms of one branch can lead to the same place — both ending
+          // the workflow is the usual case — and they are different edges.
+          const sig = `${from} ${to} ${label ?? ""}`;
+          if (seenEdge.has(sig)) return;
+          seenEdge.add(sig);
+          drawnEdges.push({ from, to, label });
+        };
+        for (const [from, to] of edges) pushEdge(String(from), String(to), null);
+        for (const c of conditional) {
+          for (const [arm, target] of Object.entries(c.map ?? {})) {
+            pushEdge(String(c.from ?? ""), String(target), arm);
+          }
+        }
+
+        const implKeys = [
+          ...new Set(nodes.map((n) => String(n.impl ?? "")).filter(Boolean)),
+        ];
+        const { rows: contracts } = implKeys.length
+          ? await client.query(
+              `SELECT key, title, side_effect FROM authoring.node_registry
+                WHERE key = ANY($1::text[])`,
+              [implKeys],
+            )
+          : { rows: [] as any[] };
+        const contractOf = new Map(
+          (contracts as any[]).map((c) => [c.key, c]),
+        );
+
+        const bound = await client.query(
+          `SELECT DISTINCT b.event_type FROM ${GRAPH_EVENT_BINDINGS} b
+            WHERE b.graph_key = $1 AND b.status = 'active'`,
+          [graphKey],
+        );
+        const triggers = (bound.rows as any[]).map((b) => b.event_type);
+        const chosen =
+          definition.triggerEventType ?? definition.entryInput ?? null;
+
+        return {
+          graphKey,
+          version: Number(row.version),
+          status: String(row.status),
+          live: row.status === "live",
+          compiledAt: row.compiled_at
+            ? new Date(row.compiled_at).toISOString()
+            : null,
+          triggers: triggers.length > 0 ? triggers : chosen ? [String(chosen)] : [],
+          triggerSource:
+            triggers.length > 0 ? "binding" : chosen ? "draft" : "none",
+          /** How many places the flow splits — a fact about the shape. */
+          branchCount: branchOf.size,
+          edges: drawnEdges,
+          steps: ordered.map((id) => {
+            const node = known.get(id)!;
+            const impl = String(node.impl ?? "");
+            const contract = contractOf.get(impl);
+            return {
+              id,
+              impl,
+              /** The human name from the registry, when the node declares one. */
+              title: contract?.title ?? null,
+              /** external / internal_write / read_only — drawn as a dot. */
+              sideEffect: contract?.side_effect ?? null,
+              /** Present on a step that splits: the names of its outcomes. */
+              outcomes: branchOf.get(id) ?? null,
+              /** The node registry has never heard of this impl. */
+              unknown: !contract,
+            };
+          }),
+        };
+      });
+    } catch (err) {
+      req.log?.error?.(err);
+      return reply
+        .code(500)
+        .send({ error: "outline_failed", message: String(err) });
+    }
+  });
+  /**
+   * Screen 10 — everything the approver needs, in one call.
+   *
+   * The queue can say a version is waiting and who asked for it. It cannot say
+   * what pressing the button does, and that is the only thing the person
+   * pressing it needs. Four facts answer it, and they were spread across three
+   * endpoints and one screen that showed none of them:
+   *
+   *   the version   what it is, what it does, who asked, when
+   *   the evidence  all nine go-live checks, run now rather than at the gate
+   *   the change    what it replaces, and how the two differ
+   *   the routing   which events move, computed by the router's own resolver
+   *
+   * ONE CALL, because they are read together and four round trips would let
+   * the page render a decision from a version that has since been approved by
+   * somebody else.
+   *
+   * The checks run HERE rather than only at approval. A gate that first speaks
+   * when you press the button turns a review into a retry loop; the same
+   * evaluation shown beforehand is the difference between "approve and find
+   * out" and "approve".
+   */
+  app.get("/workflows/:graphKey/release", async (req: any, reply: any) => {
+    const graphKey = String(req.params?.graphKey ?? "");
+    if (!graphKey) return reply.code(400).send({ error: "graph_key_required" });
+    const orgId = readOrgId(req.headers);
+
+    try {
+      return await withOrgScope(pool, orgId, async (client) => {
+        const { rows: pending } = await client.query(
+          `SELECT v.version, v.definition, v.checksum,
+                  v.requested_at, v.compiled_at,
+                  coalesce(v.requested_by::text, v.requested_by_label) AS requested_by,
+                  coalesce(v.compiled_by::text, v.compiled_by_label)   AS compiled_by
+             FROM authoring.graph_versions v
+             JOIN authoring.graphs g ON g.id = v.graph_id
+            WHERE g.graph_key = $1
+              AND g.org_id IS NOT DISTINCT FROM $2::uuid
+              AND v.status = 'pending_go_live'
+            ORDER BY v.requested_at ASC NULLS LAST
+            LIMIT 1`,
+          [graphKey, orgId],
+        );
+
+        const row = pending[0] as any;
+        if (!row) {
+          return reply.code(404).send({
+            error: "nothing_waiting",
+            message: `${graphKey} has no version waiting for approval.`,
+          });
+        }
+
+        const { rows: liveRows } = await client.query(
+          `SELECT v.version, v.definition, v.compiled_at
+             FROM authoring.graph_versions v
+             JOIN authoring.graphs g ON g.id = v.graph_id
+            WHERE g.graph_key = $1
+              AND g.org_id IS NOT DISTINCT FROM $2::uuid
+              AND v.status = 'live'
+            LIMIT 1`,
+          [graphKey, orgId],
+        );
+        const live = liveRows[0] as any;
+
+        /**
+         * The trigger, under either of the two names a definition may use.
+         * `entryInput` is what the seeds carry; `triggerEventType` is what the
+         * current create path writes, and no definition has both.
+         */
+        const def = (row.definition ?? {}) as any;
+        const trigger: string | null =
+          def.triggerEventType ?? def.entryInput ?? null;
+
+        /* ── the evidence ──────────────────────────────────────────────── */
+        const artifactSource = `${JSON.stringify(row.definition, null, 2)}\n`;
+        const evidence = await collectGateEvidence(client, artifactSource, graphKey);
+        const gate = evaluateGoLiveGate({
+          artifactSource,
+          storedChecksum: row.checksum ?? "",
+          expectedGraphKey: graphKey,
+          artifactKind: "workflow",
+          // Looking is not requesting. The gap acknowledgement belongs to the
+          // request, and reporting it unacknowledged is the point of looking.
+          gapAck: null,
+          ...evidence,
+        });
+
+        /* ── the routing ───────────────────────────────────────────────── */
+        const { rows: bindingRows } = await client.query(
+          `SELECT b.id::text AS id, b.event_type, b.org_id::text AS org_id,
+                  g.graph_key, b.queue_key, b.consuming_application,
+                  b.priority, b.requires_feature, b.status
+             FROM authoring.event_bindings b
+             JOIN authoring.graphs g ON g.id = b.graph_id
+            WHERE b.event_type = $1`,
+          [trigger],
+        );
+
+        const stored: StoredBinding[] = (bindingRows as any[]).map((b) => ({
+          id: String(b.id),
+          eventType: String(b.event_type),
+          orgId: b.org_id ?? null,
+          graphKey: String(b.graph_key),
+          queueKey: b.queue_key ?? null,
+          consumingApplication: b.consuming_application ?? null,
+          priority: b.priority ?? null,
+          requiresFeature: Array.isArray(b.requires_feature)
+            ? b.requires_feature
+            : null,
+          status: String(b.status),
+        }));
+
+        const application = graphKey.split(".")[0] ?? "platform";
+        const routing = trigger
+          ? previewRelease({
+              eventType: trigger,
+              orgId,
+              current: stored,
+              approving: {
+                id: "(this release)",
+                eventType: trigger,
+                orgId,
+                graphKey,
+                queueKey: null,
+                consumingApplication: application,
+                priority: 100,
+                requiresFeature: null,
+                status: "active",
+              },
+            })
+          : null;
+
+        const steps = Array.isArray(def.nodes) ? def.nodes : [];
+
+        return {
+          graphKey,
+          version: Number(row.version),
+          checksum: row.checksum ?? null,
+          requestedAt: row.requested_at
+            ? new Date(row.requested_at).toISOString()
+            : null,
+          requestedBy: row.requested_by ?? null,
+          compiledAt: row.compiled_at
+            ? new Date(row.compiled_at).toISOString()
+            : null,
+          compiledBy: row.compiled_by ?? null,
+          trigger,
+          steps: steps.map((n: any) => ({
+            id: String(n?.id ?? ""),
+            impl: String(n?.impl ?? ""),
+          })),
+          /** What this would replace. Null when nothing is live yet. */
+          replaces: live
+            ? {
+                version: Number(live.version),
+                since: live.compiled_at
+                  ? new Date(live.compiled_at).toISOString()
+                  : null,
+                stepCount: Array.isArray(live.definition?.nodes)
+                  ? live.definition.nodes.length
+                  : 0,
+              }
+            : null,
+          /**
+           * Every check, passing ones included. A console that lists only
+           * failures cannot be read as "this was reviewed" — the approver has
+           * no way to tell a clean run from a check that did not execute.
+           */
+          checks: gate.checks.map((c) => ({
+            id: c.id,
+            ok: c.ok,
+            message: c.message,
+            /** A check that could not see says so, and is not a pass. */
+            unchecked: c.ok && /^Not checked/i.test(c.message),
+          })),
+          blocked: !gate.ok,
+          blockedBy: gate.ok ? [] : gate.blockedBy,
+          routing,
+        };
+      });
+    } catch (err) {
+      req.log?.error?.(err);
+      return reply
+        .code(500)
+        .send({ error: "release_view_failed", message: String(err) });
     }
   });
 }

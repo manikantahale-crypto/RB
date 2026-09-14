@@ -193,3 +193,121 @@ describe("check 7 — can every step get what it needs", () => {
     expect(check?.message).not.toContain("resumeId");
   });
 });
+
+/**
+ * Check 9 — will this workflow stop.
+ *
+ * The case is the one screen 2 proposed on the real database: a flow of
+ * `syntra.jd.process → syntra.continuous.match → syntra.shortlist.notify`
+ * triggered on `syntra.match.completed`, where `syntra.continuous.match`
+ * emits `syntra.match.completed` on every run. It passed all eight checks
+ * that existed, because none of them compared the trigger against what the
+ * steps publish — and nothing downstream would have stopped it either: the
+ * router has no depth guard, and that node mints a fresh match job per call,
+ * so each cycle is real work against the slowest endpoint in the system.
+ */
+describe("check 9 — will this workflow stop", () => {
+  const loop = () => {
+    const { source } = artifact(
+      [
+        { id: "process_jd", impl: "syntra.jd.process" },
+        { id: "continuous_match", impl: "syntra.continuous.match" },
+        { id: "notify", impl: "syntra.shortlist.notify" },
+      ],
+      "syntra.match.completed",
+    );
+    return source;
+  };
+
+  const emits = new Map<string, readonly string[]>([
+    ["syntra.jd.process", ["syntra.jd.parsed"]],
+    ["syntra.continuous.match", ["syntra.match.completed"]],
+    ["syntra.shortlist.notify", []],
+  ]);
+
+  it("blocks a workflow whose step publishes its own trigger", () => {
+    const r = gate({
+      artifactSource: loop(),
+      selfTrigger: {
+        triggerEventType: "syntra.match.completed",
+        emitsByImpl: emits,
+      },
+    });
+    const c = checkFor(r, "no_self_trigger");
+    expect(c?.ok).toBe(false);
+    // The message has to name the step, or the author has to go and find it.
+    expect(c?.message).toContain("continuous_match");
+    expect(c?.message).toContain("syntra.match.completed");
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.blockedBy).toContain("no_self_trigger");
+  });
+
+  it("passes the same flow on a trigger nothing in it publishes", () => {
+    const { source } = artifact(
+      [
+        { id: "process_jd", impl: "syntra.jd.process" },
+        { id: "continuous_match", impl: "syntra.continuous.match" },
+        { id: "notify", impl: "syntra.shortlist.notify" },
+      ],
+      "syntra.match.requested",
+    );
+    const c = checkFor(
+      gate({
+        artifactSource: source,
+        selfTrigger: {
+          triggerEventType: "syntra.match.requested",
+          emitsByImpl: emits,
+        },
+      }),
+      "no_self_trigger",
+    );
+    expect(c?.ok).toBe(true);
+    expect(c?.message).toContain("cannot restart itself");
+  });
+
+  it("reports that it could not check, rather than passing, with no registry", () => {
+    // Missing evidence is not evidence of safety, and the two must not read
+    // the same on screen.
+    const c = checkFor(gate({ artifactSource: loop() }), "no_self_trigger");
+    expect(c?.ok).toBe(true);
+    expect(c?.message).toMatch(/Not checked/);
+  });
+
+  it("reports that it could not check when no trigger is chosen yet", () => {
+    const c = checkFor(
+      gate({
+        artifactSource: loop(),
+        selfTrigger: { triggerEventType: null, emitsByImpl: emits },
+      }),
+      "no_self_trigger",
+    );
+    expect(c?.ok).toBe(true);
+    expect(c?.message).toMatch(/no trigger event yet/);
+  });
+
+  it("names every offending step when more than one publishes the trigger", () => {
+    const { source } = artifact(
+      [
+        { id: "match_one", impl: "syntra.match.process" },
+        { id: "match_all", impl: "syntra.continuous.match" },
+      ],
+      "syntra.match.completed",
+    );
+    const c = checkFor(
+      gate({
+        artifactSource: source,
+        selfTrigger: {
+          triggerEventType: "syntra.match.completed",
+          emitsByImpl: new Map<string, readonly string[]>([
+            ["syntra.match.process", ["syntra.match.completed"]],
+            ["syntra.continuous.match", ["syntra.match.completed"]],
+          ]),
+        },
+      }),
+      "no_self_trigger",
+    );
+    expect(c?.ok).toBe(false);
+    expect(c?.message).toContain("match_one");
+    expect(c?.message).toContain("match_all");
+  });
+});

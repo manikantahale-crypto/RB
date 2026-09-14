@@ -128,10 +128,35 @@ export function splitByModule(args: {
     }
   }
 
-  // A flow made only of shareable steps has no owner at all. Rather than
-  // inventing one, it stays a single unattributed segment.
+  /**
+   * A flow made only of shareable steps still usually has an application.
+   *
+   * THIS USED TO SAY "platform" AND IT WAS WRONG MOST OF THE TIME.
+   *
+   * `ownerOf` returns null for a shareable step, which is right for CUTTING —
+   * `human.gate` between two ASTRA steps must not slice the flow into three.
+   * It is not a claim that nobody owns the node. Nine of the 22 nodes in the
+   * registry are shareable, and every one of them still declares an
+   * `application`: `syntra.jd.process` is shareable AND belongs to SYNTRA.
+   *
+   * So a flow of three SYNTRA nodes that all happen to be shareable was
+   * labelled PLATFORM — in a proposal where the author had just picked SYNTRA
+   * from the module dropdown. The label is the only thing on that box, so it
+   * was the one thing it said, and it said it wrong.
+   *
+   * Now the fallback asks the registry. "platform" is kept for the case it was
+   * meant for: steps whose applications genuinely disagree, or that the
+   * registry has never heard of.
+   */
   if (segments.length === 0 && pending.length > 0) {
-    segments.push({ module: "platform", stepIds: pending, edges: [] });
+    const declared = new Set(
+      pending
+        .map((id) => byId.get(id)?.impl)
+        .map((impl) => (impl ? args.moduleOf.get(impl) : undefined))
+        .filter((m): m is string => Boolean(m)),
+    );
+    const owner = declared.size === 1 ? [...declared][0]! : "platform";
+    segments.push({ module: owner, stepIds: pending, edges: [] });
   } else if (pending.length > 0 && segments[0]) {
     segments[0].stepIds.unshift(...pending);
   }

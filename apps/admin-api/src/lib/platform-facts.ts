@@ -46,7 +46,7 @@ export async function gatherPlatformFacts(
     pool.query(
       `SELECT graph_key, definition FROM ${GRAPH_DEFINITIONS} WHERE status = 'active'`,
     ),
-    pool.query(`SELECT key, module, shareable, emits FROM authoring.node_registry`),
+    pool.query(`SELECT key, application AS module, shareable, emits FROM authoring.node_registry`),
     /**
      * What each queue is DOING, not what a constant says it should be.
      *

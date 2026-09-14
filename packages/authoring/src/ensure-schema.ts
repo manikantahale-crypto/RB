@@ -9,17 +9,38 @@ import { defaultDraftPolicyForTemplate } from "./product-agent-defaults.js";
  * Flyway V12–V14 own the full schema with FKs when applied.
  */
 /**
- * The six tables the authoring layer cannot start without.
+ * The tables the authoring layer cannot start without, schema-qualified.
  *
  * Named here rather than created here. See the note on ensureAuthoringSchema.
+ *
+ * THIS LIST WAS WRONG AND NOTHING NOTICED.
+ *
+ * It named six tables unqualified — agent_policies, graph_definitions and so
+ * on — which resolve through `public` by search_path. Four of those moved to
+ * `builder` and two are legacy: `public.graph_definitions` is a compatibility
+ * VIEW over the authoring tables, and `public.graph_versions` is a superseded
+ * table nothing reads. So the check passed against a database where the real
+ * tables could have been missing, and failed against one where everything it
+ * actually needs was present.
+ *
+ * Qualified now, and naming what the code reads.
  */
 const REQUIRED_TABLES = [
-  "agent_policies",
-  "agent_versions",
-  "agent_templates",
-  "graph_definitions",
-  "graph_versions",
-  "admin_agent_entitlements",
+  // what a workflow IS, and its history
+  "authoring.graphs",
+  "authoring.graph_versions",
+  "authoring.graph_drafts",
+  // what starts one
+  "authoring.event_catalog",
+  "authoring.event_bindings",
+  // what may go in one
+  "authoring.node_registry",
+  // the admin app's own model
+  "builder.agent_definitions",
+  "builder.agent_policies",
+  "builder.agent_versions",
+  "builder.agent_templates",
+  "builder.admin_agent_entitlements",
 ] as const;
 
 /**
@@ -33,7 +54,7 @@ async function assertAuthoringTables(pool: Pool): Promise<void> {
   const { rows } = await pool.query<{ missing: string[] }>(
     `SELECT coalesce(array_agg(t), '{}') AS missing
        FROM unnest($1::text[]) AS t
-      WHERE to_regclass('public.' || t) IS NULL`,
+      WHERE to_regclass(t) IS NULL`,
     [REQUIRED_TABLES as unknown as string[]],
   );
 
@@ -44,6 +65,53 @@ async function assertAuthoringTables(pool: Pool): Promise<void> {
         `The schema comes from packages/db/migrations. Apply them first:\n` +
         `  flyway -url=... migrate      (or psql -f each V*.sql in order)\n` +
         `Verify with scripts/rebuild-check.sh.`,
+    );
+  }
+}
+
+/**
+ * Row-level security is a fact about the schema, so this checks it.
+ *
+ * IT USED TO APPLY IT, AND THAT IS WHY IT WAS WRONG.
+ *
+ * Two functions here ran ~190 lines of ALTER TABLE and CREATE POLICY at every
+ * boot, "mirroring V14 for boot without Flyway". Every CREATE POLICY named its
+ * table UNQUALIFIED, so it resolved through search_path to `public` — where
+ * these tables have not lived since they moved to `authoring` and `builder`.
+ * Against a project built from the new baseline, `public` is empty, and all
+ * 52 statements failed with 42P01 and were logged as "skipped".
+ *
+ * Nothing was broken by that, which is the worrying part: the migrations had
+ * already applied every one of those policies, so boot was re-applying work
+ * that was done, failing to, and reporting neither. A warning printed 52 times
+ * at every start is a warning nobody reads.
+ *
+ * So the policies belong to packages/db/migrations, like the tables do, and
+ * this asserts rather than writes — the same move already made for
+ * CREATE TABLE. A missing policy now stops the app with a message naming the
+ * table, instead of leaving it open and printing a line about it.
+ */
+async function assertRowLevelSecurity(pool: Pool): Promise<void> {
+  const { rows } = await pool.query<{ relation: string; reason: string }>(
+    `SELECT n.nspname || '.' || c.relname AS relation,
+            CASE WHEN NOT c.relrowsecurity THEN 'RLS is not enabled'
+                 ELSE 'no policies' END AS reason
+       FROM unnest($1::text[]) AS t(name)
+       JOIN pg_class c ON c.oid = t.name::regclass
+       JOIN pg_namespace n ON n.oid = c.relnamespace
+      WHERE NOT c.relrowsecurity
+         OR NOT EXISTS (SELECT 1 FROM pg_policy p WHERE p.polrelid = c.oid)`,
+    [REQUIRED_TABLES as unknown as string[]],
+  );
+
+  if (rows.length > 0) {
+    const lines = rows.map((r) => `  ${r.relation} — ${r.reason}`);
+    throw new Error(
+      [
+        `[authoring] row-level security is missing on ${rows.length} table(s):`,
+        ...lines,
+        `The policies come from packages/db/migrations. Apply them first.`,
+      ].join("\n"),
     );
   }
 }
@@ -70,42 +138,9 @@ async function assertAuthoringTables(pool: Pool): Promise<void> {
  */
 export async function ensureAuthoringSchema(pool: Pool): Promise<void> {
   await assertAuthoringTables(pool);
+  await assertRowLevelSecurity(pool);
 
   try {
-    for (const role of ["syntra_app", "syntra_relay", "syntra_migrator"]) {
-      try {
-        await pool.query(
-          `GRANT SELECT, INSERT, UPDATE, DELETE ON agent_policies, agent_versions TO ${role}`,
-        );
-        await pool.query(`GRANT SELECT ON agent_templates TO ${role}`);
-        await pool.query(
-          `GRANT SELECT, INSERT ON admin_agent_entitlements TO ${role}`,
-        );
-        await pool.query(`GRANT INSERT ON agent_definitions TO ${role}`);
-        await pool.query(
-          `GRANT SELECT, INSERT, UPDATE ON authoring.event_bindings TO ${role}`,
-        );
-        await pool.query(
-          `GRANT SELECT ON authoring.graphs, authoring.graph_versions TO ${role}`,
-        );
-
-        // Stage 2 Compile writes graph_definitions (runtime store).
-        // The runtime also creates/owns the table in some environments, so
-        // this is best-effort to keep local/dev working.
-        await pool.query(
-          `GRANT SELECT, INSERT, UPDATE, DELETE ON graph_definitions TO ${role}`,
-        );
-
-        await pool.query(
-          `GRANT SELECT, INSERT, UPDATE, DELETE ON graph_versions TO ${role}`,
-        );
-      } catch {
-        /* role may not exist in local/dev */
-      }
-    }
-
-    await applyAuthoringRls(pool);
-    await applyGraphStoreRls(pool);
     await seedAgentTemplates(pool);
     await seedProductAgentDefinitions(pool);
     await seedDefaultEntitlements(pool);
@@ -412,190 +447,3 @@ export async function seedDefaultEntitlements(pool: Pool): Promise<void> {
   console.log("[authoring] admin-local entitlements seeded");
 }
 
-/**
- * Apply Stage 1 authoring RLS (idempotent). Mirrors V14 for boot without Flyway.
- * Uses current_setting(...) inline — syntra_migrator may lack USAGE on schema app,
- * which blocks CREATE POLICY that references app.current_org_id().
- */
-export async function applyAuthoringRls(pool: Pool): Promise<void> {
-  const org = `NULLIF(current_setting('app.org_id', true), '')::uuid`;
-
-  try {
-    await pool.query(`GRANT USAGE ON SCHEMA app TO syntra_migrator`);
-  } catch {
-    /* may already have it or role missing */
-  }
-
-  const statements = [
-    `ALTER TABLE builder.agent_policies ENABLE ROW LEVEL SECURITY`,
-    `ALTER TABLE builder.agent_policies FORCE ROW LEVEL SECURITY`,
-    `ALTER TABLE builder.agent_versions ENABLE ROW LEVEL SECURITY`,
-    `ALTER TABLE builder.agent_versions FORCE ROW LEVEL SECURITY`,
-    `ALTER TABLE builder.admin_agent_entitlements ENABLE ROW LEVEL SECURITY`,
-    `ALTER TABLE builder.admin_agent_entitlements FORCE ROW LEVEL SECURITY`,
-    `ALTER TABLE builder.agent_templates ENABLE ROW LEVEL SECURITY`,
-
-    `DROP POLICY IF EXISTS agent_policies_read ON agent_policies`,
-    `CREATE POLICY agent_policies_read ON agent_policies
-       FOR SELECT TO syntra_app, syntra_relay
-       USING (org_id IS NULL OR org_id = ${org})`,
-    `DROP POLICY IF EXISTS agent_policies_insert ON agent_policies`,
-    `CREATE POLICY agent_policies_insert ON agent_policies
-       FOR INSERT TO syntra_app, syntra_relay
-       WITH CHECK (
-         (org_id IS NOT NULL AND org_id = ${org})
-         OR (org_id IS NULL AND ${org} IS NULL)
-       )`,
-    `DROP POLICY IF EXISTS agent_policies_update ON agent_policies`,
-    `CREATE POLICY agent_policies_update ON agent_policies
-       FOR UPDATE TO syntra_app, syntra_relay
-       USING (
-         (org_id IS NOT NULL AND org_id = ${org})
-         OR (org_id IS NULL AND ${org} IS NULL)
-       )
-       WITH CHECK (
-         (org_id IS NOT NULL AND org_id = ${org})
-         OR (org_id IS NULL AND ${org} IS NULL)
-       )`,
-    `DROP POLICY IF EXISTS agent_policies_delete ON agent_policies`,
-    `CREATE POLICY agent_policies_delete ON agent_policies
-       FOR DELETE TO syntra_app, syntra_relay
-       USING (
-         (org_id IS NOT NULL AND org_id = ${org})
-         OR (org_id IS NULL AND ${org} IS NULL)
-       )`,
-    `DROP POLICY IF EXISTS agent_policies_migrator ON agent_policies`,
-    `CREATE POLICY agent_policies_migrator ON agent_policies
-       FOR ALL TO syntra_migrator USING (true) WITH CHECK (true)`,
-
-    `DROP POLICY IF EXISTS agent_versions_read ON agent_versions`,
-    `CREATE POLICY agent_versions_read ON agent_versions
-       FOR SELECT TO syntra_app, syntra_relay
-       USING (org_id IS NULL OR org_id = ${org})`,
-    `DROP POLICY IF EXISTS agent_versions_insert ON agent_versions`,
-    `CREATE POLICY agent_versions_insert ON agent_versions
-       FOR INSERT TO syntra_app, syntra_relay
-       WITH CHECK (
-         (org_id IS NOT NULL AND org_id = ${org})
-         OR (org_id IS NULL AND ${org} IS NULL)
-       )`,
-    `DROP POLICY IF EXISTS agent_versions_update ON agent_versions`,
-    `CREATE POLICY agent_versions_update ON agent_versions
-       FOR UPDATE TO syntra_app, syntra_relay
-       USING (
-         (org_id IS NOT NULL AND org_id = ${org})
-         OR (org_id IS NULL AND ${org} IS NULL)
-       )
-       WITH CHECK (
-         (org_id IS NOT NULL AND org_id = ${org})
-         OR (org_id IS NULL AND ${org} IS NULL)
-       )`,
-    `DROP POLICY IF EXISTS agent_versions_delete ON agent_versions`,
-    `CREATE POLICY agent_versions_delete ON agent_versions
-       FOR DELETE TO syntra_app, syntra_relay
-       USING (
-         (org_id IS NOT NULL AND org_id = ${org})
-         OR (org_id IS NULL AND ${org} IS NULL)
-       )`,
-    `DROP POLICY IF EXISTS agent_versions_migrator ON agent_versions`,
-    `CREATE POLICY agent_versions_migrator ON agent_versions
-       FOR ALL TO syntra_migrator USING (true) WITH CHECK (true)`,
-
-    `DROP POLICY IF EXISTS admin_agent_entitlements_read ON admin_agent_entitlements`,
-    `CREATE POLICY admin_agent_entitlements_read ON admin_agent_entitlements
-       FOR SELECT TO syntra_app, syntra_relay USING (true)`,
-    `DROP POLICY IF EXISTS admin_agent_entitlements_migrator ON admin_agent_entitlements`,
-    `CREATE POLICY admin_agent_entitlements_migrator ON admin_agent_entitlements
-       FOR ALL TO syntra_migrator USING (true) WITH CHECK (true)`,
-
-    `DROP POLICY IF EXISTS agent_templates_read ON agent_templates`,
-    `CREATE POLICY agent_templates_read ON agent_templates
-       FOR SELECT TO syntra_app, syntra_relay USING (true)`,
-    `DROP POLICY IF EXISTS agent_templates_migrator ON agent_templates`,
-    `CREATE POLICY agent_templates_migrator ON agent_templates
-       FOR ALL TO syntra_migrator USING (true) WITH CHECK (true)`,
-  ];
-
-  for (const sql of statements) {
-    try {
-      await pool.query(sql);
-    } catch (err: any) {
-      if (err?.code === "42704") continue; // undefined object/role
-      console.warn(
-        `[authoring] applyAuthoringRls skipped: ${err?.code ?? ""} ${err?.message ?? err}`,
-      );
-    }
-  }
-}
-
-/**
- * Stage 2 Compile store RLS (idempotent, best-effort).
- *
- * We scope reads/writes by `org_id` matching `app.org_id`.
- * If `org_id` is NULL in the row, it's treated as global.
- */
-export async function applyGraphStoreRls(pool: Pool): Promise<void> {
-  const orgText = `NULLIF(current_setting('app.org_id', true), '')`;
-
-  const statements = [
-    // graph_definitions: runtime store topology materialisation.
-    `ALTER TABLE graph_definitions ENABLE ROW LEVEL SECURITY`,
-    `ALTER TABLE graph_definitions FORCE ROW LEVEL SECURITY`,
-    `DROP POLICY IF EXISTS graph_definitions_read ON graph_definitions`,
-    `CREATE POLICY graph_definitions_read ON graph_definitions
-       FOR SELECT TO syntra_app, syntra_relay
-       USING (org_id IS NULL OR org_id::text = ${orgText})`,
-    `DROP POLICY IF EXISTS graph_definitions_insert ON graph_definitions`,
-    `CREATE POLICY graph_definitions_insert ON graph_definitions
-       FOR INSERT TO syntra_app, syntra_relay
-       WITH CHECK (org_id IS NULL OR org_id::text = ${orgText})`,
-    `DROP POLICY IF EXISTS graph_definitions_update ON graph_definitions`,
-    `CREATE POLICY graph_definitions_update ON graph_definitions
-       FOR UPDATE TO syntra_app, syntra_relay
-       USING (org_id IS NULL OR org_id::text = ${orgText})
-       WITH CHECK (org_id IS NULL OR org_id::text = ${orgText})`,
-    `DROP POLICY IF EXISTS graph_definitions_delete ON graph_definitions`,
-    `CREATE POLICY graph_definitions_delete ON graph_definitions
-       FOR DELETE TO syntra_app, syntra_relay
-       USING (org_id IS NULL OR org_id::text = ${orgText})`,
-    `DROP POLICY IF EXISTS graph_definitions_migrator ON graph_definitions`,
-    `CREATE POLICY graph_definitions_migrator ON graph_definitions
-       FOR ALL TO syntra_migrator USING (true) WITH CHECK (true)`,
-
-    // graph_versions: compile history tracker.
-    `ALTER TABLE graph_versions ENABLE ROW LEVEL SECURITY`,
-    `ALTER TABLE graph_versions FORCE ROW LEVEL SECURITY`,
-    `DROP POLICY IF EXISTS graph_versions_read ON graph_versions`,
-    `CREATE POLICY graph_versions_read ON graph_versions
-       FOR SELECT TO syntra_app, syntra_relay
-       USING (org_id IS NULL OR org_id::text = ${orgText})`,
-    `DROP POLICY IF EXISTS graph_versions_insert ON graph_versions`,
-    `CREATE POLICY graph_versions_insert ON graph_versions
-       FOR INSERT TO syntra_app, syntra_relay
-       WITH CHECK (org_id IS NULL OR org_id::text = ${orgText})`,
-    `DROP POLICY IF EXISTS graph_versions_update ON graph_versions`,
-    `CREATE POLICY graph_versions_update ON graph_versions
-       FOR UPDATE TO syntra_app, syntra_relay
-       USING (org_id IS NULL OR org_id::text = ${orgText})
-       WITH CHECK (org_id IS NULL OR org_id::text = ${orgText})`,
-    `DROP POLICY IF EXISTS graph_versions_delete ON graph_versions`,
-    `CREATE POLICY graph_versions_delete ON graph_versions
-       FOR DELETE TO syntra_app, syntra_relay
-       USING (org_id IS NULL OR org_id::text = ${orgText})`,
-    `DROP POLICY IF EXISTS graph_versions_migrator ON graph_versions`,
-    `CREATE POLICY graph_versions_migrator ON graph_versions
-       FOR ALL TO syntra_migrator USING (true) WITH CHECK (true)`,
-  ];
-
-  for (const sql of statements) {
-    try {
-      await pool.query(sql);
-    } catch (err: any) {
-      // undefined object/policy/role
-      if (err?.code === "42704") continue;
-      console.warn(
-        `[authoring] applyGraphStoreRls skipped: ${err?.code ?? ""} ${err?.message ?? err}`,
-      );
-    }
-  }
-}

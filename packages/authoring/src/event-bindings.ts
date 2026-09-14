@@ -106,7 +106,8 @@ export class EventAlreadyBoundError extends Error {
     public readonly existingSource: string = "authoring",
   ) {
     super(
-      `Event "${eventType}" is already bound to graph "${existingGraphKey}"` +
+      `Event "${eventType}" is already answered by "${existingGraphKey}" for ` +
+        `this application` +
         (existingSource === "seed"
           ? `. That binding was created by a migration and is what runs in ` +
             `production today — taking it over stops "${existingGraphKey}" ` +
@@ -233,16 +234,58 @@ export async function upsertActiveEventBinding(
 
   const orgId = args.orgId;
 
-  const existing = await resolveActiveEventBinding(client, args.eventType, orgId);
+  /**
+   * Which ROUTING GROUP this binding joins.
+   *
+   * One event can start one workflow per consuming application, and that is
+   * the whole of the fan-out decision (docs/adr/bindings-allow-fanout.md):
+   * exclusivity is real, but scoped to a group rather than to the event.
+   * `event_bindings_one_active_idx` enforces exactly that, on
+   * (org, event_type, consuming_application).
+   *
+   * The group comes from the queue's owning application, because the queue is
+   * what the work is handed to. A queue nobody has claimed groups under its
+   * own name, which keeps two unowned queues from colliding.
+   */
+  const { rows: groupRows } = await client.query<{ consuming_application: string | null }>(
+    `SELECT q.application AS consuming_application
+       FROM platform.queues q WHERE q.key = $1`,
+    [moduleQueue],
+  );
+  const consumingApplication = groupRows[0]?.consuming_application ?? null;
+
+  /**
+   * Who holds this event FOR THIS APPLICATION. Not who holds the event.
+   *
+   * Asking the broader question is what made fan-out impossible: ORBIT binding
+   * to an event SYNTRA already answers would find SYNTRA's binding, call it a
+   * takeover, and retire it. Two applications answering the same fact
+   * independently is the normal case the architecture is for.
+   */
+  const { rows: heldRows } = await client.query<EventBindingRow & QueryResultRow>(
+    `${BINDING_SELECT}
+      WHERE b.event_type = $1
+        AND b.org_id IS NOT DISTINCT FROM $2::uuid
+        AND coalesce(b.consuming_application, '~none~') = coalesce($3, '~none~')
+        AND b.status = 'active'
+      LIMIT 1`,
+    [args.eventType, orgId, consumingApplication],
+  );
+  const existing = heldRows[0] ? normalize(heldRows[0]) : null;
 
   /**
    * Replacing your own binding is not a takeover.
    *
-   * The owner is the workflow. This used to also match on the agent id, and
-   * that half never decided anything the graph key had not already decided:
-   * an authored workflow re-activating over its own seeded row is the same
-   * workflow getting a new version — the common case, and refusing it would
-   * make every seeded workflow permanently unpublishable.
+   * The owner is the workflow, and `existing` is now the holder WITHIN THIS
+   * APPLICATION'S GROUP — so another application answering the same event is
+   * not a conflict and never reaches here. What remains is the real case: two
+   * workflows in one application competing for one event, where exactly one
+   * can win and choosing silently is the failure to avoid.
+   *
+   * This used to also match on the agent id, and that half never decided
+   * anything the graph key had not already decided: an authored workflow
+   * re-activating over its own seeded row is the same workflow getting a new
+   * version, which must not need a confirmation.
    */
   const sameOwner = existing !== null && existing.graph_key === args.graphKey;
 
@@ -291,26 +334,23 @@ export async function upsertActiveEventBinding(
     [moduleQueue],
   );
 
-  // Retire all active for this event+scope (including seed) before insert.
-  if (orgId === null) {
-    await client.query(
-      `UPDATE authoring.event_bindings
-          SET status = 'retired', updated_at = now()
-        WHERE event_type = $1
-          AND org_id IS NULL
-          AND status = 'active'`,
-      [args.eventType],
-    );
-  } else {
-    await client.query(
-      `UPDATE authoring.event_bindings
-          SET status = 'retired', updated_at = now()
-        WHERE event_type = $1
-          AND org_id = $2::uuid
-          AND status = 'active'`,
-      [args.eventType, orgId],
-    );
-  }
+  /**
+   * Retire what this group holds, and nothing else.
+   *
+   * This used to retire every active binding on the event regardless of
+   * application, which made the unique index unreachable: there was never a
+   * second group to conflict with. Scoping it here is what lets ORBIT and
+   * SYNTRA answer the same fact without either knowing about the other.
+   */
+  await client.query(
+    `UPDATE authoring.event_bindings
+        SET status = 'retired', updated_at = now()
+      WHERE event_type = $1
+        AND org_id IS NOT DISTINCT FROM $2::uuid
+        AND coalesce(consuming_application, '~none~') = coalesce($3, '~none~')
+        AND status = 'active'`,
+    [args.eventType, orgId, consumingApplication],
+  );
 
   const inserted = await client.query<EventBindingRow & QueryResultRow>(
     `WITH pinned AS (
@@ -321,8 +361,10 @@ export async function upsertActiveEventBinding(
          event_type, org_id, graph_id, queue_key, consuming_application,
          pinned_version_id, status, source
        )
-       SELECT $1, $2::uuid, $3::uuid, $4,
-              (SELECT q.application FROM platform.queues q WHERE q.key = $4),
+       -- The group resolved above, passed in rather than looked up again.
+       -- Asking twice invites two answers, and this one decides which
+       -- bindings were just retired.
+       SELECT $1, $2::uuid, $3::uuid, $4, $6,
               (SELECT id FROM pinned),
               'active', 'authoring'
        RETURNING id, event_type, org_id, graph_id, queue_key,
@@ -334,7 +376,7 @@ export async function upsertActiveEventBinding(
        FROM inserted i
        JOIN authoring.graphs g ON g.id = i.graph_id
        LEFT JOIN authoring.graph_versions v ON v.id = i.pinned_version_id`,
-    [args.eventType, orgId, graphId, moduleQueue, args.version],
+    [args.eventType, orgId, graphId, moduleQueue, args.version, consumingApplication],
   );
 
   /**
