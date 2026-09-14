@@ -16,7 +16,11 @@ const router = express.Router();
 router.post("/internal/jobs/:id/process", async (req, res) => {
   const jobId = req.params.id;
   try {
-    await handleJdUploaded({ data: { jobId } });
+    /**
+     * The orchestrator sends the step's settings here. Only the ones this
+     * service honours are picked out — see the note on continuous-match.
+     */
+    await handleJdUploaded({ data: { jobId } }, { maxAttempts: req.body?.maxAttempts });
     res.json({ status: "processed", jobId });
   } catch (err) {
     log.error(`[internal] job ${jobId} failed: ${err.message}`);
@@ -28,7 +32,21 @@ router.post("/internal/jobs/:id/process", async (req, res) => {
 router.post("/internal/jobs/:id/continuous-match", async (req, res) => {
   const jobId = req.params.id;
   try {
-    const result = await runForJob(jobId);
+    /**
+     * The orchestrator sends a workflow step's settings in the body, and this
+     * route used to read only `req.params.id`. So the authoring editor showed
+     * a "Match threshold" control, somebody set it, and nothing changed —
+     * silently, because the field was never read.
+     *
+     * Only what this endpoint actually honours is picked out. Forwarding the
+     * whole body would let a new setting look supported the day it is declared
+     * rather than the day it is wired, which is the fault being fixed.
+     */
+    const options = {
+      matchThreshold: req.body?.matchThreshold,
+      topN: req.body?.topN,
+    };
+    const result = await runForJob(jobId, options);
     const created = result.created ?? [];
     res.json({
       status: "ok",
@@ -50,7 +68,10 @@ router.post("/internal/resumes/:id/process", async (req, res) => {
   const resumeId = req.params.id;
   const { candidateId } = req.body || {};
   try {
-    await handleResumeUploaded({ data: { resumeId, candidateId } });
+    await handleResumeUploaded(
+      { data: { resumeId, candidateId } },
+      { matchThreshold: req.body?.matchThreshold, topN: req.body?.topN },
+    );
     res.json({ status: "processed", resumeId });
   } catch (err) {
     log.error(`[internal] resume ${resumeId} failed: ${err.message}`);

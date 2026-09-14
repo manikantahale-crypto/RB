@@ -51,7 +51,14 @@ function validateResumeDocument(text = "", originalFileName = "") {
   return { isValid: true };
 }
 
-async function handleResumeUploaded(job) {
+/**
+ * @param {object} job
+ * @param {{ matchThreshold?: number, topN?: number }} [options]
+ *   Settings from the workflow step that asked for this. This step DOES match
+ *   — it runs the resume-against-jobs funnel once the profile is embedded —
+ *   so the floor and the shortlist size genuinely apply here.
+ */
+async function handleResumeUploaded(job, options = {}) {
   const { resumeId, candidateId: payloadCandidateId } = job.data || {};
   if (!resumeId) throw new Error("resume.uploaded missing resumeId");
 
@@ -142,7 +149,7 @@ async function handleResumeUploaded(job) {
     await platformEvents.publishProfilePrepared({ resumeId, candidateId });
 
     // 4. Run matching funnel ONLY after both parsed fields and embedding are saved
-    await runForResume(resumeId);
+    await runForResume(resumeId, options);
   } catch (err) {
     const errMsg = err.message || "AI analysis failed to extract candidate attributes from this resume.";
     await resumeRepo.markFailed(resumeId, errMsg);

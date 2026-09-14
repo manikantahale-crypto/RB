@@ -50,7 +50,15 @@ function validateJdDocument(text = "", originalFileName = "") {
   return { isValid: true };
 }
 
-async function handleJdUploaded(job) {
+/**
+ * @param {object} job
+ * @param {{ maxAttempts?: number }} [options]
+ *   Settings from the workflow step that asked for this. Parsing options only
+ *   — this step parses a requirement into structure and does no matching. The
+ *   funnel call at the bottom is a fallback for deployments where the
+ *   orchestrator does not own matching, and it takes the deployment defaults.
+ */
+async function handleJdUploaded(job, options = {}) {
   const { jobId } = job.data || {};
   if (!jobId) throw new Error("jd.uploaded missing jobId");
 
@@ -76,7 +84,12 @@ async function handleJdUploaded(job) {
   await jobRepo.markProcessing(jobId);
   try {
     // 1. LLM Extraction (Strict - fails visibly if LLM fails)
-    const parsedData = await parseJD({ jdText: text });
+    const parsedData = await parseJD(
+      { jdText: text },
+      typeof options.maxAttempts === "number" && options.maxAttempts > 0
+        ? options.maxAttempts
+        : undefined,
+    );
     const summary = parsedData.summary || "";
 
     // Safely combine required, mandatory, and preferred skills.
