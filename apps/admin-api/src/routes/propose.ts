@@ -70,6 +70,7 @@ import {
   resolveAgainstExisting,
   type Resolution,
 } from "../lib/resolve-before-generate.js";
+import { rankWithGraph } from "../lib/rank-with-graph.js";
 import {
   decideChain,
   detectTriggeredWorkflows,
@@ -860,6 +861,14 @@ export function registerProposeRoutes(
          */
         const startable = (c: Scored) => c.handling !== "terminal";
 
+        /** Event type -> the field names its payload schema declares. */
+        const payloadFieldsOf = new Map<string, string[]>(
+          eventRows.map((e: any) => [
+            String(e.event_type),
+            Object.keys(e.payload_schema?.properties ?? {}),
+          ]),
+        );
+
         const matchedAll = scored.filter((c) => c.matchedOn.length > 0);
         const matched = matchedAll.filter((c) => mine(c) && startable(c));
         /** Named in the ledger, so the filter is visible rather than silent. */
@@ -1402,19 +1411,174 @@ export function registerProposeRoutes(
          * where they cannot see it — but Accept is blocked until they change
          * it, because there is nothing sensible to build from here.
          */
-        const selfTriggeringSteps = best
+        /**
+         * THE TRIGGER, CHOSEN NOW THAT THE SHAPE IS KNOWN.
+         *
+         * `best` above was picked on word overlap alone, before a single step
+         * existed, because `resolveAgainstExisting` needs a trigger to decide
+         * whether to call a model at all. That is a fair provisional answer and
+         * a poor final one: asked to "match the candidates for a job
+         * requirement" it chose `syntra.match.completed` — the event announcing
+         * that matching has already finished — to start a workflow whose job is
+         * matching. Word overlap cannot tell an outcome from an input.
+         *
+         * The graph never depended on it: `generateGraphFromLlm` takes the
+         * request, the catalogue and the registry, and is never told the
+         * trigger. So the shape is built first and the trigger is chosen
+         * against it here, on two things the words cannot see — whether a step
+         * publishes the event, and whether its payload feeds the first step.
+         *
+         * The word ranking is kept as the tiebreak rather than discarded. It is
+         * the weakest of the three signals and the only one that reads the
+         * author's actual sentence.
+         */
+        /**
+         * A PLACEHOLDER IS NOT A SHAPE, AND MUST NOT BE RANKED AGAINST.
+         *
+         * When generation does not happen — no model configured, or the
+         * provider rate-limited, which is what happens in practice — the
+         * proposal carries one arbitrary step: `nodeRows.find(source ===
+         * "contract")`, whichever the query returned first. Today that is
+         * `syntra.bench.alert`, for no reason but the alphabet.
+         *
+         * Ranking the trigger against that produces a specific, considered
+         * -looking suggestion derived from a step nobody chose. It was doing
+         * exactly that: recommending `syntra.profile.prepared` because it
+         * feeds `bench.alert`, for a workflow that does not exist yet.
+         *
+         * So the shape signals are used only when there IS a shape. With a
+         * placeholder the word ranking stands, and the ledger says the trigger
+         * could not be checked against the steps — which is true, and is the
+         * difference between a weak answer and a wrong one dressed up.
+         */
+        const haveRealShape = graph.source !== "placeholder";
+        const firstStepImpl = haveRealShape ? (graph.nodes[0]?.impl ?? null) : null;
+        const firstStepSchema = firstStepImpl
+          ? ((nodeRows.find((n: any) => String(n.key) === firstStepImpl) as any)
+              ?.input_schema ?? null)
+          : null;
+        const firstStepRequires: string[] = firstStepSchema?.required ?? [];
+        /**
+         * What the step ACCEPTS, which is the signal that actually works.
+         *
+         * Eight of the nine SYNTRA nodes mark nothing required — they state
+         * their requirement as a zod .refine ("candidateId or candidate_id"),
+         * and z.toJSONSchema drops .refine silently. The property list is what
+         * survives, and it separates the candidates cleanly: of eleven SYNTRA
+         * events only two carry any name syntra.bench.alert reads, and
+         * syntra.match.completed — the one that was being suggested — is not
+         * one of them.
+         */
+        const firstStepAccepts: string[] = Object.keys(
+          firstStepSchema?.properties ?? {},
+        );
+
+        const emittedByGraph = !haveRealShape
+          ? []
+          : [
+          ...new Set(
+            graph.nodes.flatMap((n) => {
+              const declared = emitsOf.get(n.impl);
+              return declared ? resolveEmits(declared, n.config) : [];
+            }),
+          ),
+        ];
+
+        /**
+         * EVENTS THE WORDS MISSED BUT THE SHAPE WANTS.
+         *
+         * Re-ranking can only reorder what the word matcher already admitted,
+         * and the matcher admits nothing that shares no wording. Asked to
+         * "match the candidates for a job requirement" over a flow whose only
+         * step is `syntra.bench.alert`, the right trigger is
+         * `syntra.profile.prepared` — and its catalogue sentence is "Resume
+         * parse, skill normalisation and embedding completed", which shares
+         * not one word. It was filtered out before any of this could see it,
+         * so reordering could never have found it.
+         *
+         * So the shape opens the door as well as ordering the queue: an event
+         * this application can use, that the platform will actually route, and
+         * that carries something the first step reads, is a candidate however
+         * little it sounds like the sentence.
+         *
+         * Still bounded — only events that FEED the step are admitted, not
+         * every event in the catalogue. An empty overlap admits nothing.
+         */
+        const wanted = new Set(
+          [...firstStepRequires, ...firstStepAccepts].filter(Boolean),
+        );
+        const alreadyRanked = new Set(ranked.map((c) => c.eventType));
+        const admittedByShape =
+          wanted.size === 0
+            ? []
+            : scored.filter(
+                (c) =>
+                  !alreadyRanked.has(c.eventType) &&
+                  mine(c) &&
+                  startable(c) &&
+                  (payloadFieldsOf.get(c.eventType) ?? []).some((fld) =>
+                    wanted.has(fld),
+                  ),
+              );
+
+        const reranked = rankWithGraph({
+          candidates: [...ranked, ...admittedByShape].map((c, i) => ({
+            eventType: c.eventType,
+            payloadFields: payloadFieldsOf.get(c.eventType) ?? [],
+            declaresPayload: c.declaresPayload,
+            /**
+             * An event admitted on shape has no word rank, so it sorts after
+             * every word match at equal fit rather than jumping the queue on a
+             * signal the author never gave.
+             */
+            wordRank: i < ranked.length ? i : 1000 + i,
+          })),
+          emittedByGraph,
+          firstStepRequires,
+          firstStepAccepts,
+          firstStepImpl,
+        });
+
+        /**
+         * The order the screen shows, and the suggestion it pre-fills.
+         *
+         * `ranked` is rebuilt in the new order so the runner-up list, the
+         * ledger and the pre-filled answer all agree. They disagreeing is how
+         * a screen ends up recommending one event while explaining another.
+         */
+        const byType = new Map(
+          [...ranked, ...admittedByShape].map((c) => [c.eventType, c]),
+        );
+        const ordered = reranked
+          .map((r) => byType.get(r.eventType))
+          .filter((c): c is NonNullable<typeof c> => Boolean(c));
+        const finalBest = ordered[0] ?? null;
+        /**
+         * Why the PREVIOUS first choice lost, not why the new one won.
+         *
+         * The first version cited the winner reason, which produced lines like
+         * "moved to match.requested because the first step requires nothing" —
+         * true of the winner, and no explanation at all of why match.completed
+         * was dropped. What the author needs is the demotion: a step in this
+         * workflow publishes it.
+         */
+        const demoted = best
+          ? reranked.find((r) => r.eventType === best.eventType)
+          : undefined;
+
+        const selfTriggeringSteps = finalBest
           ? graph.nodes
               .filter((n) => {
                 const declared = emitsOf.get(n.impl);
                 return declared
-                  ? resolveEmits(declared, n.config).includes(best.eventType)
+                  ? resolveEmits(declared, n.config).includes(finalBest.eventType)
                   : false;
               })
               .map((n) => ({ stepId: n.id, impl: n.impl }))
           : [];
         const selfTriggering =
-          selfTriggeringSteps.length > 0 && best
-            ? { eventType: best.eventType, steps: selfTriggeringSteps }
+          selfTriggeringSteps.length > 0 && finalBest
+            ? { eventType: finalBest.eventType, steps: selfTriggeringSteps }
             : null;
 
         const borrowedSteps = graph.nodes
@@ -1640,6 +1804,18 @@ export function registerProposeRoutes(
           });
         }
 
+        if (!haveRealShape) {
+          ledger.push({
+            kind: "SKIPPED",
+            text: "the trigger was not checked against the steps",
+            citation:
+              "The shape was not generated, so there is nothing to check it " +
+              "against. This trigger was chosen on your wording alone — " +
+              "confirm it once the steps exist.",
+            source: "system",
+          });
+        }
+
         if (graph.source === "model") {
           /**
            * The step chain, not `builtSummary`. The summary is a full sentence
@@ -1647,6 +1823,26 @@ export function registerProposeRoutes(
            * which is unreadable in a list. The chain says what was built; the
            * canvas is where the detail belongs.
            */
+          /**
+           * The trigger was chosen twice, and the ledger says so.
+           *
+           * The first pick reads the author sentence and nothing else, because
+           * it has to exist before a model is called. The second reads the
+           * shape. Where they disagree, the reordering is the single most
+           * consequential thing on the screen and it happens invisibly — so it
+           * is stated, with what the shape said, and the author can put it
+           * back.
+           */
+          if (demoted && best && finalBest && finalBest.eventType !== best.eventType) {
+            ledger.push({
+              kind: "CHOSE",
+              text: `trigger moved to ${finalBest.eventType}`,
+              citation:
+                `${best.eventType} ranked first on your words, but ${demoted.why}. ` +
+                `Chosen after the steps were known, not before.`,
+              source: "system",
+            });
+          }
           ledger.push({
             kind: "CHOSE",
             text: `built ${graph.nodes.length} step${graph.nodes.length === 1 ? "" : "s"}`,
@@ -1854,7 +2050,7 @@ export function registerProposeRoutes(
            * publishes this" is the one fact that makes a trigger choice wrong
            * in a way nobody notices later.
            */
-          triggerCandidates: ranked.map((c) => ({
+          triggerCandidates: ordered.map((c) => ({
             eventType: c.eventType,
             description: c.description,
             producedWhen: c.producedWhen,
@@ -1891,7 +2087,7 @@ export function registerProposeRoutes(
           borrowedSteps,
           triggeredWorkflows,
           selfTriggering,
-          suggestedTrigger: best?.eventType ?? null,
+          suggestedTrigger: finalBest?.eventType ?? null,
           availableNodes: nodeRows.map((n: any) => ({
             key: n.key,
             title: n.title,

@@ -386,4 +386,80 @@ export function registerCatalogAndCreateRoutes(
       });
     });
   });
+  /**
+   * Which applications a workflow can actually be authored for.
+   *
+   * THE LIST WAS HARDCODED, AND THEN IT WAS WRONG.
+   *
+   * Screen 2 carried `["syntra", "astra", "orbit"]` in a const. When ASTRA's
+   * data was removed from this project the dropdown kept offering it, and
+   * choosing it produced a proposal with two generated steps, no trigger and
+   * no candidates — a workflow nothing could ever start, with Accept still
+   * enabled. The node contracts are in git and materialise into the registry,
+   * so ASTRA had steps; its events had gone.
+   *
+   * That is the failure mode of every hardcoded list in this codebase, and it
+   * is the third time it has bitten: a constant that was true when it was
+   * written and has no way to notice it stopped being.
+   *
+   * So: from `platform.applications`, with what each one actually has. An
+   * application with no startable event cannot have a workflow authored for
+   * it, and the screen needs to be able to say so rather than let somebody
+   * build one and find out at go-live.
+   *
+   * `terminal` events do not count as startable. They are acknowledged and
+   * dropped before any binding is read, so a workflow triggered on one can
+   * never run — see the same rule in the trigger candidate filter.
+   */
+  app.get("/applications", async (req: any, reply: any) => {
+    try {
+      /**
+       * NO STATUS FILTER, DELIBERATELY.
+       *
+       * The column holds `available`, `beta` and `planned`, and the first
+       * attempt here filtered on `active` — a value that does not exist — so
+       * the endpoint returned an empty list and the dropdown would have had
+       * nothing in it at all. Swapping one guess about the vocabulary for
+       * another is not the fix.
+       *
+       * `authorable` is measured instead: an application is authorable when it
+       * has steps to use and an event that can start them. A `planned`
+       * application has neither, so it falls out without anybody having to
+       * encode what `planned` means.
+       */
+      const { rows } = await pool.query(
+        `SELECT a.key,
+                a.name,
+                a.status,
+                (SELECT count(*) FROM authoring.node_registry n
+                  WHERE n.application = a.key)::int AS nodes,
+                (SELECT count(*) FROM authoring.event_catalog e
+                  WHERE e.application = a.key
+                    AND coalesce(e.handling, 'graph') <> 'terminal')::int AS triggers
+           FROM platform.applications a
+          ORDER BY a.key`,
+      );
+
+      return {
+        applications: rows.map((r: any) => ({
+          key: String(r.key),
+          name: String(r.name ?? r.key),
+          status: String(r.status ?? ""),
+          nodes: Number(r.nodes),
+          triggers: Number(r.triggers),
+          /**
+           * Both halves are needed. Steps with no event is a workflow that
+           * cannot start; an event with no steps is a workflow with nothing
+           * to do.
+           */
+          authorable: Number(r.nodes) > 0 && Number(r.triggers) > 0,
+        })),
+      };
+    } catch (err) {
+      req.log?.error?.(err);
+      return reply
+        .code(500)
+        .send({ error: "applications_failed", message: String(err) });
+    }
+  });
 }

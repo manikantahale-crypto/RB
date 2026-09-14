@@ -19,18 +19,18 @@
  *   permits only active and retired, and an active one would put an unreviewed
  *   workflow into production. The trigger travels inside the draft instead.
  */
-import { useCallback, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import {
   acceptChain,
   acceptProposal,
   proposeWorkflow,
+  listApplications,
+  type AuthorableApplication,
   type CatalogEvent,
   type Proposal,
 } from "../api/editor";
 import { EventCatalogDrawer } from "./EventCatalogDrawer";
-
-const MODULES = ["syntra", "astra", "orbit"];
 
 type RoutingChoice = "subscribe" | "priority" | "replace" | null;
 
@@ -38,6 +38,16 @@ export function NewWorkflowPage() {
   const navigate = useNavigate();
   const [tab, setTab] = useState<"describe" | "clone">("describe");
   const [module, setModule] = useState("syntra");
+  /**
+   * The applications a workflow can actually be authored for, from the server.
+   *
+   * Starts as just the current one so the select is never empty while the
+   * request is in flight — an empty dropdown reads as a broken screen, and
+   * this one is the first thing on it.
+   */
+  const [applications, setApplications] = useState<AuthorableApplication[]>([
+    { key: "syntra", name: "syntra", status: "", nodes: 0, triggers: 0, authorable: true },
+  ]);
   const [description, setDescription] = useState("");
   const [proposal, setProposal] = useState<Proposal | null>(null);
   const [busy, setBusy] = useState(false);
@@ -68,6 +78,18 @@ export function NewWorkflowPage() {
 
   const [graphKey, setGraphKey] = useState("");
   const [ledgerOpen, setLedgerOpen] = useState(false);
+
+  useEffect(() => {
+    void listApplications().then((res) => {
+      if (!res.ok) return;
+      const usable = res.data.applications.filter((a) => a.authorable);
+      if (usable.length === 0) return;
+      setApplications(usable);
+      // The default must be one of the options, or the select shows a value
+      // it does not contain and the first proposal is for the wrong thing.
+      setModule((m) => (usable.some((a) => a.key === m) ? m : usable[0]!.key));
+    });
+  }, []);
 
   const generate = useCallback(async () => {
     setBusy(true);
@@ -286,9 +308,22 @@ export function NewWorkflowPage() {
               value={module}
               onChange={(e) => setModule(e.target.value)}
             >
-              {MODULES.map((m) => (
-                <option key={m} value={m}>
-                  {m}
+              {/*
+                Only applications that can actually take a workflow.
+
+                This list was `["syntra", "astra", "orbit"]` in a const. When
+                ASTRA's events were removed from this project the option stayed,
+                and choosing it produced two generated steps, no trigger and no
+                candidates — a workflow nothing could ever start, with Accept
+                still enabled. Its node contracts are in git and materialise
+                into the registry, so it had steps; it had no events.
+
+                `authorable` is measured rather than declared: steps to use, and
+                an event that can start them.
+              */}
+              {applications.map((a) => (
+                <option key={a.key} value={a.key}>
+                  {a.key}
                 </option>
               ))}
             </select>

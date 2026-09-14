@@ -787,3 +787,24 @@ export function loadRelease(graphKey: string) {
     `/workflows/${encodeURIComponent(graphKey)}/release`,
   );
 }
+
+/** An application a workflow might be authored for. */
+export type AuthorableApplication = {
+  key: string;
+  name: string;
+  status: string;
+  nodes: number;
+  triggers: number;
+  /**
+   * It has both steps to use and an event that can start them.
+   *
+   * ASTRA is the case this exists for: six node contracts in git, and no
+   * events left in this project. Offering it produced a workflow with steps,
+   * no trigger, and nothing able to start it.
+   */
+  authorable: boolean;
+};
+
+export function listApplications() {
+  return request<{ applications: AuthorableApplication[] }>("/applications");
+}
