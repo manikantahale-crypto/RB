@@ -5,6 +5,7 @@ import {
 } from "./graph-definition.js";
 import { isRegisteredTool } from "./tool-registry.js";
 import { GenerationFailedError } from "./parse-llm-graph.js";
+import { closeOpenEnds } from "./close-open-ends.js";
 
 /** Allowed hard-filter names on syntra.match.process config. */
 export const HARD_FILTER_KEYS = [
@@ -193,7 +194,20 @@ export function validateLlmGraphProposal(
       impl !== "__end__"
     );
   });
-  const sanitized = { ...withKey, nodes };
+  /**
+   * The model chose the steps; it does not always say where the flow ends.
+   *
+   * Measured on gpt-4o-mini against the real registry, two requests in three
+   * were refused for "nothing reaches __end__" and nothing else — right steps,
+   * right order, every impl registered. The author then saw one arbitrary
+   * placeholder step instead of the workflow that had just been built.
+   *
+   * Repaired in the same spirit as the filter above, which drops the
+   * __start__/__end__ NODES Gemini invents: a mechanical omission gets a
+   * mechanical fix. Nothing is invented — see close-open-ends.ts for exactly
+   * what it will and will not touch.
+   */
+  const sanitized = closeOpenEnds({ ...withKey, nodes });
 
   const unknownImpls: string[] = [];
   for (const node of nodes) {
