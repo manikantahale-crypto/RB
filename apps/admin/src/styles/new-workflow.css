@@ -586,3 +586,54 @@
   color: var(--status-danger-fg);
   line-height: var(--line-height-normal);
 }
+
+/* ── acting on the duplicate-run warning ──────────────────────────────────
+ *
+ * The warning was correct and inert: it named the problem, described two
+ * fixes, and offered neither. A warning you cannot act on is one people learn
+ * to scroll past, which is the worst outcome for the most useful thing on the
+ * screen.
+ *
+ * The two fixes are not equals, and the styling says so. Dropping a step edits
+ * a proposal nothing has run yet — a button. Taking the other workflow offline
+ * stops live work somebody else may own — a link, to where that decision can
+ * be seen properly.
+ */
+
+
+/* A button that reads as a link — same weight as prose, because it is an
+   alternative to the sentence rather than the next thing to do. */
+
+/* The warning, once it no longer applies. Kept on screen rather than removed:
+   a section that vanishes when you act on it leaves no sign the problem was
+   ever there, and no way back. */
+.nw-fixed {
+  margin-top: var(--space-2);
+  font-size: var(--font-size-sm);
+  color: var(--status-success-fg);
+}
+
+/* The duplicate-run warning, now a row inside the workflow card rather than a
+   section above it. Tinted rather than shouted: it is a fact about one of the
+   steps listed directly above, and a red block above the workflow made it read
+   as a separate subject. */
+.nw-row--warn {
+  background: var(--status-warning-bg);
+  border-left: 3px solid var(--status-warning-border);
+}
+.nw-row--warn .nw-row-kind { color: var(--status-warning-fg); }
+.nw-fixed {
+  display: block;
+  margin-top: 2px;
+  font-size: var(--font-size-xs);
+  color: var(--status-success-fg);
+}
+
+/* The one row on this screen that stops you. Distinguished from the amber
+   "runs twice" rows because it is not a judgement call — a workflow that
+   restarts itself has no good version. */
+.nw-row--stop {
+  background: var(--status-danger-bg);
+  border-left: 3px solid var(--status-danger-border);
+}
+.nw-row--stop .nw-row-kind { color: var(--status-danger-fg); }

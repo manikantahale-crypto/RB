@@ -260,6 +260,14 @@ export type TriggerCandidate = {
   publishCount: number;
   /** False means a workflow triggered on this could never run. */
   everPublished: boolean;
+  /**
+   * Workflows that already answer this event.
+   *
+   * Per candidate rather than once per proposal: the author can change the
+   * trigger, and the routing question — "somebody already answers this, do you
+   * mean to take it from them" — has to be about the event they actually chose.
+   */
+  answeredBy: Array<{ graphKey: string; moduleQueue: string | null }>;
 };
 
 export type LedgerEntry = {
@@ -355,33 +363,6 @@ export type Proposal = {
    * named events, each marked exists / new / blocked. Null for a placeholder
    * proposal, where there is nothing to resolve.
    */
-  plan: {
-    steps: Array<{
-      seq: number;
-      module: string;
-      graphKey: string | null;
-      version: number | null;
-      state: "exists" | "new" | "blocked";
-      yours: boolean;
-      steps: string[];
-      summary: string;
-    }>;
-    links: Array<{
-      fromSeq: number;
-      toSeq: number;
-      eventType: string | null;
-      description: string | null;
-      producedWhen: string | null;
-      publishCount: number;
-      bound: boolean;
-      routable: boolean;
-      emitted: "yes" | "no" | "unknown";
-      blocked: boolean;
-      reason: string | null;
-    }>;
-    satisfied: boolean;
-    verdict: string;
-  } | null;
 
   /** True when the flow crosses applications, split into a chain or not. */
   spansModules: boolean;
@@ -401,6 +382,17 @@ export type Proposal = {
     graphKey: string;
     alsoRunsHere: string[];
   }>;
+  /**
+   * A step publishes the very event that starts this flow.
+   *
+   * Every run would start another, and nothing would stop it — the router has
+   * no depth guard and the go-live gate's other eight checks never compared the
+   * trigger against what the steps publish. Null is the ordinary case.
+   */
+  selfTriggering: {
+    eventType: string;
+    steps: Array<{ stepId: string; impl: string }>;
+  } | null;
   /**
    * Why it was stored as one workflow or as several. Null when the flow never
    * left one application and there was nothing to decide.
@@ -613,4 +605,185 @@ export function rollbackWorkflow(graphKey: string, toVersion?: number) {
     method: "POST",
     body: JSON.stringify(toVersion != null ? { toVersion } : {}),
   });
+}
+
+/**
+ * The lifecycle, one call per verb.
+ *
+ * Each is a POST with no body: the server decides which version it means —
+ * the only compiled one, the one waiting longest — because a client that
+ * picks the version can pick a stale one between a refresh and a click.
+ */
+export function compileDraft(graphKey: string) {
+  return request<{
+    graphKey: string;
+    version: number;
+    checksum: string;
+    status: string;
+    note?: string;
+  }>(`/workflows/${encodeURIComponent(graphKey)}/compile`, { method: "POST" });
+}
+
+/** One step, as the outline describes it — no config, no payloads. */
+export type OutlineStep = {
+  id: string;
+  impl: string;
+  /** The human name from the node registry, when the node declares one. */
+  title: string | null;
+  sideEffect: string | null;
+  /** On a step that splits: the names of its outcomes. */
+  outcomes: string[] | null;
+  /** The node registry has never heard of this impl. */
+  unknown: boolean;
+};
+
+/**
+ * What a workflow IS, at a glance — the shape of it and nothing else.
+ *
+ * Deliberately small: the order of the steps, what each one is, what starts
+ * it, which version is live. No timings, no payloads, no per-run anything.
+ * Those belong to a run, and putting them on the history page would make it
+ * the cluttered screen this is meant to save people from.
+ */
+export type WorkflowOutline = {
+  graphKey: string;
+  version: number;
+  status: string;
+  live: boolean;
+  compiledAt: string | null;
+  triggers: string[];
+  triggerSource: "binding" | "draft" | "none";
+  /** How many places the flow splits. */
+  branchCount: number;
+  /**
+   * The connections, so the panel can draw the workflow rather than list it.
+   * `label` is the arm name on a branch edge, null on an ordinary one.
+   * `__start__` and `__end__` appear here but not in `steps`.
+   */
+  edges: Array<{ from: string; to: string; label: string | null }>;
+  steps: OutlineStep[];
+};
+
+export function loadOutline(graphKey: string) {
+  return request<WorkflowOutline>(
+    `/workflows/${encodeURIComponent(graphKey)}/outline`,
+  );
+}
+
+/** One workflow version waiting for a second person to approve it. */
+export type PendingGoLive = {
+  graphKey: string;
+  module: string;
+  version: number;
+  checksum: string | null;
+  requestedAt: string | null;
+  requestedBy: string | null;
+  compiledAt: string | null;
+  compiledBy: string | null;
+  /** What approving would replace, or null when nothing is live yet. */
+  liveVersion: number | null;
+  liveSince: string | null;
+  /** What starts it — already bound, or chosen and bound at go-live. */
+  triggers: string[];
+  triggerSource: "binding" | "draft" | "none";
+  stepCount: number;
+  /** No active binding — it would go live and nothing would route to it. */
+  unreachable: boolean;
+};
+
+/**
+ * Everything awaiting approval, oldest request first.
+ *
+ * The request half of this has existed since V20260909.48 and the queue has
+ * not, so a go-live could be asked for and seen by nobody.
+ */
+export function listPendingGoLive() {
+  return request<{ requests: PendingGoLive[]; orgId: string | null }>(
+    "/workflows/pending-go-live",
+  );
+}
+
+export function requestGoLive(graphKey: string) {
+  return request<{ graphKey: string; version: number; status: string; note?: string }>(
+    `/workflows/${encodeURIComponent(graphKey)}/request-go-live`,
+    { method: "POST" },
+  );
+}
+
+export function approveGoLive(graphKey: string) {
+  return request<{
+    graphKey: string;
+    version: number;
+    previousLive: number | null;
+    boundTo: string | null;
+    live: boolean;
+    note?: string;
+  }>(`/workflows/${encodeURIComponent(graphKey)}/approve-go-live`, {
+    method: "POST",
+  });
+}
+
+export function cancelGoLiveRequest(graphKey: string) {
+  return request<{ graphKey: string; version: number; status: string; note?: string }>(
+    `/workflows/${encodeURIComponent(graphKey)}/cancel-go-live-request`,
+    { method: "POST" },
+  );
+}
+
+export function takeOffline(graphKey: string) {
+  return request<{
+    graphKey: string;
+    offline: boolean;
+    retired: string[];
+    note?: string;
+  }>(`/workflows/${encodeURIComponent(graphKey)}/take-offline`, { method: "POST" });
+}
+
+/* ───────────────────── Screen 10 · Release console ─────────────────────── */
+
+/** One go-live check, as the console shows it. */
+export type ReleaseCheck = {
+  id: string;
+  ok: boolean;
+  message: string;
+  /**
+   * The check could not run. Distinct from a pass, and shown differently:
+   * "we looked and it was fine" and "we could not look" must not read alike.
+   */
+  unchecked: boolean;
+};
+
+export type ReleaseRouting = {
+  eventType: string;
+  before: Array<{ workflowKey: string; group: string; gatedOn: string[] }>;
+  after: Array<{ workflowKey: string; group: string; gatedOn: string[] }>;
+  /** Workflows that stop receiving the event if this is approved. */
+  losing: string[];
+  /** Workflows that start receiving it. */
+  gaining: string[];
+};
+
+/** Everything the approver needs, in one call. */
+export type ReleaseView = {
+  graphKey: string;
+  version: number;
+  checksum: string | null;
+  requestedAt: string | null;
+  requestedBy: string | null;
+  compiledAt: string | null;
+  compiledBy: string | null;
+  trigger: string | null;
+  steps: Array<{ id: string; impl: string }>;
+  /** What goes off the air. Null when nothing is live yet. */
+  replaces: { version: number; since: string | null; stepCount: number } | null;
+  checks: ReleaseCheck[];
+  blocked: boolean;
+  blockedBy: string[];
+  routing: ReleaseRouting | null;
+};
+
+export function loadRelease(graphKey: string) {
+  return request<ReleaseView>(
+    `/workflows/${encodeURIComponent(graphKey)}/release`,
+  );
 }

@@ -4003,13 +4003,22 @@ code {
   box-shadow: inset 3px 0 0 var(--status-warning-border);
 }
 
+/*
+  This is an <a> now, not a <span>. It keeps the same weight and colour — the
+  row is already obviously interactive from its hover state, and colouring one
+  cell like a link in a table where every row is clickable says the wrong
+  thing. The underline on hover is the affordance.
+*/
 .wf-key {
   display: block;
   font-family: var(--font-family-mono);
   font-size: var(--font-size-sm);
   color: var(--text-primary);
   font-weight: var(--font-weight-semibold);
+  text-decoration: none;
 }
+.wf-key:hover { text-decoration: underline; }
+.wf-key:focus-visible { outline: none; }
 
 .wf-module {
   display: inline-block;
@@ -4239,6 +4248,285 @@ code {
 .run-open:hover { text-decoration: underline; }
 .run-open:focus-visible { outline: none; box-shadow: var(--focus-ring); border-radius: var(--radius-sm); }
 .wf-row--clickable { cursor: pointer; }
+
+/*
+  A clickable row has to look focusable as well as hoverable. Without the
+  focus-visible rule the row is reachable by keyboard and gives no sign of
+  where you are, which is the same as not being reachable.
+*/
+/*
+  The row is clickable for a mouse, but the focusable thing inside it is the
+  workflow-key link — see the note in WorkflowsRegistry.tsx. Highlighting the
+  whole row while that link has focus keeps the two consistent, without the
+  row itself having to claim to be a control.
+*/
+.wf-row--clickable:focus-within {
+  box-shadow: inset 0 0 0 2px var(--border-focus);
+}
+
+/* ── what the workflow is, above its runs ─────────────────────────────── */
+
+.wf-outline {
+  margin: var(--space-4) 0 var(--space-3);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius);
+  background: var(--surface-soft);
+}
+
+.wf-outline-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+  padding: var(--space-2) var(--space-3);
+}
+
+.wf-outline-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: 0;
+  border: 0;
+  background: transparent;
+  font: inherit;
+  font-weight: var(--font-weight-semibold);
+  color: var(--text-primary);
+  cursor: pointer;
+}
+.wf-outline-toggle:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring);
+  border-radius: var(--radius-sm);
+}
+.wf-outline-caret { color: var(--text-secondary); font-size: var(--font-size-xs); }
+
+.wf-outline-ver {
+  padding: 2px var(--space-2);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-pill);
+  font-family: var(--font-family-mono);
+  font-size: var(--font-size-xs);
+  color: var(--text-secondary);
+}
+.wf-outline-ver--live {
+  border-color: var(--status-success-border);
+  color: var(--text-primary);
+}
+
+.wf-outline-loading,
+.wo-empty {
+  padding: var(--space-3);
+  color: var(--text-secondary);
+  font-size: var(--font-size-sm);
+}
+
+/*
+  Canvas left, facts right. The canvas takes the space and the facts take what
+  is left rather than the other way round: the drawing is the thing being read.
+*/
+.wf-outline-body {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 260px;
+  gap: var(--space-3);
+  padding: 0 var(--space-3) var(--space-3);
+}
+
+/*
+  FIXED HEIGHT, DELIBERATELY. This panel sits above the run list, so a frame
+  that grew with the graph would push the page's actual content off screen. A
+  big workflow is panned and zoomed inside this window instead.
+*/
+.wf-outline-canvas {
+  position: relative;
+  height: 260px;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+  overflow: hidden;
+}
+
+.wf-outline-meta {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  margin: 0;
+  font-size: var(--font-size-sm);
+}
+.wf-outline-meta div { display: flex; flex-direction: column; gap: 2px; }
+.wf-outline-meta dt {
+  font-size: var(--font-size-xs);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--text-secondary);
+}
+.wf-outline-meta dd { margin: 0; color: var(--text-primary); }
+
+.wo-meta-event {
+  display: block;
+  font-family: var(--font-family-mono);
+  font-size: var(--font-size-xs);
+  word-break: break-all;
+}
+.wo-note {
+  display: block;
+  font-size: var(--font-size-xs);
+  color: var(--text-secondary);
+  font-style: italic;
+}
+.wo-warn { color: var(--status-warning-fg); }
+.wf-outline-open { font-weight: var(--font-weight-semibold); }
+
+/* ── the nodes inside that canvas ─────────────────────────────────────── */
+
+.wo-n {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 168px;
+  height: 46px;
+  padding: 0 var(--space-2);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+  font-size: var(--font-size-xs);
+}
+.wo-n-label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-weight: var(--font-weight-semibold);
+  color: var(--text-primary);
+}
+.wo-n--trigger {
+  border-style: dashed;
+  background: var(--surface-soft);
+}
+.wo-n--trigger .wo-n-label {
+  font-family: var(--font-family-mono);
+  font-weight: var(--font-weight-regular);
+  color: var(--text-secondary);
+}
+.wo-n--end {
+  width: 110px;
+  height: 32px;
+  justify-content: center;
+  border-radius: var(--radius-pill);
+  background: var(--surface-sunken);
+  color: var(--text-secondary);
+}
+/* A node the registry has never heard of cannot run. */
+.wo-n--unknown {
+  border-color: var(--status-warning-border);
+  border-style: dashed;
+}
+.wo-h { opacity: 0; }
+
+.wo-edge .react-flow__edge-path { stroke: var(--border-strong); }
+.wo-edge--arm .react-flow__edge-path { stroke-dasharray: 4 3; }
+.wo-edge .react-flow__edge-text {
+  font-size: 10px;
+  fill: var(--text-secondary);
+}
+
+/* The zoom controls, sized for a 260px window rather than a full page. */
+.wf-outline-canvas .react-flow__controls {
+  box-shadow: none;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-sm);
+}
+.wf-outline-canvas .react-flow__controls-button {
+  width: 20px;
+  height: 20px;
+  background: var(--surface);
+  border-bottom: 1px solid var(--border-subtle);
+}
+
+/* Facts under the drawing once there is no room beside it. */
+@media (max-width: 900px) {
+  .wf-outline-body { grid-template-columns: minmax(0, 1fr); }
+}
+
+/* ── the three-dot row menu ───────────────────────────────────────────── */
+
+.wf-actions-cell {
+  width: 1%;
+  white-space: nowrap;
+  text-align: right;
+}
+
+/*
+  `position: relative` on the wrapper, not the cell: a <td> is not a reliable
+  containing block for an absolutely positioned child across browsers, and the
+  menu ends up pinned to the table instead of the row.
+*/
+.row-menu { position: relative; display: inline-block; }
+
+.row-menu-btn {
+  display: inline-flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 3px;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  cursor: pointer;
+}
+.row-menu-btn:hover { background: var(--surface-sunken); border-color: var(--border-subtle); }
+.row-menu-btn:focus-visible { outline: none; box-shadow: var(--focus-ring); }
+.row-menu-btn[aria-expanded="true"] {
+  background: var(--surface-sunken);
+  border-color: var(--border-strong);
+}
+
+.row-menu-dot {
+  width: 3px;
+  height: 3px;
+  border-radius: 50%;
+  background: var(--text-secondary);
+}
+
+.row-menu-list {
+  position: absolute;
+  top: calc(100% + 4px);
+  right: 0;
+  z-index: 40;
+  min-width: 168px;
+  padding: var(--space-1);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius);
+  background: var(--surface-raised);
+  box-shadow: var(--shadow-lg);
+  text-align: left;
+}
+
+.row-menu-item {
+  display: block;
+  width: 100%;
+  padding: var(--space-2) var(--space-3);
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  font: inherit;
+  color: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.row-menu-item:hover:not(:disabled) { background: var(--surface-hover); }
+.row-menu-item:focus-visible { outline: none; box-shadow: var(--focus-ring); }
+.row-menu-item:disabled { opacity: 0.55; cursor: not-allowed; }
+
+/* The reason a disabled item is disabled, under its label. */
+.row-menu-why {
+  display: block;
+  margin-top: 2px;
+  font-size: var(--font-size-xs);
+  color: var(--text-secondary);
+  white-space: normal;
+}
 
 /* Visually hidden, still read by screen readers. */
 .sr-only {
@@ -4502,4 +4790,60 @@ code {
   background: var(--status-neutral-bg);
   border-color: var(--status-neutral-border);
   color: var(--status-neutral-fg);
+}
+
+/* ── The lifecycle cell on the workflows registry ────────────────────────
+ *
+ * One button, the reason under it. The reason is the part that makes the row
+ * readable without pressing anything: "v3 is compiled and not yet requested"
+ * says more than a button labelled "Request" on its own.
+ */
+.wf-lifecycle {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: var(--space-1);
+  margin-top: var(--space-2);
+}
+
+.wf-lifecycle-why {
+  font-size: var(--font-size-xs);
+  color: var(--text-muted);
+  line-height: 1.35;
+}
+
+/* Approval is the only step here that changes what runs in production, and
+ * the only one a second person should be pressing. It looks different for
+ * that reason and no other. */
+.wf-btn--primary {
+  border-color: var(--action-primary-border, var(--border-focus));
+  background: var(--action-primary-bg, var(--accent));
+  color: var(--action-primary-fg, #fff);
+  font-weight: 600;
+}
+
+/* Taking something off the air is reversible and unexciting. It should not
+ * compete with the step somebody actually came here to do. */
+.wf-btn--quiet {
+  background: transparent;
+  border-color: transparent;
+  color: var(--text-muted);
+  padding-left: 0;
+  padding-right: var(--space-2);
+}
+
+.wf-btn--quiet:hover:not(:disabled) {
+  color: var(--text-default);
+  text-decoration: underline;
+}
+
+/* What the server said, success or refusal. Its own words: the refusals
+ * explain themselves and rewording them loses the reason. */
+.wf-said {
+  margin: 0 0 var(--space-3);
+  padding: var(--space-2) var(--space-3);
+  border-left: 3px solid var(--accent, var(--border-focus));
+  background: var(--surface-subtle, transparent);
+  color: var(--text-default);
+  font-size: var(--font-size-sm);
 }

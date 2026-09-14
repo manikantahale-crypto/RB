@@ -1,0 +1,161 @@
+/*
+ * Screen 10 — the release console.
+ *
+ * Two columns for the facts, one full-width list for the evidence. The checks
+ * go last and get the whole width because they are the longest thing to read
+ * and the thing somebody scrolls back to.
+ */
+
+.rc-page {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+  padding: var(--space-4);
+}
+
+.rc-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--space-4);
+  flex-wrap: wrap;
+}
+
+.rc-title {
+  margin: 0;
+  font-family: var(--font-family-mono);
+  font-size: var(--font-size-lg);
+  color: var(--text-primary);
+}
+
+.rc-actions {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+/*
+ * The refusal, in prose, above everything.
+ *
+ * A disabled button with a tooltip is not an explanation: it cannot be read
+ * without a mouse and it cannot be read at all on a touch screen.
+ */
+.rc-blocked {
+  padding: var(--space-3);
+  border: 1px solid var(--status-danger-border);
+  border-left-width: 3px;
+  border-radius: var(--radius-sm);
+  background: var(--status-danger-bg);
+  color: var(--text-primary);
+  font-size: var(--font-size-sm);
+}
+
+.rc-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
+  gap: var(--space-4);
+}
+
+.rc-card {
+  padding: var(--space-3);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius);
+  background: var(--surface);
+}
+.rc-card h2 {
+  margin: 0 0 var(--space-3);
+  font-size: var(--font-size-sm);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--text-secondary);
+}
+.rc-card h3 {
+  margin: 0 0 var(--space-2);
+  font-size: var(--font-size-xs);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--text-secondary);
+}
+
+.rc-facts { display: flex; flex-direction: column; gap: var(--space-3); margin: 0; }
+.rc-facts div { display: flex; flex-direction: column; gap: 2px; }
+.rc-facts dt {
+  font-size: var(--font-size-xs);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--text-secondary);
+}
+.rc-facts dd {
+  margin: 0;
+  font-size: var(--font-size-sm);
+  color: var(--text-primary);
+  word-break: break-word;
+}
+
+.rc-event { margin: 0 0 var(--space-3); font-size: var(--font-size-sm); }
+
+/* Before and after, side by side, because the comparison IS the answer. */
+.rc-routes {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: var(--space-3);
+}
+.rc-routes ul { margin: 0; padding-left: var(--space-4); }
+.rc-routes li {
+  font-family: var(--font-family-mono);
+  font-size: var(--font-size-xs);
+  color: var(--text-primary);
+  word-break: break-all;
+}
+.rc-gaining { color: var(--status-success-fg); }
+.rc-gate { font-family: inherit; color: var(--text-secondary); }
+
+.rc-losing {
+  margin: var(--space-3) 0 0;
+  font-size: var(--font-size-sm);
+  color: var(--status-warning-fg);
+}
+.rc-warn { color: var(--status-warning-fg); }
+
+/* ── the evidence ───────────────────────────────────────────────────────── */
+
+.rc-checks { list-style: none; margin: 0; padding: 0; }
+
+.rc-check {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-3);
+  padding: var(--space-2) 0;
+  border-bottom: 1px solid var(--border-subtle);
+}
+.rc-check:last-child { border-bottom: none; }
+
+.rc-check-mark {
+  flex: 0 0 auto;
+  width: 1.2em;
+  text-align: center;
+  font-weight: var(--font-weight-semibold);
+}
+.rc-check--ok .rc-check-mark { color: var(--status-success-fg); }
+.rc-check--bad .rc-check-mark { color: var(--status-danger-fg); }
+/*
+ * Neither green nor red.
+ *
+ * "We looked and it was fine" and "we could not look" are different claims,
+ * and a console that draws them the same way is claiming the second is the
+ * first. Two of the nine cannot be verified for a workflow today.
+ */
+.rc-check--unknown .rc-check-mark { color: var(--text-secondary); }
+.rc-check--unknown .rc-check-msg { color: var(--text-secondary); font-style: italic; }
+
+.rc-check-body { display: flex; flex-direction: column; gap: 1px; }
+.rc-check-id {
+  font-family: var(--font-family-mono);
+  font-size: var(--font-size-xs);
+  color: var(--text-secondary);
+}
+.rc-check-msg { font-size: var(--font-size-sm); color: var(--text-primary); }
+
+@media (max-width: 720px) {
+  .rc-routes { grid-template-columns: 1fr; }
+}
