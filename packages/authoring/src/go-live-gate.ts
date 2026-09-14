@@ -322,14 +322,31 @@ function checkNoRuntimeKeyCollision(
   expectedGraphKey: string,
   oneActiveIndexPerGraphKey: boolean | undefined,
 ): GoLiveGateCheck {
-  if (graphKey.includes(".workflow")) {
-    return {
-      id: "no_runtime_key_collision",
-      ok: false,
-      message:
-        "Can't go live: this would collide with a runtime workflow key. Authored workflows must use their own key.",
-    };
-  }
+  /**
+   * `.workflow` USED TO BE REFUSED OUTRIGHT, AND IT BLOCKED THE WHOLE PLATFORM.
+   *
+   * The rule came from the agent era, when an authored graph was
+   * `<agent>.authored` and anything ending `.workflow` was seeded by a
+   * migration. Refusing the suffix meant "do not overwrite a runtime
+   * workflow", and at the time that was true.
+   *
+   * The unit of authorship is now a workflow, and the proposer NAMES them that
+   * way — `provisionalKey` in `routes/propose.ts` is
+   * `${module}.${word}.workflow`. So the gate refused the convention the
+   * platform itself generates, and no workflow authored through screen 2 could
+   * ever go live. It also blocked editing any of the seeded ones, which are
+   * ordinary editable workflows now.
+   *
+   * WHAT ACTUALLY PREVENTS A COLLISION, AND IT IS NOT A NAME.
+   * `graphs_key_per_org_idx` is unique on (org, graph_key). A second workflow
+   * cannot take an existing key — the insert fails, long before go-live. The
+   * suffix test was guarding something the database already makes impossible,
+   * while forbidding something legitimate.
+   *
+   * The two checks below are the real ones: the definition must agree about
+   * its own key, and the one-live rule must be scoped per key or activation
+   * could retire somebody else's workflow.
+   */
   if (graphKey !== expectedGraphKey) {
     return {
       id: "no_runtime_key_collision",
@@ -349,7 +366,7 @@ function checkNoRuntimeKeyCollision(
     id: "no_runtime_key_collision",
     ok: true,
     message:
-      "Authored key only — will not retire or overwrite runtime workflow keys.",
+      "The definition agrees about its own key, and activation is scoped to it.",
   };
 }
 
@@ -691,13 +708,47 @@ export function evaluateGoLiveGate(input: GoLiveGateInput): GoLiveGateResult {
     return failResult(checks);
   }
 
-  // 3 — CHECKSUM
+  /**
+   * 3 — CHECKSUM, and only where it can mean anything.
+   *
+   * A CHECK THAT ANSWERS THE SAME FOR EVERY WORKFLOW IS NOT A CHECK.
+   *
+   * This reported "Not checked: a definition stored as jsonb cannot be
+   * re-serialised byte for byte" on every workflow, always — so it took up a
+   * line, said nothing, and taught people to skim a list whose whole value is
+   * that each line is worth reading.
+   *
+   * It is an agent-era test and it belongs there. An agent's artifact was a
+   * generated `agent.ts` FILE: a checksum caught somebody editing it on disk
+   * between compile and go-live, which was a real path. A workflow's
+   * definition is a jsonb column with no file, no editor and no path that
+   * changes it outside the platform — and anybody who could change it could
+   * change the checksum beside it in the same statement.
+   *
+   * Measured before removing: of 95 stored version checksums, ZERO can be
+   * reproduced from the stored definition by any serialisation — compact,
+   * pretty, or sorted-key canonical. They were computed from artifact text
+   * that no longer exists. So the check could not have passed even if jsonb
+   * ordering were solved.
+   *
+   * Checksums are still written and still used — `versionForDraft` compares a
+   * draft's against a version's to decide whether the working copy has moved,
+   * and both come from `checksumOf`, so they agree with each other. That use
+   * works; verifying one against a stored artifact does not.
+   */
+  /**
+   * Computed either way — the RESULT still carries the checksum, which is what
+   * the caller stores. Only the CHECK is agent-only: the value is a fact, the
+   * verification is the thing that could not mean anything for a workflow.
+   */
   const checksum = checkChecksum(input.artifactSource, input.storedChecksum, kind);
-  checks.push({
-    id: checksum.id,
-    ok: checksum.ok,
-    message: checksum.message,
-  });
+  if (kind === "agent") {
+    checks.push({
+      id: checksum.id,
+      ok: checksum.ok,
+      message: checksum.message,
+    });
+  }
 
   const lockedKey = input.expectedGraphKey;
   const graphKey = def.graphKey || lockedKey;
@@ -711,8 +762,23 @@ export function evaluateGoLiveGate(input: GoLiveGateInput): GoLiveGateResult {
     ),
   );
 
-  // 5 — GAP ACKNOWLEDGED
-  checks.push(checkGapAcknowledged(input.gapAck, kind));
+  /**
+   * 5 — GAP ACKNOWLEDGED, and only where a gap can be acknowledged.
+   *
+   * Same fault as the checksum above, same reason. A "gap" is something the
+   * model could not build, acknowledged by a person when they accepted a
+   * proposal — an agent-era record, kept on the agent policy. A workflow keeps
+   * no such record, so this answered "Not checked" for every workflow, every
+   * time, forever.
+   *
+   * Two constant lines in a nine-line list is nearly a quarter of it saying
+   * nothing, which is how a gate stops being read. If workflows ever record an
+   * acknowledgement — accepting a proposal is where it would be written — this
+   * comes back with something to say.
+   */
+  if (kind === "agent") {
+    checks.push(checkGapAcknowledged(input.gapAck, kind));
+  }
 
   // 6 — ONE-ACTIVE (authored key; transactional supersede verified post-activate)
   checks.push(checkOneActiveSafe(lockedKey, kind));
