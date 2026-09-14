@@ -44,18 +44,50 @@ const Output = z.object({
 });
 
 const Config = z.object({
-  matchThreshold: z.number().min(0).max(1).optional().meta({ adminExposed: true }),
+  /**
+   * 0-100, not 0-1, and the range was wrong here rather than everywhere else.
+   *
+   * SYNTRA scores on a percentage: `skillMatchScore` returns
+   * `round(overlap / required * 100)`, and `score_threshold` on a requirement
+   * defaults to 60. The authoring validator has always checked 0-100
+   * (`validate-llm-graph.ts`), and every value ever stored in a graph is on
+   * that scale — 125 of them, 60 / 68 / 70 / 80 / 90 / 94, not one below 1.
+   *
+   * So `.max(1)` rejected the only values anybody uses, which is why not one
+   * of those versions is live. Declaring 0-1 did not make the system work in
+   * fractions; it made the contract unable to describe the system.
+   *
+   * Default 0, because that is what SYNTRA does today: `MATCH_SKILL_FLOOR`
+   * falls back to "0", so nothing is filtered out until somebody raises it.
+   */
+  matchThreshold: z
+    .number()
+    .min(0)
+    .max(100)
+    .default(0)
+    .meta({ adminExposed: true, label: "Match threshold (0-100)" }),
+  /**
+   * How many candidates survive the tier-2 gate. SYNTRA's own default is 15
+   * (`MATCH_TOP_N`), and until now nothing exposed it — so the only way to
+   * change how many matches a run produces was a deployment variable.
+   */
+  topN: z
+    .int()
+    .positive()
+    .max(500)
+    .default(15)
+    .meta({ adminExposed: true, label: "How many candidates to shortlist" }),
   rerank: z.boolean().optional().meta({ adminExposed: true }),
   hardFilters: z.array(z.string()).optional(),
-  prompt: z.string().optional(),
+  /** `prompt` removed — see the note on syntra.jd.process. */
 });
 
 function optionsFor(config: z.infer<typeof Config>): Record<string, unknown> {
   const out: Record<string, unknown> = {};
   if (typeof config.matchThreshold === "number") out.matchThreshold = config.matchThreshold;
+  if (typeof config.topN === "number") out.topN = config.topN;
   if (typeof config.rerank === "boolean") out.rerank = config.rerank;
   if (config.hardFilters?.length) out.hardFilters = config.hardFilters;
-  if (config.prompt?.trim()) out.prompt = config.prompt.trim();
   return out;
 }
 
@@ -88,7 +120,12 @@ export const resumeProcess = defineNode({
    * One profile per resume document. A retry after a timeout re-parses the
    * same document rather than creating a second profile.
    */
-  idempotency: { strategy: "natural_key", keyPaths: ["resumeId"] },
+  idempotency: {
+    strategy: "natural_key",
+    // Four names for one resume, exactly as the input's refine lists them.
+    // syntra.resume.received carries document_id and none of the others.
+    keyPaths: [["resumeId", "resume_id", "document_id", "documentId"]],
+  },
 
   execution: {
     /** Parse plus embedding; slower than a JD. */
@@ -155,7 +192,7 @@ export const resumeProcess = defineNode({
         document_id: "b3d4c2a1-0000-4000-8000-000000000101",
         candidate_id: "c7e8f9a0-0000-4000-8000-000000000202",
       },
-      config: {},
+      config: { matchThreshold: 0, topN: 15 },
       expectedOutput: {
         resumeId: "b3d4c2a1-0000-4000-8000-000000000101",
         candidateId: "c7e8f9a0-0000-4000-8000-000000000202",
@@ -166,7 +203,7 @@ export const resumeProcess = defineNode({
     {
       name: "processes a resume with no candidate yet",
       input: { resumeId: "b3d4c2a1-0000-4000-8000-000000000101" },
-      config: {},
+      config: { matchThreshold: 0, topN: 15 },
       expectedOutput: {
         resumeId: "b3d4c2a1-0000-4000-8000-000000000101",
         candidateId: null,

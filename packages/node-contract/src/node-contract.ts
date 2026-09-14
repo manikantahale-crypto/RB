@@ -102,8 +102,34 @@ export const IdempotencySchema = z.discriminatedUnion("strategy", [
   z.object({
     /** "A row for this key already exists, so this is a no-op." */
     strategy: z.literal("natural_key"),
-    /** Dot paths into `input` that together form the key. */
-    keyPaths: z.array(z.string().min(1)).min(1),
+    /**
+     * Dot paths into `input` that together form the key.
+     *
+     * An entry may be an ARRAY OF ALTERNATIVES, and it has to be, because the
+     * same identifier arrives under different names from different producers.
+     * Eight of the nine SYNTRA inputs say so themselves:
+     *
+     *     .refine(v => Boolean(v.jobId ?? v.requirement_id))
+     *
+     * Declaring `["jobId"]` against that schema produced a key that did not
+     * resolve for any real payload — `syntra.jd.parsed` carries
+     * `requirement_id` and no `jobId` — so five of eight nodes derived no key
+     * at all and were never deduplicated. The declaration has to admit what
+     * the schema already admits.
+     *
+     * Alternatives are NAMES FOR ONE VALUE, not a list of things any of which
+     * will do. `bench.alert` accepts `candidate_profile_id` too and it is
+     * deliberately not an alternative for `candidateId`: a profile version is
+     * not a candidate, and keying on it would merge work that is genuinely
+     * different. The node's own `.refine` is the authority on which names mean
+     * the same thing.
+     *
+     * Because the key is built from the VALUE, an id arriving as `jobId` in
+     * one event and `requirement_id` in another still produces the same key.
+     */
+    keyPaths: z
+      .array(z.union([z.string().min(1), z.array(z.string().min(1)).min(2)]))
+      .min(1),
   }),
   z.object({
     /** The caller supplies a key and we dedupe on it. */

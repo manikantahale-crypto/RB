@@ -20,7 +20,9 @@
  */
 import { v4 as uuidv4 } from 'uuid';
 import type { AnyNodeContract } from '@tekisho/node-contract';
-import type { NodeImpl } from './types.js';
+import type { NodeCtx, NodeImpl } from './types.js';
+import { claimExecution, isDeduplicable } from './idempotency.js';
+import { pgDedupeStore } from './idempotency-store.js';
 
 /** Turn a contract into something the graph compiler can run. */
 export function toNodeImpl(contract: AnyNodeContract): NodeImpl {
@@ -48,11 +50,59 @@ export function toNodeImpl(contract: AnyNodeContract): NodeImpl {
       });
     };
 
-    const output = await contract.run(
-      { orgId: ctx.orgId, logger: ctx.logger, emit },
-      input,
-      config,
-    );
+    /**
+     * HAS THIS WORK ALREADY BEEN DONE IN THIS FLOW?
+     *
+     * Every contract declares an idempotency key and nothing read it. Meanwhile
+     * a step that publishes can start another workflow that runs the same step,
+     * so one requirement got matched twice — once here, once there, with
+     * nothing in any log saying so. See `idempotency.ts` for the whole argument.
+     *
+     * Placed AFTER input parsing because the key is derived from the parsed
+     * input, and BEFORE `run` because the point is not to make the call.
+     */
+    const dedupe = await claimOrSkip(contract, input, ctx, trigger);
+    if (!dedupe.run) {
+      /**
+       * Skipped, and said so in the run's own record rather than silently.
+       *
+       * No events are emitted, which is the point — emitting here would start
+       * whatever the real execution already started, and turn a suppressed
+       * duplicate into a duplicated fan-out.
+       *
+       * `steps` is left unset. Nothing reads an earlier step's output today,
+       * and writing an empty one would let a future reader mistake "skipped"
+       * for "ran and produced nothing".
+       */
+      return {
+        result:
+          `${contract.key}: skipped — ${
+            dedupe.reason === 'already_done'
+              ? 'already done in this flow'
+              : 'already running in this flow'
+          }`,
+      };
+    }
+
+    let output: unknown;
+    try {
+      output = await contract.run(
+        { orgId: ctx.orgId, logger: ctx.logger, emit },
+        input,
+        config,
+      );
+    } catch (err) {
+      /**
+       * The work did not happen, so the claim must not outlive the attempt.
+       * Left in place, the key would be dead for the rest of the flow and the
+       * step would never run — the silent omission, which is the one outcome
+       * worse than doing the work twice.
+       */
+      await releaseQuietly(dedupe, contract, ctx, trigger);
+      throw err;
+    }
+
+    await completeQuietly(dedupe, contract, ctx, trigger);
 
     const checked = parseOrThrow(contract.key, 'output', contract.output, output);
     /**
@@ -70,6 +120,114 @@ export function toNodeImpl(contract: AnyNodeContract): NodeImpl {
       steps: { [ctx.nodeId]: checked },
     };
   };
+}
+
+/* ─────────────────────── the duplicate-work guard ────────────────────── */
+
+/**
+ * What a claim attempt left us holding, so success and failure can finish it.
+ *
+ * `key` is null whenever nothing was claimed — a node we do not deduplicate, a
+ * key that could not be derived, no correlation, or a store that was not
+ * reachable. Then the two finishers have nothing to do.
+ */
+type DedupeOutcome =
+  | { run: true; key: string | null }
+  | { run: false; key: string; reason: 'already_done' | 'in_flight' };
+
+/**
+ * EVERY FAILURE HERE MEANS "RUN THE NODE".
+ *
+ * The table may not exist yet, the role may lack a grant, the connection may
+ * be busy. None of those are reasons to skip work, and all of them would be if
+ * this threw. Doing the work twice is visible and recoverable; not doing it is
+ * neither — so the guard turns itself off rather than becoming a new way for a
+ * run to fail.
+ */
+async function claimOrSkip(
+  contract: AnyNodeContract,
+  input: Record<string, unknown>,
+  ctx: NodeCtx,
+  trigger: { correlation_id?: string | null },
+): Promise<DedupeOutcome> {
+  if (!isDeduplicable(contract)) return { run: true, key: null };
+  try {
+    return await ctx.db.withOrg(async (client) =>
+      claimExecution({
+        contract,
+        input,
+        orgId: ctx.orgId,
+        nodeId: ctx.nodeId,
+        correlationId: trigger.correlation_id ?? null,
+        store: pgDedupeStore(client),
+      }),
+    );
+  } catch (err) {
+    /**
+     * Optional-chained on purpose. This handler is the fail-open path, and a
+     * handler that can itself throw — a ctx without a logger, in a test or a
+     * stub — would turn "run the node anyway" back into "the run dies", which
+     * is the exact outcome the catch exists to prevent.
+     */
+    ctx.logger?.error?.(
+      `${contract.key}: idempotency check unavailable, running anyway`,
+      err,
+    );
+    return { run: true, key: null };
+  }
+}
+
+async function completeQuietly(
+  outcome: DedupeOutcome,
+  contract: AnyNodeContract,
+  ctx: NodeCtx,
+  trigger: { correlation_id?: string | null },
+): Promise<void> {
+  if (!outcome.run || !outcome.key || !trigger.correlation_id) return;
+  try {
+    await ctx.db.withOrg((client) =>
+      pgDedupeStore(client).complete({
+        orgId: ctx.orgId,
+        nodeKey: contract.key,
+        idempotencyKey: outcome.key!,
+        correlationId: trigger.correlation_id!,
+      }),
+    );
+  } catch (err) {
+    /**
+     * The work HAPPENED and we failed to record that it did. The claim is left
+     * `running`, so it is taken over after the stale window and the step could
+     * run a second time — the fault this file exists to prevent, arriving by
+     * the back door. Loud, because it is the one failure here that is not safe.
+     */
+    ctx.logger?.error?.(
+      `${contract.key}: ran but could not mark its idempotency claim done — ` +
+        `this work may be repeated in this flow`,
+      err,
+    );
+  }
+}
+
+async function releaseQuietly(
+  outcome: DedupeOutcome,
+  contract: AnyNodeContract,
+  ctx: NodeCtx,
+  trigger: { correlation_id?: string | null },
+): Promise<void> {
+  if (!outcome.run || !outcome.key || !trigger.correlation_id) return;
+  try {
+    await ctx.db.withOrg((client) =>
+      pgDedupeStore(client).release({
+        orgId: ctx.orgId,
+        nodeKey: contract.key,
+        idempotencyKey: outcome.key!,
+        correlationId: trigger.correlation_id!,
+      }),
+    );
+  } catch {
+    // The node's own error is what matters and is about to be rethrown. A
+    // stranded claim is recovered by the stale window.
+  }
 }
 
 /** Parse against a declared schema, saying which node and which side failed. */

@@ -41,6 +41,22 @@ export {
 } from "./node-contract.js";
 
 /**
+ * Which steps the platform deduplicates, and the key it uses.
+ *
+ * Here rather than in the engine because it reads declared fields only, and
+ * because the authoring API needs the same answer to tell an author whether a
+ * duplicate in their workflow will be absorbed or will really run twice — and
+ * the authoring API cannot import the engine.
+ */
+export {
+  DEDUPLICATED_SIDE_EFFECTS,
+  isDeduplicable,
+  idempotencyKeyOf,
+  keyPathsOf,
+  keyDerivableFrom,
+} from "./idempotency-policy.js";
+
+/**
  * What each application is for, and how work moves between them.
  *
  * Separate from the node contract because it answers a different question:

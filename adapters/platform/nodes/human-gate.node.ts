@@ -14,10 +14,31 @@ import { defineNode, type NodeRunCtx } from "@tekisho/node-contract";
 
 /* ─────────────────────────────── shapes ──────────────────────────────── */
 
-/** Runtime dataflow: what the graph hands this node on each run. */
+/**
+ * Runtime dataflow: what the graph hands this node on each run.
+ *
+ * `reason` USED TO BE HERE TOO, AND IT DID NOT BELONG.
+ *
+ * It was declared in both this schema and `Config` below — the same value,
+ * described twice, with different meanings. The runtime keeps input and config
+ * strictly apart (`from-contract.ts` parses each against its own schema), so a
+ * `reason` supplied as config could never satisfy a `reason` required as
+ * input.
+ *
+ * Nothing broke only because the live gate is still the engine's built-in
+ * implementation, which does not enforce this declaration. `duplicate.review`
+ * has passed through it eighteen times with `config.reason = "duplicate_review"`
+ * and no `reason` on the trigger at all. The moment this node is wired to its
+ * contract, that workflow would have started failing on a field the graph was
+ * already supplying — correctly — somewhere else.
+ *
+ * It is a design-time value: `Config.reason` has a default and is adminExposed,
+ * so a reason always exists and a customer can reword it without a PR. That is
+ * the right home, and one home is the point.
+ *
+ * Found by `checkInputsAvailable` on its first run against live workflows.
+ */
 const Input = z.object({
-  /** Why a human is being asked. Shown on the approval card. */
-  reason: z.string().min(1),
   /** The thing being approved, so the reviewer has something to look at. */
   subjectId: z.string().uuid().optional(),
 });
@@ -127,10 +148,7 @@ export const humanGate = defineNode({
   fixtures: [
     {
       name: "approved by a reviewer",
-      input: {
-        reason: "duplicate requires manual review",
-        subjectId: "3f2504e0-4f89-11d3-9a0c-0305e82c3301",
-      },
+      input: { subjectId: "3f2504e0-4f89-11d3-9a0c-0305e82c3301" },
       config: { reason: "duplicate requires manual review", timeoutHours: 72 },
       expectedOutput: {
         approved: true,
@@ -140,10 +158,7 @@ export const humanGate = defineNode({
     },
     {
       name: "rejected by a reviewer",
-      input: {
-        reason: "duplicate requires manual review",
-        subjectId: "3f2504e0-4f89-11d3-9a0c-0305e82c3301",
-      },
+      input: { subjectId: "3f2504e0-4f89-11d3-9a0c-0305e82c3301" },
       config: { reason: "duplicate requires manual review", timeoutHours: 72 },
       expectedOutput: {
         approved: false,
@@ -162,7 +177,9 @@ export const humanGate = defineNode({
    */
   run: async (ctx: NodeRunCtx, input, config) => {
     ctx.logger.info("human.gate: parking run", {
-      reason: input.reason || config.reason,
+      // One home for the reason, and it is config — see the note on `Input`.
+      reason: config.reason,
+      subjectId: input.subjectId,
     });
     throw new Error("human.gate: not wired to the runtime yet");
   },

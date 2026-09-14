@@ -34,19 +34,35 @@ const Output = z.object({
 
 const Config = z.object({
   /** The score at or above which a match is worth a recruiter's attention. */
+  /**
+   * 0-100, not 0-1. SYNTRA's `skillMatchScore` returns a percentage and a
+   * requirement's `score_threshold` defaults to 60; the authoring validator
+   * has always checked 0-100. Every one of the 125 thresholds ever stored in
+   * a graph is on that scale, so `.max(1)` rejected the only values anybody
+   * uses — which is why none of those versions is live.
+   *
+   * Default 0 matches SYNTRA today: `MATCH_SKILL_FLOOR` falls back to "0", so
+   * nothing is cut until somebody raises it.
+   */
   matchThreshold: z
     .number()
     .min(0)
-    .max(1)
-    .optional()
-    .meta({ adminExposed: true, label: "Match threshold" }),
+    .max(100)
+    .default(0)
+    .meta({ adminExposed: true, label: "Match threshold (0-100)" }),
+  /**
+   * `topN` is not here, and should not be: this step scores ONE job against
+   * ONE resume. There is no pool to cut and nothing to shortlist — that is
+   * `syntra.continuous.match`, which runs the funnel.
+   */
+  /** Off unless asked: re-ranking costs an LLM call per candidate. */
   rerank: z
     .boolean()
-    .optional()
+    .default(false)
     .meta({ adminExposed: true, label: "Re-rank results" }),
   /** Changes what the workflow means, so it is a PR, not an admin form. */
   hardFilters: z.array(z.string()).optional(),
-  prompt: z.string().optional(),
+  /** `prompt` removed — see the note on syntra.jd.process. */
 });
 
 function optionsFor(config: z.infer<typeof Config>): Record<string, unknown> {
@@ -54,7 +70,6 @@ function optionsFor(config: z.infer<typeof Config>): Record<string, unknown> {
   if (typeof config.matchThreshold === "number") out.matchThreshold = config.matchThreshold;
   if (typeof config.rerank === "boolean") out.rerank = config.rerank;
   if (config.hardFilters?.length) out.hardFilters = config.hardFilters;
-  if (config.prompt?.trim()) out.prompt = config.prompt.trim();
   return out;
 }
 
@@ -89,7 +104,16 @@ export const matchProcess = defineNode({
    * A match is identified by the pair, not by the request. Re-running scores
    * the same pair again and overwrites — it does not append a second row.
    */
-  idempotency: { strategy: "natural_key", keyPaths: ["jobId", "resumeId"] },
+  idempotency: {
+    strategy: "natural_key",
+    // Two parts. The job has two names — the refine says so — while resumeId
+    // is required and has only one, so it stays a plain path.
+    //
+    // This one still will not derive in practice: syntra.match.requested has
+    // no documented payload at all, so nothing can be read out of it. The
+    // declaration is right; the event catalogue is the gap.
+    keyPaths: [["jobId", "requirement_id"], "resumeId"],
+  },
 
   execution: {
     /** LLM evaluation happens inside SYNTRA and is the slow part. */
@@ -189,7 +213,7 @@ export const matchProcess = defineNode({
         resumeId: "b3d4c2a1-0000-4000-8000-000000000101",
         candidateId: "c7e8f9a0-0000-4000-8000-000000000202",
       },
-      config: { matchThreshold: 0.75 },
+      config: { matchThreshold: 75, rerank: false },
       expectedOutput: {
         jobId: "8f14e45f-ceea-467a-9f4b-4a2c1e9d0a11",
         resumeId: "b3d4c2a1-0000-4000-8000-000000000101",
@@ -206,7 +230,7 @@ export const matchProcess = defineNode({
         resumeId: "b3d4c2a1-0000-4000-8000-000000000101",
         skillMatchScore: 0.61,
       },
-      config: {},
+      config: { matchThreshold: 0, rerank: false },
       expectedOutput: {
         jobId: "8f14e45f-ceea-467a-9f4b-4a2c1e9d0a11",
         resumeId: "b3d4c2a1-0000-4000-8000-000000000101",

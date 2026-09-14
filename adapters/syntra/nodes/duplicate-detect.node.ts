@@ -87,7 +87,12 @@ export const duplicateDetect = defineNode({
    * candidate: a retry re-checks the same person rather than queueing a second
    * review for a human to work through.
    */
-  idempotency: { strategy: "natural_key", keyPaths: ["candidateId"] },
+  idempotency: {
+    strategy: "natural_key",
+    // As the refine says: candidateId or candidate_id. Not
+    // candidate_profile_id, which names a version rather than a person.
+    keyPaths: [["candidateId", "candidate_id"]],
+  },
 
   execution: {
     timeoutMs: 60_000,

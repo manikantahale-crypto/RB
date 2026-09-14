@@ -28,7 +28,39 @@ const Output = z.object({
 });
 
 const Config = z.object({
-  matchThreshold: z.number().min(0).max(1).optional().meta({ adminExposed: true }),
+  /**
+   * 0-100, not 0-1, and the range was wrong here rather than everywhere else.
+   *
+   * SYNTRA scores on a percentage: `skillMatchScore` returns
+   * `round(overlap / required * 100)`, and `score_threshold` on a requirement
+   * defaults to 60. The authoring validator has always checked 0-100
+   * (`validate-llm-graph.ts`), and every value ever stored in a graph is on
+   * that scale — 125 of them, 60 / 68 / 70 / 80 / 90 / 94, not one below 1.
+   *
+   * So `.max(1)` rejected the only values anybody uses, which is why not one
+   * of those versions is live. Declaring 0-1 did not make the system work in
+   * fractions; it made the contract unable to describe the system.
+   *
+   * Default 0, because that is what SYNTRA does today: `MATCH_SKILL_FLOOR`
+   * falls back to "0", so nothing is filtered out until somebody raises it.
+   */
+  matchThreshold: z
+    .number()
+    .min(0)
+    .max(100)
+    .default(0)
+    .meta({ adminExposed: true, label: "Match threshold (0-100)" }),
+  /**
+   * How many candidates survive the tier-2 gate. SYNTRA's own default is 15
+   * (`MATCH_TOP_N`), and until now nothing exposed it — so the only way to
+   * change how many matches a run produces was a deployment variable.
+   */
+  topN: z
+    .int()
+    .positive()
+    .max(500)
+    .default(15)
+    .meta({ adminExposed: true, label: "How many candidates to shortlist" }),
 });
 
 export const continuousMatch = defineNode({
@@ -77,7 +109,14 @@ export const continuousMatch = defineNode({
    * their endpoint is not keyed on the requirement, the right fix is on their
    * side, and this line becomes accurate rather than hopeful.
    */
-  idempotency: { strategy: "natural_key", keyPaths: ["jobId"] },
+  idempotency: {
+    strategy: "natural_key",
+    // The input's own refine is "jobId or requirement_id", and every real
+    // payload carries the second: syntra.jd.parsed has requirement_id and no
+    // jobId. Declaring only jobId meant this node — the one in the duplicate
+    // this guard exists for — derived no key and was never deduplicated.
+    keyPaths: [["jobId", "requirement_id"]],
+  },
 
   execution: {
     /** Searches the entire bench — the slowest node we have. */
@@ -124,7 +163,7 @@ export const continuousMatch = defineNode({
     {
       name: "finds candidates on the bench",
       input: { jobId: "8f14e45f-ceea-467a-9f4b-4a2c1e9d0a11" },
-      config: {},
+      config: { matchThreshold: 0, topN: 15 },
       expectedOutput: {
         jobId: "8f14e45f-ceea-467a-9f4b-4a2c1e9d0a11",
         matchJobId: "d5f6a7b8-0000-4000-8000-000000000303",
@@ -137,7 +176,7 @@ export const continuousMatch = defineNode({
     {
       name: "finds nobody, which is a normal outcome",
       input: { requirement_id: "8f14e45f-ceea-467a-9f4b-4a2c1e9d0a11" },
-      config: {},
+      config: { matchThreshold: 0, topN: 15 },
       expectedOutput: {
         jobId: "8f14e45f-ceea-467a-9f4b-4a2c1e9d0a11",
         matchJobId: "d5f6a7b8-0000-4000-8000-000000000304",

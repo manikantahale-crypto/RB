@@ -86,7 +86,14 @@ export const benchAlert = defineNode({
    * Keyed on the candidate. One bench alert per profile: a retry re-asks about
    * the same person rather than raising a second scoring request for them.
    */
-  idempotency: { strategy: "natural_key", keyPaths: ["candidateId"] },
+  idempotency: {
+    strategy: "natural_key",
+    // The refine says candidateId or candidate_id; syntra.profile.prepared
+    // carries candidate_id. candidate_profile_id is accepted by the input but
+    // is NOT an alternative here — a profile version is not a candidate, and
+    // keying on it would merge work that is genuinely different.
+    keyPaths: [["candidateId", "candidate_id"]],
+  },
 
   execution: {
     timeoutMs: 60_000,

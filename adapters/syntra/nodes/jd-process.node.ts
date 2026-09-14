@@ -48,34 +48,64 @@ const Output = z.object({
 /**
  * Design-time knobs, frozen into the graph version.
  *
- * These are exactly the four the engine's `optionsFromNodeConfig()` forwarded —
- * no more, no less. `matchThreshold` and `rerank` are adminExposed because a
- * customer may want different strictness; `hardFilters` and `prompt` are not,
- * because both change what the workflow means, and that is a PR.
+ * WHAT SYNTRA ACTUALLY HONOURS, which is not what this used to claim.
+ *
+ * `matchThreshold` and `topN` reach the matching funnel and change what a run
+ * produces — the tier-2 skill floor and how many candidates survive it. Both
+ * are adminExposed, both declare the default SYNTRA uses when they are unset,
+ * and the editor shows that default so a person can decide against a number
+ * rather than against a blank box.
+ *
+ * `rerank` and `hardFilters` are declared and NOT YET IMPLEMENTED anywhere in
+ * node-api. They are sent, and dropped. Left here because both are real
+ * features somebody will write — `hardFilters` maps onto the tier-1 filter
+ * that already exists — but nobody should read this block and believe setting
+ * them does something today.
+ *
+ * `prompt` was removed. See the note on it below.
  */
 const Config = z.object({
-  matchThreshold: z
-    .number()
-    .min(0)
-    .max(1)
-    .optional()
-    .meta({ adminExposed: true, label: "Match threshold" }),
-  rerank: z
-    .boolean()
-    .optional()
-    .meta({ adminExposed: true, label: "Re-rank results" }),
-  hardFilters: z.array(z.string()).optional(),
-  prompt: z.string().optional(),
+  /**
+   * How many times SYNTRA re-asks the model when the JD comes back unusable.
+   *
+   * Parsing is a structured extraction: the answer has to be JSON that
+   * `validateJdSchema` accepts, and on a bad answer SYNTRA retries with a
+   * correction instruction appended. Three attempts is its own default.
+   *
+   * This is a real trade and the only one this step has: more attempts costs
+   * another model call each and rescues a JD that would otherwise fail; fewer
+   * fails faster and cheaper on documents that were never going to parse.
+   *
+   * Distinct from `execution.retry` below, which is the ORCHESTRATOR retrying
+   * this whole node after it throws. This one is SYNTRA retrying the model
+   * inside a single call, and the two compose.
+   */
+  maxAttempts: z
+    .int()
+    .min(1)
+    .max(5)
+    .default(3)
+    .meta({ adminExposed: true, label: "Parsing attempts before giving up" }),
 });
 
 /** Only send what was actually set — the engine implementation did the same. */
+/**
+ * PARSING OPTIONS ONLY, AND THAT IS THE WHOLE CORRECTION.
+ *
+ * This node sent `matchThreshold`, `topN`, `rerank` and `hardFilters` — four
+ * matching knobs on a step that parses a requirement into structure and does
+ * no matching at all. They came from the engine's one generic
+ * `optionsFromNodeConfig()`, which forwarded the same four for every SYNTRA
+ * node regardless of what the node did, and the contracts copied that shape
+ * rather than asking what this step needs.
+ *
+ * They could not have worked even if SYNTRA read them: `handleJdUploaded`
+ * returns before the matching funnel whenever `ORCH_DELEGATE_MATCH` is set,
+ * which it is — matching belongs to `syntra.continuous.match`, reached by the
+ * `syntra.jd.parsed` this node publishes.
+ */
 function optionsFor(config: z.infer<typeof Config>): Record<string, unknown> {
-  const out: Record<string, unknown> = {};
-  if (typeof config.matchThreshold === "number") out.matchThreshold = config.matchThreshold;
-  if (typeof config.rerank === "boolean") out.rerank = config.rerank;
-  if (config.hardFilters?.length) out.hardFilters = config.hardFilters;
-  if (config.prompt?.trim()) out.prompt = config.prompt.trim();
-  return out;
+  return { maxAttempts: config.maxAttempts };
 }
 
 /* ────────────────────────────── contract ─────────────────────────────── */
@@ -122,7 +152,12 @@ export const jdProcess = defineNode({
    * decomposed. If SYNTRA's parse ever appends, this declaration becomes a lie
    * and the answer is to fix SYNTRA, not to relax this line.
    */
-  idempotency: { strategy: "natural_key", keyPaths: ["jobId"] },
+  idempotency: {
+    strategy: "natural_key",
+    // Matches this node's refine: jobId or requirement_id. syntra.jd.received
+    // carries requirement_id only.
+    keyPaths: [["jobId", "requirement_id"]],
+  },
 
   execution: {
     /** JD parsing is LLM-backed inside SYNTRA and genuinely slow. */
@@ -185,7 +220,7 @@ export const jdProcess = defineNode({
     {
       name: "parses a requirement",
       input: { jobId: "8f14e45f-ceea-467a-9f4b-4a2c1e9d0a11" },
-      config: { matchThreshold: 0.8 },
+      config: { maxAttempts: 3 },
       expectedOutput: {
         jobId: "8f14e45f-ceea-467a-9f4b-4a2c1e9d0a11",
         status: "processed",
@@ -196,7 +231,7 @@ export const jdProcess = defineNode({
     {
       name: "accepts requirement_id from the astra producer",
       input: { requirement_id: "8f14e45f-ceea-467a-9f4b-4a2c1e9d0a11" },
-      config: {},
+      config: { maxAttempts: 3 },
       expectedOutput: {
         jobId: "8f14e45f-ceea-467a-9f4b-4a2c1e9d0a11",
         status: "processed",
