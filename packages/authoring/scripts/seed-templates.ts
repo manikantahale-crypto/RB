@@ -2,6 +2,7 @@
  * Boot-apply agent_templates schema + seed (dev).
  * Usage: npx tsx packages/authoring/scripts/seed-templates.ts
  */
+import { sslFor } from "@tekisho/authoring";
 import pg from "pg";
 import { config } from "dotenv";
 import { resolve } from "node:path";
@@ -17,7 +18,7 @@ if (!url) throw new Error("DATABASE_MIGRATOR_URL required");
 
 const pool = new pg.Pool({
   connectionString: url,
-  ssl: { rejectUnauthorized: false },
+  ssl: sslFor(url),
 });
 
 await ensureAuthoringSchema(pool);
@@ -26,7 +27,7 @@ const relayUrl = process.env.DATABASE_RELAY_URL?.trim();
 if (relayUrl) {
   const relay = new pg.Pool({
     connectionString: relayUrl,
-    ssl: { rejectUnauthorized: false },
+    ssl: sslFor(relayUrl),
   });
   try {
     const templates = await listActiveTemplates(relay);

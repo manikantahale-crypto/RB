@@ -6,6 +6,7 @@
  * Start worker first (`npm start` in repo root), then:
  *   npm run start -w @tekisho/api
  */
+import { sslFor } from "@tekisho/authoring";
 import Fastify from "fastify";
 import * as PgBossModule from "pg-boss";
 import pg from "pg";
@@ -29,9 +30,17 @@ if (!databaseUrl) {
 const port = Number(process.env.API_PORT ?? 4100);
 
 async function main(): Promise<void> {
+  if (!databaseUrl) {
+    throw new Error(
+      "[Ingress API] DATABASE_URL is not set. Nothing can be read or written " +
+        "without it, and a pool with no connection string fails later and less " +
+        "clearly than this.",
+    );
+  }
+
   const pool = new pg.Pool({
     connectionString: databaseUrl,
-    ssl: { rejectUnauthorized: false },
+    ssl: sslFor(databaseUrl),
     max: 2,
   });
   pool.on("error", (error: Error) => {
@@ -41,7 +50,7 @@ async function main(): Promise<void> {
   const boss = new PgBossModule.PgBoss({
     connectionString: databaseUrl,
     schema: "pgboss",
-    ssl: { rejectUnauthorized: false },
+    ssl: sslFor(databaseUrl),
     max: 1,
   });
   // Pool timeouts must not crash the process (same pattern as worker bootstrap).

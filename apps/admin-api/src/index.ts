@@ -33,6 +33,7 @@ import { registerWorkflowRoutes } from "./routes/workflows.js";
 import { registerEditorRoutes } from "./routes/editor.js";
 import { registerNodeTestRoutes } from "./routes/node-test.js";
 import { registerEventCatalogRoutes } from "./routes/event-catalog.js";
+import { registerPlanRoutes } from "./routes/plans.js";
 import { registerProposeRoutes } from "./routes/propose.js";
 
 loadEnv({ path: resolve(process.cwd(), "../../.env") });
@@ -109,6 +110,7 @@ async function main(): Promise<void> {
   registerNodeTestRoutes(app, migratorPool);
   registerPlatformHealthRoutes(app, pool);
   registerEventCatalogRoutes(app, pool);
+  registerPlanRoutes(app, pool);
   registerProposeRoutes(app, pool, { llm });
 
   const shutdown = async () => {
