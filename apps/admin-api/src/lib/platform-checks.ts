@@ -27,7 +27,8 @@ export type CheckFinding = {
     | "bindings_routable"
     | "impls_permitted"
     | "emitted_events_answered"
-    | "live_means_reachable";
+    | "live_means_reachable"
+    | "work_not_duplicated";
   status: CheckStatus;
   /** One sentence, true whichever way it went. */
   message: string;
@@ -435,6 +436,117 @@ export function checkLiveMeansReachable(facts: PlatformFacts): CheckFinding {
       };
 }
 
+/**
+ * Check 6 — does one input get the same work done to it twice?
+ *
+ * THE SHAPE OF IT. A step publishes when it succeeds. If that event is bound
+ * to another workflow, publishing starts that workflow as a separate run. So a
+ * workflow containing both `syntra.jd.process` and `syntra.continuous.match`
+ * matches twice for one requirement: once as its own next step, and once in
+ * the workflow that `syntra.jd.parsed` set going. Two match jobs, two sets of
+ * results, and nothing in any log that says so.
+ *
+ * WHY THIS IS A STANDING CHECK AND NOT A GO-LIVE GATE.
+ *
+ * The proposer already reports this for a workflow being authored, and the
+ * gate could refuse one. Neither can catch the way it usually happens: the
+ * workflow is fine on the day it ships, somebody binds that event to another
+ * workflow NEXT WEEK, and a pair that never changed becomes duplicating. No
+ * gate runs at that moment. Only something that keeps asking will notice.
+ *
+ * WHAT IT DOES NOT REPORT. A workflow reached by an event it publishes itself
+ * — that is a self-trigger, a different and louder fault, already check 9 on
+ * the go-live gate. Naming it here too would teach people to read past both.
+ *
+ * The honest answer when `emits` is undeclared is "unknown", never "none".
+ * Every legacy step is undeclared, and treating silence as proof of innocence
+ * is the exact mistake this file's header is about — so undeclared steps are
+ * counted and named even when the check passes.
+ */
+export function checkWorkNotDuplicated(facts: PlatformFacts): CheckFinding {
+  const emitsOf = new Map(facts.registry.map((r) => [r.key, r.emits]));
+  const implsOf = new Map(facts.graphs.map((g) => [g.graphKey, g.impls]));
+  const startedBy = new Map(facts.bindings.map((b) => [b.eventType, b.graphKey]));
+
+  const duplicates: string[] = [];
+  /** Steps in live workflows that have never said what they publish. */
+  const undeclared = new Set<string>();
+  /** Steps whose declaration we could read, so the check saw something. */
+  let declaredSeen = 0;
+
+  for (const graph of facts.graphs) {
+    const here = new Set(graph.impls);
+
+    for (const impl of graph.impls) {
+      const declared = emitsOf.get(impl);
+      if (declared == null) {
+        undeclared.add(impl);
+        continue;
+      }
+      declaredSeen += 1;
+
+      for (const event of declared) {
+        // A config-driven emit resolves against the step's settings, which a
+        // graph row does not carry. Skip rather than guess at the event name.
+        if (typeof event !== "string") continue;
+
+        const started = startedBy.get(event);
+        if (!started || started === graph.graphKey) continue;
+
+        const alsoRuns = (implsOf.get(started) ?? []).filter((k) => here.has(k));
+        if (alsoRuns.length === 0) continue;
+
+        duplicates.push(
+          `${graph.graphKey}: ${impl} publishes ${event}, which starts ` +
+            `${started} — both run ${alsoRuns.join(", ")}, so one input is ` +
+            `processed twice`,
+        );
+      }
+    }
+  }
+
+  if (declaredSeen === 0) {
+    return {
+      id: "work_not_duplicated",
+      status: "unchecked",
+      message:
+        "Not checked — no step in any live workflow has declared what it " +
+        "publishes, so a duplicate cannot be told from a handoff.",
+      detail: [...undeclared].sort().map((k) => `${k} declares no emits`),
+    };
+  }
+
+  /**
+   * Said on a pass as well as a failure. A pass here means "none of the steps
+   * that have declared their emits duplicate work" — which is a smaller claim
+   * than "no work is duplicated", and the difference is exactly the undeclared
+   * list.
+   */
+  const caveat =
+    undeclared.size > 0
+      ? ` ${undeclared.size} step${undeclared.size === 1 ? "" : "s"} in live ` +
+        `workflows have not declared what they publish and could not be checked.`
+      : "";
+
+  return duplicates.length === 0
+    ? {
+        id: "work_not_duplicated",
+        status: "pass",
+        message:
+          `No live workflow runs a step that another workflow it starts also runs.${caveat}`,
+        detail: [...undeclared].sort().map((k) => `${k} declares no emits`),
+      }
+    : {
+        id: "work_not_duplicated",
+        status: "fail",
+        message:
+          `${duplicates.length} case${duplicates.length === 1 ? "" : "s"} where one ` +
+          `input has the same work done to it twice — once in a workflow, once in ` +
+          `the workflow that workflow starts.${caveat}`,
+        detail: duplicates,
+      };
+}
+
 export function runPlatformChecks(facts: PlatformFacts): CheckFinding[] {
   return [
     checkBindingsRoutable(facts),
@@ -442,6 +554,7 @@ export function runPlatformChecks(facts: PlatformFacts): CheckFinding[] {
     checkEmittedEventsAnswered(facts),
     checkEventsHandled(facts),
     checkLiveMeansReachable(facts),
+    checkWorkNotDuplicated(facts),
   ];
 }
 

@@ -13,6 +13,7 @@ import {
   checkEventsHandled,
   checkLiveMeansReachable,
   checkImplsPermitted,
+  checkWorkNotDuplicated,
   runPlatformChecks,
   type PlatformFacts,
 } from "./platform-checks.js";
@@ -41,10 +42,20 @@ const base: PlatformFacts = {
    */
   graphs: [
     { graphKey: "syntra.jd.workflow", impls: ["syntra.jd.process"] },
-    {
-      graphKey: "syntra.continuous.match",
-      impls: ["syntra.jd.process", "human.gate"],
-    },
+    /**
+     * This used to run `syntra.jd.process` as well, and that was a duplicate.
+     *
+     * `syntra.jd.process` publishes `syntra.jd.parsed`, which the binding above
+     * routes to this very workflow — so one requirement would have been parsed
+     * twice, once in each. `work_not_duplicated` reported it the moment it was
+     * written, against a fixture whose whole job is to describe a platform with
+     * nothing wrong with it.
+     *
+     * Removed rather than excused. A base fixture that contains the fault the
+     * suite is meant to catch cannot be the thing "a clean run passes" asserts
+     * against.
+     */
+    { graphKey: "syntra.continuous.match", impls: ["human.gate"] },
   ],
   registry: [
     {
@@ -320,10 +331,144 @@ describe("routing_hazards", () => {
   });
 });
 
+/**
+ * Check 6 — does one input get the same work done to it twice?
+ *
+ * The live example: a workflow holding both `syntra.jd.process` and
+ * `syntra.continuous.match`. The first publishes `syntra.jd.parsed`, which
+ * starts a workflow that runs `syntra.continuous.match` too — so the bench is
+ * searched twice for one requirement, with nothing in any log saying so.
+ */
+describe("checkWorkNotDuplicated", () => {
+  it("catches a workflow that repeats the work of the workflow it starts", () => {
+    const out = checkWorkNotDuplicated(
+      facts({
+        graphs: [
+          {
+            graphKey: "syntra.jd.workflow",
+            impls: ["syntra.jd.process", "syntra.continuous.match"],
+          },
+          {
+            graphKey: "syntra.continuous.match",
+            impls: ["syntra.continuous.match"],
+          },
+        ],
+        registry: [
+          {
+            key: "syntra.jd.process",
+            module: "syntra",
+            shareable: false,
+            emits: ["syntra.jd.parsed"],
+          },
+          {
+            key: "syntra.continuous.match",
+            module: "syntra",
+            shareable: true,
+            emits: [],
+          },
+        ],
+      }),
+    );
+    expect(out.status).toBe("fail");
+    expect(out.detail[0]).toContain("syntra.continuous.match");
+    expect(out.detail[0]).toContain("processed twice");
+  });
+
+  it("passes when a workflow starts another that shares no step", () => {
+    // This is a handoff, which is the normal and intended use of an event.
+    // Reporting it would make the check noise and teach people to ignore it.
+    expect(checkWorkNotDuplicated(facts()).status).toBe("pass");
+  });
+
+  it("does not report a workflow reached by its own event", () => {
+    /*
+     * A self-trigger is a real fault and a louder one — it restarts for ever,
+     * not merely twice — and the go-live gate already refuses it. Naming it
+     * here too trains people to read past both messages.
+     */
+    const out = checkWorkNotDuplicated(
+      facts({
+        bindings: [
+          {
+            eventType: "syntra.jd.parsed",
+            graphKey: "syntra.jd.workflow",
+            moduleQueue: "module.syntra.jd",
+          },
+        ],
+        graphs: [{ graphKey: "syntra.jd.workflow", impls: ["syntra.jd.process"] }],
+      }),
+    );
+    expect(out.status).toBe("pass");
+  });
+
+  it("reports not-checked when nothing has declared its emits", () => {
+    // Silence is not proof of innocence. Every legacy step is undeclared, and
+    // passing here would say "no duplicates" on the strength of knowing nothing.
+    const out = checkWorkNotDuplicated(
+      facts({
+        registry: [
+          {
+            key: "syntra.jd.process",
+            module: "syntra",
+            shareable: false,
+            emits: null,
+          },
+          { key: "human.gate", module: "platform", shareable: true, emits: null },
+        ],
+      }),
+    );
+    expect(out.status).toBe("unchecked");
+    expect(out.detail.join(" ")).toContain("declares no emits");
+  });
+
+  it("names the steps it could not check, even on a pass", () => {
+    // A pass means "none of what could be checked duplicates work", which is a
+    // smaller claim than "nothing duplicates work". The gap has to be visible.
+    const out = checkWorkNotDuplicated(
+      facts({
+        registry: [
+          {
+            key: "syntra.jd.process",
+            module: "syntra",
+            shareable: false,
+            emits: ["syntra.jd.parsed"],
+          },
+          { key: "human.gate", module: "platform", shareable: true, emits: null },
+        ],
+      }),
+    );
+    expect(out.status).toBe("pass");
+    expect(out.message).toContain("could not be checked");
+    expect(out.detail).toContain("human.gate declares no emits");
+  });
+
+  it("ignores an emit that depends on a setting it cannot see", () => {
+    /*
+     * A `{ fromConfig }` emit resolves against the step's own settings, and a
+     * graph row carries only its node keys. Guessing the event name would
+     * invent a finding; skipping is the honest half-answer.
+     */
+    const out = checkWorkNotDuplicated(
+      facts({
+        registry: [
+          {
+            key: "syntra.jd.process",
+            module: "syntra",
+            shareable: false,
+            emits: [{ fromConfig: "outputEvent" }] as unknown as string[],
+          },
+          { key: "human.gate", module: "platform", shareable: true, emits: [] },
+        ],
+      }),
+    );
+    expect(out.status).toBe("pass");
+  });
+});
+
 describe("runPlatformChecks", () => {
-  it("returns all five, and a clean run passes", () => {
+  it("returns all six, and a clean run passes", () => {
     const out = runPlatformChecks(facts());
-    expect(out).toHaveLength(5);
+    expect(out).toHaveLength(6);
     expect(allPassed(out)).toBe(true);
   });
 
