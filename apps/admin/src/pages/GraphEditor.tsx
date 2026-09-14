@@ -17,6 +17,8 @@
  * to a version and read their topology back from that row.
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { listWorkflows, type WorkflowRegistryRow } from "../api";
+import { LifecycleCell, type LifecycleCall } from "../lib/workflow-lifecycle";
 import { Link, useParams, useSearchParams } from "react-router-dom";
 import {
   Background,
@@ -73,6 +75,7 @@ import {
   type GoLiveChecks,
   type DiffResponse,
 } from "../api/editor";
+import { isWellFormed, usableDefinition } from "../lib/definition-shape";
 
 const NODE_W = 230;
 const NODE_H = 78;
@@ -365,6 +368,16 @@ export function GraphEditorPage() {
 
   const [loaded, setLoaded] = useState<LoadedVersion | null>(null);
   /**
+   * This workflow's row from the registry, for the lifecycle control.
+   *
+   * The same shape the list uses, fetched again here rather than passed in
+   * navigation state: arriving by a pasted URL is normal, and a control that
+   * only works when you came from the list is worse than none.
+   */
+  const [registryRow, setRegistryRow] = useState<WorkflowRegistryRow | null>(null);
+  const [acting, setActing] = useState(false);
+  const [said, setSaid] = useState<string | null>(null);
+  /**
    * The workflows either side of this one.
    *
    * A flow that crosses applications is stored as a chain — a workflow per
@@ -376,6 +389,8 @@ export function GraphEditorPage() {
   const [draft, setDraft] = useState<GraphDefinition | null>(null);
   const [registry, setRegistry] = useState<RegistryNode[]>([]);
   const [selected, setSelected] = useState<string | null>(null);
+  /** The stored definition was missing `nodes` or `edges` — see usableDefinition. */
+  const [malformed, setMalformed] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
   const [savedAt, setSavedAt] = useState<Date | null>(null);
@@ -389,8 +404,32 @@ export function GraphEditorPage() {
    */
   const [insertAt, setInsertAt] = useState<EdgeRef | null>(null);
 
+  /**
+   * The registry row for this workflow, so the lifecycle control knows what
+   * this workflow can do next. Re-read whenever the key changes, and again
+   * after every lifecycle action.
+   */
+  useEffect(() => {
+    let cancelled = false;
+    void (async () => {
+      const list = await listWorkflows();
+      if (!cancelled && list.ok) {
+        setRegistryRow(
+          list.data.workflows.find((w) => w.graphKey === graphKey) ?? null,
+        );
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [graphKey]);
+
   const load = useCallback(async () => {
-    if (!graphKey || !version) return;
+    // `!version` was the guard here, and a draft IS version 0 — the reserved
+    // working-copy slot from V20260909.26. So opening a draft bailed before
+    // the fetch and the page sat on "Loading workflow…" for ever, with no
+    // error anywhere because nothing had been asked for yet.
+    if (!graphKey || !Number.isFinite(version) || version < 0) return;
     setError(null);
     // Best effort: a workflow with no neighbours is the ordinary case, and a
     // failure here must not stop the editor loading.
@@ -409,9 +448,11 @@ export function GraphEditorPage() {
       listRegistryNodes(),
     ]);
     if (v.ok) {
-      setLoaded(v.data);
-      setDraft(structuredClone(v.data.definition));
-      setSelected((cur) => cur ?? v.data.definition.nodes[0]?.id ?? null);
+      const definition = usableDefinition(v.data.definition);
+      setLoaded({ ...v.data, definition });
+      setDraft(structuredClone(definition));
+      setMalformed(!isWellFormed(v.data.definition));
+      setSelected((cur) => cur ?? definition.nodes[0]?.id ?? null);
     } else {
       setError(v.body.message ?? v.body.error ?? "Could not load this version");
     }
@@ -824,12 +865,57 @@ export function GraphEditorPage() {
   const configProps = selectedContract?.configSchema?.properties ?? {};
   const configFields = Object.entries(configProps);
 
+  /**
+   * Run one lifecycle verb, then re-read.
+   *
+   * Reloading the row rather than patching it: approving moves the live
+   * version, the triggers and the draft state at once, and a row assembled
+   * from a guess about which of those changed is a row that can be wrong.
+   *
+   * The server's own sentence is shown either way. Its refusals explain
+   * themselves — "this version is already live" — and rewording them here
+   * would lose the reason.
+   */
+  const runLifecycle = async (call: LifecycleCall) => {
+    setActing(true);
+    setSaid(null);
+    try {
+      const res = await call(graphKey);
+      if (!res.ok) {
+        setSaid(res.body.message ?? res.body.error ?? "That did not work.");
+      } else {
+        setSaid(res.data.note ?? "Done.");
+        const list = await listWorkflows();
+        if (list.ok) {
+          setRegistryRow(
+            list.data.workflows.find((w) => w.graphKey === graphKey) ?? null,
+          );
+        }
+      }
+    } finally {
+      setActing(false);
+    }
+  };
+
   return (
     <div className="ge-page" data-testid="graph-editor">
       <header className="ge-header">
         <div>
           <Link to="/workflows" className="run-back">
             ← All workflows
+          </Link>
+          {/*
+            Runs and history. There was no way to reach them from here at all:
+            the only entry was the health number on the list, which reads as a
+            statistic rather than a link and says "never" on a workflow that
+            has not run — exactly the one you most want the history of.
+          */}
+          <Link
+            to={`/workflows/${encodeURIComponent(graphKey)}/runs`}
+            className="run-back"
+            title="Every run of this workflow, newest first"
+          >
+            History →
           </Link>
           <h1 className="ge-title">
             {graphKey}
@@ -897,12 +983,48 @@ export function GraphEditorPage() {
           {savedAt && !dirty ? (
             <span className="wf-updated">saved {savedAt.toLocaleTimeString()}</span>
           ) : null}
+          {/*
+            The lifecycle, next to the flow it acts on rather than on the list.
+            One button: whatever this workflow can do next.
+          */}
+          {registryRow ? (
+            <LifecycleCell
+              row={registryRow}
+              busy={acting}
+              onAct={(_key, call) => void runLifecycle(call)}
+            />
+          ) : null}
+          {/*
+            What the server said, success or refusal, in its own words. The
+            refusals explain themselves — "this version is already live", "you
+            asked for this" — and rewording them would lose the reason.
+          */}
+          {said ? (
+            <p className="wf-said" role="status">
+              {said}
+            </p>
+          ) : null}
         </div>
       </header>
 
       {error ? (
         <div className="wf-error" role="alert">
           {error}
+        </div>
+      ) : null}
+      {/*
+        An empty canvas has two very different causes, and the author cannot
+        tell them apart by looking. This one is "what is stored here is not a
+        workflow"; the other is "you have not added a step yet". Saying so is
+        the difference between a bug report and a five-second fix.
+      */}
+      {malformed ? (
+        <div className="wf-error" role="alert" data-testid="malformed-definition">
+          What is stored for this version has no steps and no connections — the
+          definition is empty or was written in a shape the editor does not
+          recognise. The canvas below starts blank rather than showing you a
+          workflow that is not there. Saving would replace the stored
+          definition with what you build here.
         </div>
       ) : null}
       {!loaded && !error ? <p className="wf-empty">Loading workflow…</p> : null}

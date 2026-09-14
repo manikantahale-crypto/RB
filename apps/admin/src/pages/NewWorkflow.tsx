@@ -20,7 +20,7 @@
  *   workflow into production. The trigger travels inside the draft instead.
  */
 import { useCallback, useMemo, useState } from "react";
-import { useNavigate } from "react-router-dom";
+import { Link, useNavigate } from "react-router-dom";
 import {
   acceptChain,
   acceptProposal,
@@ -73,6 +73,9 @@ export function NewWorkflowPage() {
     setBusy(true);
     setError(null);
     setProposal(null);
+    // Step ids are per-proposal; carrying a drop across would silently
+    // remove a step of the same name from an unrelated flow.
+    setDropped(new Set());
     setRoutingChoice("priority");
     setRoutingOpen(false);
     setTriggerOpen(false);
@@ -87,7 +90,22 @@ export function NewWorkflowPage() {
     }
   }, [module, description]);
 
-  const existingConsumers = proposal?.routing.existing ?? [];
+  /**
+   * Who already answers the trigger THE AUTHOR CHOSE.
+   *
+   * `proposal.routing.existing` is computed once, for the event the matcher
+   * suggested. Changing the trigger is the whole point of the picker, and
+   * nothing recomputed it — so after a change the routing decision was about
+   * an event the author had moved away from, or missing entirely because the
+   * suggested one happened to have no consumer. A confirmation about the wrong
+   * event is worse than no confirmation.
+   */
+  const existingConsumers = useMemo(() => {
+    const chosen = proposal?.triggerCandidates.find(
+      (c) => c.eventType === trigger,
+    );
+    return chosen?.answeredBy ?? proposal?.routing.existing ?? [];
+  }, [proposal, trigger]);
   const routingNeeded = existingConsumers.length > 0;
 
   /**
@@ -123,7 +141,32 @@ export function NewWorkflowPage() {
    * generator was not wired in. It is now, so the screen shows what was built
    * rather than a stand-in the person had to notice was a stand-in.
    */
-  const chosenNodes = useMemo(() => proposal?.graph.nodes ?? [], [proposal]);
+  /**
+   * Steps the author removed from the proposal before accepting it.
+   *
+   * Held here rather than by rewriting `proposal`, so the warning that caused
+   * the drop still has its own numbers to report and can offer an undo. The
+   * proposal is what the system worked out; this is what the author decided
+   * about it, and conflating the two loses the ability to say "you dropped
+   * this, here is why it was suggested".
+   *
+   * `acceptProposal` takes nodes and re-chains the edges server-side, so a
+   * dropped step needs no edge surgery here.
+   */
+  const [dropped, setDropped] = useState<Set<string>>(new Set());
+  const drop = (ids: string[]) =>
+    setDropped((prev) => new Set([...prev, ...ids]));
+  const undrop = (ids: string[]) =>
+    setDropped((prev) => {
+      const next = new Set(prev);
+      for (const id of ids) next.delete(id);
+      return next;
+    });
+
+  const chosenNodes = useMemo(
+    () => (proposal?.graph.nodes ?? []).filter((n) => !dropped.has(n.id)),
+    [proposal, dropped],
+  );
 
   /**
    * Links that still need building.
@@ -287,143 +330,6 @@ export function NewWorkflowPage() {
                   most useful thing here is seeing WHERE your part sits and,
                   very often, that a neighbouring half already exists.
               */}
-              {/* ── THE PLAN ─────────────────────────────────────────
-
-                  What the author asked for, whole.
-
-                  A request is an outcome, and an outcome is a chain of
-                  workflows joined by events. Answering it with one
-                  application's graph and an apology in `unsupported[]` is the
-                  wrong answer: `unsupported` means "no node in the system can
-                  do this", and a handoff to another application is the
-                  opposite — it means "this is already handled, over there".
-
-                  Boxes rather than one continuous canvas, deliberately. The
-                  workflows version independently, fail independently, and may
-                  belong to teams the author cannot change. Drawing them as one
-                  picture hides all three until something breaks. The seam is
-                  real, so it is visible — and made legible by naming the event
-                  that carries the work, with what the catalogue knows about it.
-              */}
-              {proposal.plan && proposal.plan.steps.length > 0 ? (
-                <section className="nw-block">
-                  <h2 className="nw-block-title">
-                    <span>▣ The plan</span>
-                    <span className="ge-muted">
-                      what you asked for, end to end
-                    </span>
-                  </h2>
-
-                  <div className="nw-card nw-plan">
-                    <p
-                      className={
-                        proposal.plan.steps.some((s) => s.state === "blocked")
-                          ? "nw-plan-verdict nw-plan-verdict--blocked"
-                          : "nw-plan-verdict"
-                      }
-                      role="status"
-                    >
-                      {proposal.plan.verdict}
-                    </p>
-
-                    {proposal.plan.steps.map((step) => {
-                      const into = proposal.plan!.links.find(
-                        (l) => l.toSeq === step.seq,
-                      );
-                      return (
-                        <div key={step.seq}>
-                          {/* the event that carries work into this step */}
-                          {into ? (
-                            <div
-                              className={
-                                into.blocked
-                                  ? "nw-plan-link nw-plan-link--blocked"
-                                  : "nw-plan-link"
-                              }
-                            >
-                              <span className="nw-plan-rail" aria-hidden="true" />
-                              <div className="nw-plan-linkbody">
-                                {into.eventType ? (
-                                  <>
-                                    <code className="nw-plan-event">
-                                      {into.eventType}
-                                    </code>
-                                    {into.description ? (
-                                      <span className="nw-plan-why">
-                                        {into.description}
-                                      </span>
-                                    ) : null}
-                                    <span className="nw-plan-facts">
-                                      {into.producedWhen
-                                        ? `${into.producedWhen} · `
-                                        : ""}
-                                      {/* A handoff that has never been published
-                                          is a chain that has never run. That is
-                                          the most useful warning on this screen. */}
-                                      {into.publishCount > 0
-                                        ? `published ${into.publishCount}×`
-                                        : "never published"}
-                                      {into.bound && !into.routable
-                                        ? " · queue not served"
-                                        : ""}
-                                      {into.emitted === "unknown"
-                                        ? " · nothing declares it is published"
-                                        : ""}
-                                    </span>
-                                  </>
-                                ) : (
-                                  <span className="nw-plan-event">
-                                    ✖ nothing carries the work across
-                                  </span>
-                                )}
-                                {into.reason ? (
-                                  <span className="nw-plan-reason">
-                                    {into.reason}
-                                  </span>
-                                ) : null}
-                              </div>
-                            </div>
-                          ) : null}
-
-                          <div
-                            className={`nw-plan-box nw-plan-box--${step.state}`}
-                          >
-                            <span className="nw-plan-seq">{step.seq}</span>
-                            <span className="nw-plan-name">
-                              {step.module.toUpperCase()}
-                              {step.yours ? (
-                                <span className="nw-plan-tag">yours</span>
-                              ) : null}
-                            </span>
-                            <span className="nw-plan-state">
-                              {step.state === "exists"
-                                ? "EXISTS"
-                                : step.state === "new"
-                                  ? "TO BUILD"
-                                  : "BLOCKED"}
-                            </span>
-                            <span className="nw-plan-detail">
-                              {step.graphKey ? (
-                                <code>
-                                  {step.graphKey}
-                                  {step.version ? ` v${step.version}` : ""}
-                                </code>
-                              ) : null}
-                              <span className="nw-plan-steps">
-                                {step.steps.join(" → ") || "no steps"}
-                              </span>
-                              <span className="nw-plan-why">
-                                {step.summary}
-                              </span>
-                            </span>
-                          </div>
-                        </div>
-                      );
-                    })}
-                  </div>
-                </section>
-              ) : null}
-
               {proposal.chain && proposal.chain.length > 1 ? (
                 <section className="nw-block">
                   <h2 className="nw-block-title">
@@ -560,45 +466,6 @@ export function NewWorkflowPage() {
                         accept.
                       </p>
                     ) : null}
-                  </div>
-                </section>
-              ) : null}
-
-              {/* ── THE SAME WORK RUNNING TWICE ──────────────────────
-
-                  A step that publishes does not just record something: if the
-                  event it publishes is bound, it starts a whole other
-                  workflow. `syntra.jd.process` publishes `syntra.jd.parsed`,
-                  which starts `syntra.continuous.match` — so a flow holding
-                  both steps matches the same job twice, with no error and
-                  nothing in a log to say so.
-
-                  Above everything else on the screen because it is wrong,
-                  not merely worth knowing.
-              */}
-              {proposal.triggeredWorkflows.some((t) => t.alsoRunsHere.length) ? (
-                <section className="nw-block">
-                  <h2 className="nw-block-title">
-                    <span>⚠ Some of this would run twice</span>
-                    <span className="ge-muted">worth fixing before you build</span>
-                  </h2>
-                  <div className="nw-card nw-seam">
-                    {proposal.triggeredWorkflows
-                      .filter((t) => t.alsoRunsHere.length)
-                      .map((t) => (
-                        <p key={`${t.stepId}-${t.eventType}`} className="nw-seam-open">
-                          <strong>{t.impl}</strong> publishes{" "}
-                          <code>{t.eventType}</code> when it finishes, which
-                          starts <strong>{t.graphKey}</strong>. That workflow
-                          runs {t.alsoRunsHere.join(", ")} — and so does this
-                          one, so a single input gets processed twice.
-                          <br />
-                          Either drop {t.alsoRunsHere.length === 1 ? "that step" : "those steps"}{" "}
-                          here and let {t.graphKey} do that part, or keep{" "}
-                          {t.alsoRunsHere.length === 1 ? "it" : "them"} and retire
-                          that binding.
-                        </p>
-                      ))}
                   </div>
                 </section>
               ) : null}
@@ -914,6 +781,122 @@ export function NewWorkflowPage() {
                       </span>
                     </span>
                   </div>
+                  {/* ── starts itself ────────────────────────────────
+                      THE ONE THING ON THIS SCREEN THAT BLOCKS.
+
+                      Every other warning here describes something an author
+                      can weigh up. This one describes a workflow that never
+                      stops: a step publishes the event the flow is triggered
+                      on, so finishing it starts it again. There is no depth
+                      guard in the router, and the node's idempotency does not
+                      save it — `syntra.continuous.match` mints a fresh match
+                      job when the backend returns none, so every cycle is real
+                      work against the slowest endpoint we have.
+
+                      Accept is disabled rather than warned about, because
+                      there is nothing sensible to build from here. The fix is
+                      one click away: change the trigger.
+                  */}
+                  {proposal.selfTriggering ? (
+                    <div className="nw-row nw-row--stop" data-testid="self-trigger">
+                      <span className="nw-row-kind">⛔ Starts itself</span>
+                      <span className="nw-row-body">
+                        <span className="nw-row-value">
+                          {proposal.selfTriggering.steps
+                            .map((s) => s.stepId)
+                            .join(", ")}
+                        </span>
+                        <span className="nw-row-why">
+                          {proposal.selfTriggering.steps.length === 1
+                            ? "This step publishes "
+                            : "These steps publish "}
+                          <code>{proposal.selfTriggering.eventType}</code>, which
+                          is the event that starts this workflow. Every run would
+                          start another one, and nothing would stop it. Change
+                          the trigger, or drop the step.
+                        </span>
+                      </span>
+                      <button
+                        type="button"
+                        className="wf-btn nw-row-change"
+                        onClick={() => setTriggerOpen(true)}
+                      >
+                        Change trigger
+                      </button>
+                    </div>
+                  ) : null}
+
+                  {/* ── would run twice ───────────────────────────────
+                      A ROW, NOT A SECTION.
+
+                      This was its own block above the workflow, which made a
+                      fact ABOUT these steps look like a separate subject the
+                      author had to hold in their head alongside them. It is
+                      not: it says one of the steps listed directly above is
+                      already done elsewhere. Next to them is where it means
+                      something, and it disappears entirely when it does not
+                      apply — which is most of the time.
+                  */}
+                  {proposal.triggeredWorkflows.some((t) => t.alsoRunsHere.length)
+                    ? proposal.triggeredWorkflows
+                        .filter((t) => t.alsoRunsHere.length)
+                        .map((t) => {
+                          /**
+                           * `alsoRunsHere` names node KEYS. The same key can
+                           * appear twice in a flow under different ids, and
+                           * dropping "that step" has to mean a step.
+                           */
+                          const overlapping = chosenNodes
+                            .filter((n) => t.alsoRunsHere.includes(n.impl))
+                            .map((n) => n.id);
+                          const allDropped =
+                            overlapping.length > 0 &&
+                            overlapping.every((id) => dropped.has(id));
+
+                          return (
+                            <div
+                              className="nw-row nw-row--warn"
+                              key={`${t.stepId}-${t.eventType}`}
+                            >
+                              <span className="nw-row-kind">⚠ Runs twice</span>
+                              <span className="nw-row-body">
+                                <span className="nw-row-value">
+                                  {t.alsoRunsHere.join(", ")}
+                                </span>
+                                <span className="nw-row-why">
+                                  {t.impl} publishes {t.eventType}, which starts{" "}
+                                  {t.graphKey} — and that runs the same step. One
+                                  input would be processed twice.
+                                </span>
+                                {allDropped ? (
+                                  <span className="nw-fixed" role="status">
+                                    ✓ dropped — {t.graphKey} does that part now
+                                  </span>
+                                ) : null}
+                              </span>
+                              {allDropped ? (
+                                <button
+                                  type="button"
+                                  className="wf-btn nw-row-change"
+                                  onClick={() => undrop(overlapping)}
+                                >
+                                  Undo
+                                </button>
+                              ) : (
+                                <button
+                                  type="button"
+                                  className="wf-btn nw-row-change"
+                                  onClick={() => drop(overlapping)}
+                                  disabled={overlapping.length === 0}
+                                  title={`Remove ${overlapping.join(", ")} and let ${t.graphKey} do that part`}
+                                >
+                                  Drop it
+                                </button>
+                              )}
+                            </div>
+                          );
+                        })
+                    : null}
 
                   {/*
                     WHY THERE IS ONLY A PLACEHOLDER, ON ITS OWN LINE.
@@ -1071,12 +1054,25 @@ export function NewWorkflowPage() {
                   type="button"
                   className="wf-btn wf-btn--primary"
                   onClick={() => void accept()}
-                  disabled={busy || chosenNodes.length === 0}
+                  /**
+                   * A self-triggering flow blocks here, not at go-live.
+                   *
+                   * The gate refuses it too (check 9), but by then the author
+                   * has built the whole thing and named it. This is the moment
+                   * it costs one click to fix.
+                   */
+                  disabled={
+                    busy ||
+                    chosenNodes.length === 0 ||
+                    proposal.selfTriggering !== null
+                  }
                   data-testid="nw-accept"
                   title={
-                    chosenNodes.length === 0
-                      ? "There are no steps to save yet."
-                      : undefined
+                    proposal.selfTriggering
+                      ? `${proposal.selfTriggering.steps.map((s) => s.stepId).join(", ")} publishes ${proposal.selfTriggering.eventType}, the event that starts this workflow. Change the trigger first.`
+                      : chosenNodes.length === 0
+                        ? "There are no steps to save yet."
+                        : undefined
                   }
                 >
                   {isChain

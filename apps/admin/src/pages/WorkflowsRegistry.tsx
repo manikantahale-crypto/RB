@@ -19,11 +19,25 @@
  */
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
+import { RowMenu } from "../lib/row-menu";
 import { listWorkflows, type WorkflowRegistryRow } from "../api";
 import { startDraft } from "../api/editor";
 
 type SortKey = "activity" | "name" | "module";
 
+/**
+ * The one thing to do next, and nothing else.
+ *
+ * A workflow moves working copy -> compiled -> requested -> live, and at any
+ * moment exactly one of those transitions is available. Four buttons of which
+ * three are disabled teaches people to ignore the row; one button that says
+ * what it does is readable at a glance and cannot be clicked in the wrong
+ * order.
+ *
+ * Approval deliberately gets a different look. It is the only step here that
+ * changes what runs in production, and it is the only one somebody other than
+ * the author should be pressing.
+ */
 function relativeTime(iso: string | null): string {
   if (!iso) return "never";
   const then = new Date(iso).getTime();
@@ -161,11 +175,34 @@ export function WorkflowsRegistryPage() {
   }, [rows, query, sort, moduleFilter]);
 
   /**
-   * Editing means a NEW DRAFT, never a change to the live version. This copies
-   * the active topology into a draft and opens it; a second click reopens the
-   * same draft rather than stacking another.
+   * Where a row goes when you click it, and what History opens.
+   *
+   * The same destination from both, deliberately. Clicking the row is the
+   * gesture people reach for; the menu item is for whoever looks for a named
+   * action instead. Sending them to two different screens to be tidy would
+   * mean one of the two is wrong.
+   */
+  const openRuns = (graphKey: string) =>
+    navigate(`/workflows/${encodeURIComponent(graphKey)}/runs`);
+
+  /**
+   * Open the flow for editing, which means a NEW DRAFT — never a change to the
+   * live version.
+   *
+   * A working copy that already exists is opened as it is. Only a workflow
+   * without one needs a draft made from its live version — and asking for one
+   * regardless would either fail (there is nothing to copy from for a
+   * brand-new workflow) or quietly overwrite the edits somebody had in
+   * progress.
    */
   const editWorkflow = async (graphKey: string) => {
+    const row = (rows ?? []).find((r) => r.graphKey === graphKey);
+
+    if (row?.lifecycle.hasWorkingCopy) {
+      navigate(`/workflows/${encodeURIComponent(graphKey)}/edit?version=0`);
+      return;
+    }
+
     setOpening(graphKey);
     setError(null);
     const res = await startDraft(graphKey);
@@ -281,18 +318,52 @@ export function WorkflowsRegistryPage() {
                 <th scope="col">Live version</th>
                 <th scope="col">Drafts</th>
                 <th scope="col">Last 24 hours</th>
-                <th scope="col"><span className="sr-only">Edit</span></th>
+                <th scope="col"><span className="sr-only">More actions</span></th>
               </tr>
             </thead>
             <tbody>
               {visible.map((row) => (
+                /*
+                  THE ROW IS THE CONTROL.
+
+                  It used to carry an Open button and a History link, which put
+                  two targets on a row whose whole purpose is "show me this
+                  workflow". Clicking the row now goes where people were going
+                  anyway — its runs — and everything that acts on the workflow
+                  moved behind the three-dot menu, always in the same column.
+
+                  `role="link"` and the key handler are not decoration: a <tr>
+                  with an onClick is invisible to the keyboard, and this screen
+                  is the way in to every other one.
+                */
                 <tr
                   key={row.graphKey}
                   data-testid="workflow-row"
-                  className={row.orphan ? "wf-row wf-row--orphan" : "wf-row"}
+                  className={`wf-row wf-row--clickable${row.orphan ? " wf-row--orphan" : ""}`}
+                  onClick={() => openRuns(row.graphKey)}
                 >
                   <td>
-                    <span className="wf-key">{row.graphKey}</span>
+                    {/*
+                      A REAL LINK, not just the row's onClick.
+
+                      Making the <tr> itself the control needs role="link" and
+                      tabIndex, and that takes the row out of the table's
+                      accessibility tree — it stops being a row, so the column
+                      headers stop being announced with the cells. The row
+                      handler above is the convenience for a mouse; this is the
+                      thing a keyboard tabs to and a screen reader reads, and
+                      it points at the same place.
+
+                      stopPropagation because otherwise the click is handled
+                      twice — once here and once by the row.
+                    */}
+                    <Link
+                      className="wf-key"
+                      to={`/workflows/${encodeURIComponent(row.graphKey)}/runs`}
+                      onClick={(e) => e.stopPropagation()}
+                    >
+                      {row.graphKey}
+                    </Link>
                     <span className="wf-module">{row.module}</span>
                   </td>
                   <td>
@@ -327,43 +398,44 @@ export function WorkflowsRegistryPage() {
                     </span>
                   </td>
                   <td>
-                    {/* The deck makes this cell the way into screen 12. */}
-                    <Link
-                      className="wf-health-link"
-                      to={`/workflows/${encodeURIComponent(row.graphKey)}/runs`}
-                      aria-label={`See runs of ${row.graphKey}`}
-                    >
-                      <HealthCell row={row} />
-                    </Link>
-                  </td>
-                  <td>
-                    <button
-                      type="button"
-                      className="wf-btn"
-                      onClick={() => void editWorkflow(row.graphKey)}
-                      disabled={opening === row.graphKey || row.activeVersion == null}
-                      title={
-                        row.activeVersion == null
-                          ? "Nothing active to copy from yet."
-                          : "Open a draft copy of the live version"
-                      }
-                    >
-                      {opening === row.graphKey ? "Opening…" : "Edit"}
-                    </button>
                     {/*
-                      Screen 5. Deliberately a quiet link rather than a second
-                      button: firing runs the workflow for real, and a control
-                      that sits level with "Edit" invites being clicked with
-                      the same expectations. The warning lives on that screen,
-                      where there is room to say it properly.
+                      No link of its own any more — the row is the link, and a
+                      link inside a clickable row is two targets doing one job.
                     */}
-                    <Link
-                      className="lt-entry"
-                      to={`/workflows/${encodeURIComponent(row.graphKey)}/test`}
-                      title={`Fire a real ${row.graphKey} event`}
-                    >
-                      Test…
-                    </Link>
+                    <HealthCell row={row} />
+                  </td>
+                  <td className="wf-actions-cell">
+                    {/*
+                      Everything that acts on a workflow, in one place that is
+                      the same on every row.
+
+                      Edit is disabled rather than hidden when there is nothing
+                      to open: a menu whose items move depending on the row is
+                      a menu you have to read every time, and the reason is
+                      worth saying.
+                    */}
+                    <RowMenu
+                      label={`More actions for ${row.graphKey}`}
+                      testId={`row-menu-${row.graphKey}`}
+                      items={[
+                        {
+                          label:
+                            opening === row.graphKey ? "Opening…" : "Edit",
+                          onSelect: () => void editWorkflow(row.graphKey),
+                          disabledReason:
+                            opening === row.graphKey
+                              ? "Opening…"
+                              : row.activeVersion == null &&
+                                  !row.lifecycle.hasWorkingCopy
+                                ? "No version and no draft to open yet"
+                                : null,
+                        },
+                        {
+                          label: "History",
+                          onSelect: () => openRuns(row.graphKey),
+                        },
+                      ]}
+                    />
                   </td>
                 </tr>
               ))}

@@ -22,6 +22,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { Link, useNavigate, useParams, useSearchParams } from "react-router-dom";
 import { listWorkflowRuns, type WorkflowRun } from "../api";
+import { WorkflowOutlinePanel } from "./workflow-outline-panel";
 
 /** Terminal states first — the ones people filter to most. */
 const STATUS_ORDER = [
@@ -141,6 +142,16 @@ export function WorkflowRunsPage() {
           </p>
         </div>
       </header>
+
+      {/*
+        What the workflow IS, above the list of times it ran.
+
+        Somebody arriving here from a search needs to know whether this is the
+        workflow they meant before any of these runs are worth reading, and
+        until now the only way to find out was to open a run — which answers a
+        different question, at much greater length.
+      */}
+      <WorkflowOutlinePanel graphKey={graphKey} />
 
       <div className="wf-controls">
         <button
