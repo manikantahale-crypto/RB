@@ -9,6 +9,15 @@ export default defineConfig({
   server: {
     host: "127.0.0.1",
     port: 5173,
+    /**
+     * Fail rather than drift.
+     *
+     * Without this, a 5173 already in use sends vite quietly to 5174 — and the
+     * admin then runs on a port nobody is looking at, proxying to an admin-api
+     * that may be a different process than the one being edited. A stack that
+     * half-works is harder to diagnose than one that refuses to start.
+     */
+    strictPort: true,
     proxy: {
       "/api": {
         target: "http://localhost:4200",

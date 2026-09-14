@@ -247,13 +247,32 @@ export async function recordAgentStep(args: {
       [args.runId],
     );
     const seq = seqRes.rows[0]?.seq ?? 1;
+    /**
+     * `org_id` IS IN THE COLUMN LIST NOW, AND IT WAS NOT.
+     *
+     * This function has always taken `organizationId` and never written it.
+     * That was harmless until the column became `NOT NULL` in the tenancy
+     * work, and then every insert began failing — caught by the fail-open
+     * catch below, logged as a warning, and otherwise invisible.
+     *
+     * Measured: the last step row landed 2026-09-09, and 250 runs have
+     * happened since with no steps recorded at all. Run detail has been empty
+     * for every one of them, and nothing said so louder than a console warning
+     * nobody was reading.
+     *
+     * Fail-open is still right here — a step we could not record must not kill
+     * a run that worked — but it is exactly why this survived. Something that
+     * silently degrades needs the check, not the catch.
+     */
     await args.pool.query(
       `INSERT INTO orch.steps (
-         id, run_id, seq, node, tool_name, input, output_ref, latency_ms, status
-       ) VALUES ($1,$2,$3,$4,$5,$6::jsonb,$7::jsonb,$8,$9)`,
+         id, run_id, org_id, seq, node, tool_name, input, output_ref,
+         latency_ms, status
+       ) VALUES ($1,$2,$3,$4,$5,$6,$7::jsonb,$8::jsonb,$9,$10)`,
       [
         randomUUID(),
         args.runId,
+        args.organizationId,
         seq,
         args.node,
         args.toolName ?? null,
