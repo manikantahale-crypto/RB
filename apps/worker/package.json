@@ -13,7 +13,8 @@
     "bootstrap:runtime": "npm run bootstrap:pgboss && npm run bootstrap:checkpointer",
     "test": "vitest run",
     "manual:run": "tsx scripts/manual-run.ts",
-    "materialize:nodes": "tsx scripts/materialize-node-registry.ts"
+    "materialize:nodes": "tsx scripts/materialize-node-registry.ts",
+    "dev:watch": "tsx watch --include \"../../packages/*/src/**/*.ts\" --exclude \"../../packages/*/src/**/*.test.ts\" src/bootstrap-pgboss.ts"
   },
   "devDependencies": {
     "@types/pg": "^8.20.4",
