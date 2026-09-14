@@ -110,6 +110,21 @@
 .rc-gaining { color: var(--status-success-fg); }
 .rc-gate { font-family: inherit; color: var(--text-secondary); }
 
+/*
+ * "Nothing answers it" is an ANSWER, so it sits where the answers sit.
+ *
+ * It used to be a paragraph on one side and absent on the other, which made
+ * two columns comparing the same thing look like two different kinds of
+ * statement. Same list, same row, only the voice differs: prose rather than a
+ * key, because it is not one.
+ */
+.rc-none {
+  font-family: var(--font-family-body);
+  color: var(--text-muted);
+  list-style: none;
+  margin-left: calc(-1 * var(--space-4));
+}
+
 .rc-losing {
   margin: var(--space-3) 0 0;
   font-size: var(--font-size-sm);

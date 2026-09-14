@@ -61,6 +61,56 @@ function CheckRow({ check }: { check: ReleaseCheck }) {
   );
 }
 
+/** One route the router would take, as the simulation reports it. */
+type PreviewRoute = { workflowKey: string; group: string; gatedOn: string[] };
+
+/**
+ * One side of the before/after comparison.
+ *
+ * ALWAYS A LIST, INCLUDING WHEN IT IS EMPTY. "Nothing answers it" is an answer
+ * to the same question the other entries answer, so it is rendered in the same
+ * place and the same rhythm rather than as a sentence beside a list. Two
+ * columns that disagree about their own shape make a comparison hard to read
+ * before anybody gets to the content.
+ *
+ * MANY IS THE ORDINARY CASE, NOT A SPECIAL ONE. One event can already be
+ * answered by more than one application — `resolveRoutes` returns a route per
+ * routing group — so either side can hold several today and will hold several
+ * more often as modules are added. Nothing here treats one as the normal
+ * number.
+ */
+function RouteList({
+  routes,
+  gaining = [],
+}: {
+  routes: PreviewRoute[];
+  /** Keys this approval would add, highlighted on the "after" side. */
+  gaining?: string[];
+}) {
+  if (routes.length === 0) {
+    return (
+      <ul className="rc-route-list">
+        <li className="rc-none">nothing answers it</li>
+      </ul>
+    );
+  }
+  return (
+    <ul className="rc-route-list">
+      {routes.map((r) => (
+        <li
+          key={`${r.group}:${r.workflowKey}`}
+          className={gaining.includes(r.workflowKey) ? "rc-gaining" : undefined}
+        >
+          {r.workflowKey}
+          {r.gatedOn.length > 0 ? (
+            <span className="rc-gate"> · only with {r.gatedOn.join(", ")}</span>
+          ) : null}
+        </li>
+      ))}
+    </ul>
+  );
+}
+
 export function ReleaseConsolePage() {
   const { graphKey = "" } = useParams();
   const navigate = useNavigate();
@@ -262,43 +312,32 @@ export function ReleaseConsolePage() {
               <p className="muted rc-event">
                 when <code>{view.routing.eventType}</code> arrives
               </p>
+              {/*
+                BOTH SIDES THE SAME SHAPE, BECAUSE THEY ARE THE SAME QUESTION.
+
+                These were written separately and drifted: "now" answered an
+                empty list with a paragraph, "after" always rendered a `<ul>`
+                and had no empty case at all — so nothing routing after
+                approval would have drawn an empty box. Side by side, one read
+                as prose and the other as a list, which made a comparison look
+                like two different kinds of statement.
+
+                One component, so they cannot diverge again, and so the case
+                that is coming — several workflows either side, once one event
+                can be answered by more than one application — looks the same
+                on both.
+              */}
               <div className="rc-routes">
                 <div>
                   <h3>now</h3>
-                  {view.routing.before.length === 0 ? (
-                    <p className="muted">nothing answers it</p>
-                  ) : (
-                    <ul>
-                      {view.routing.before.map((r) => (
-                        <li key={r.workflowKey}>
-                          {r.workflowKey}
-                          {r.gatedOn.length > 0 ? (
-                            <span className="rc-gate"> · only with {r.gatedOn.join(", ")}</span>
-                          ) : null}
-                        </li>
-                      ))}
-                    </ul>
-                  )}
+                  <RouteList routes={view.routing.before} />
                 </div>
                 <div>
                   <h3>after approving</h3>
-                  <ul>
-                    {view.routing.after.map((r) => (
-                      <li
-                        key={r.workflowKey}
-                        className={
-                          view.routing!.gaining.includes(r.workflowKey)
-                            ? "rc-gaining"
-                            : undefined
-                        }
-                      >
-                        {r.workflowKey}
-                        {r.gatedOn.length > 0 ? (
-                          <span className="rc-gate"> · only with {r.gatedOn.join(", ")}</span>
-                        ) : null}
-                      </li>
-                    ))}
-                  </ul>
+                  <RouteList
+                    routes={view.routing.after}
+                    gaining={view.routing.gaining}
+                  />
                 </div>
               </div>
               {view.routing.losing.length > 0 ? (
