@@ -18,8 +18,7 @@ WITH definitions(graph_key, definition) AS (
     'syntra.jd.workflow',
     '{
       "graphKey": "syntra.jd.workflow",
-      "stateSchema": "SyntraState",
-      "entryInput": "trigger_event",
+      "entryInput": "JdReceivedPayload",
       "nodes": [
         { "id": "process", "impl": "syntra.jd.process" }
       ],
@@ -33,8 +32,7 @@ WITH definitions(graph_key, definition) AS (
     'syntra.resume.workflow',
     '{
       "graphKey": "syntra.resume.workflow",
-      "stateSchema": "SyntraState",
-      "entryInput": "trigger_event",
+      "entryInput": "ResumeReceivedPayload",
       "nodes": [
         { "id": "process", "impl": "syntra.resume.process" }
       ],
@@ -48,8 +46,7 @@ WITH definitions(graph_key, definition) AS (
     'syntra.match.workflow',
     '{
       "graphKey": "syntra.match.workflow",
-      "stateSchema": "SyntraState",
-      "entryInput": "trigger_event",
+      "entryInput": "MatchRequestedPayload",
       "nodes": [
         { "id": "process", "impl": "syntra.match.process" }
       ],

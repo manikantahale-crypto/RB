@@ -143,7 +143,7 @@ CREATE SCHEMA IF NOT EXISTS syntra;
 -- Name: core_org_from_creator(); Type: FUNCTION; Schema: app; Owner: -
 --
 
-CREATE FUNCTION app.core_org_from_creator() RETURNS trigger
+CREATE OR REPLACE FUNCTION app.core_org_from_creator() RETURNS trigger
     LANGUAGE plpgsql
     AS $$
 DECLARE memberships int;
@@ -178,7 +178,7 @@ END $$;
 -- Name: core_org_from_person(); Type: FUNCTION; Schema: app; Owner: -
 --
 
-CREATE FUNCTION app.core_org_from_person() RETURNS trigger
+CREATE OR REPLACE FUNCTION app.core_org_from_person() RETURNS trigger
     LANGUAGE plpgsql
     AS $$
 BEGIN
@@ -195,7 +195,7 @@ END $$;
 -- Name: core_org_from_requirement(); Type: FUNCTION; Schema: app; Owner: -
 --
 
-CREATE FUNCTION app.core_org_from_requirement() RETURNS trigger
+CREATE OR REPLACE FUNCTION app.core_org_from_requirement() RETURNS trigger
     LANGUAGE plpgsql
     AS $$
 BEGIN
@@ -213,7 +213,7 @@ END $$;
 -- Name: current_org_id(); Type: FUNCTION; Schema: app; Owner: -
 --
 
-CREATE FUNCTION app.current_org_id() RETURNS uuid
+CREATE OR REPLACE FUNCTION app.current_org_id() RETURNS uuid
     LANGUAGE sql STABLE
     AS $$
     SELECT NULLIF(current_setting('app.org_id', true), '')::uuid
@@ -231,7 +231,7 @@ COMMENT ON FUNCTION app.current_org_id() IS 'Current tenant from the app.org_id 
 -- Name: org_from_creator(); Type: FUNCTION; Schema: app; Owner: -
 --
 
-CREATE FUNCTION app.org_from_creator() RETURNS trigger
+CREATE OR REPLACE FUNCTION app.org_from_creator() RETURNS trigger
     LANGUAGE plpgsql
     AS $$
 DECLARE memberships int;
@@ -274,7 +274,7 @@ END $$;
 -- Name: org_from_job(); Type: FUNCTION; Schema: app; Owner: -
 --
 
-CREATE FUNCTION app.org_from_job() RETURNS trigger
+CREATE OR REPLACE FUNCTION app.org_from_job() RETURNS trigger
     LANGUAGE plpgsql
     AS $$
 BEGIN
@@ -302,7 +302,7 @@ END $$;
 -- Name: processing_status(text); Type: FUNCTION; Schema: app; Owner: -
 --
 
-CREATE FUNCTION app.processing_status(source_status text) RETURNS text
+CREATE OR REPLACE FUNCTION app.processing_status(source_status text) RETURNS text
     LANGUAGE sql IMMUTABLE
     AS $$
   SELECT CASE lower(coalesce(source_status, ''))
@@ -318,7 +318,7 @@ $$;
 -- Name: set_updated_at(); Type: FUNCTION; Schema: app; Owner: -
 --
 
-CREATE FUNCTION app.set_updated_at() RETURNS trigger
+CREATE OR REPLACE FUNCTION app.set_updated_at() RETURNS trigger
     LANGUAGE plpgsql
     AS $$
   BEGIN
@@ -408,7 +408,13 @@ CREATE TABLE authoring.graph_versions (
     compiled_by uuid,
     compiled_by_label text,
     compiled_at timestamp with time zone DEFAULT now() NOT NULL,
-    CONSTRAINT graph_versions_status_check CHECK ((status = ANY (ARRAY['compiled'::text, 'live'::text, 'retired'::text])))
+    requested_by uuid,
+    requested_by_label text,
+    requested_at timestamp with time zone,
+    approved_by uuid,
+    approved_by_label text,
+    approved_at timestamp with time zone,
+    CONSTRAINT graph_versions_status_check CHECK ((status = ANY (ARRAY['compiled'::text, 'pending_go_live'::text, 'live'::text, 'retired'::text])))
 );
 
 
@@ -449,8 +455,8 @@ CREATE TABLE authoring.node_registry (
     config_schema jsonb,
     admin_exposed jsonb,
     side_effect text,
-    idempotency text,
-    execution text,
+    idempotency jsonb,
+    execution jsonb,
     llm jsonb,
     dependencies jsonb,
     persistence jsonb,
@@ -460,6 +466,53 @@ CREATE TABLE authoring.node_registry (
     source text DEFAULT 'contract'::text NOT NULL,
     checksum text,
     updated_at timestamp with time zone DEFAULT now() NOT NULL
+);
+
+
+--
+-- Name: plan_steps; Type: TABLE; Schema: authoring; Owner: -
+--
+
+CREATE TABLE authoring.plan_steps (
+    plan_id uuid NOT NULL,
+    seq integer NOT NULL,
+    kind text NOT NULL,
+    graph_id uuid,
+    target_version_id uuid,
+    inbound_event_type text,
+    blocked_reason text,
+    owner_application text,
+    approved_by uuid,
+    approved_by_label text,
+    approved_at timestamp with time zone,
+    CONSTRAINT plan_steps_blocked_has_no_graph CHECK (((kind <> 'blocked'::text) OR (graph_id IS NULL))),
+    CONSTRAINT plan_steps_blocked_is_explained CHECK (((kind = 'blocked'::text) = (blocked_reason IS NOT NULL))),
+    CONSTRAINT plan_steps_kind_check CHECK ((kind = ANY (ARRAY['existing'::text, 'changed'::text, 'new'::text, 'blocked'::text])))
+);
+
+
+--
+-- Name: plans; Type: TABLE; Schema: authoring; Owner: -
+--
+
+CREATE TABLE authoring.plans (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    org_id uuid NOT NULL,
+    request_text text NOT NULL,
+    status text DEFAULT 'draft'::text NOT NULL,
+    created_by uuid,
+    created_by_label text,
+    requested_by uuid,
+    requested_by_label text,
+    requested_at timestamp with time zone,
+    approved_by uuid,
+    approved_by_label text,
+    approved_at timestamp with time zone,
+    released_at timestamp with time zone,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT plans_status_check CHECK ((status = ANY (ARRAY['draft'::text, 'pending_approval'::text, 'live'::text, 'abandoned'::text]))),
+    CONSTRAINT plans_two_person_rule CHECK (((approved_by IS NULL) OR (requested_by IS NULL) OR (approved_by <> requested_by)))
 );
 
 
@@ -1112,6 +1165,30 @@ ALTER TABLE ONLY authoring.node_registry
 
 
 --
+-- Name: plan_steps plan_steps_pkey; Type: CONSTRAINT; Schema: authoring; Owner: -
+--
+
+ALTER TABLE ONLY authoring.plan_steps
+    ADD CONSTRAINT plan_steps_pkey PRIMARY KEY (plan_id, seq);
+
+
+--
+-- Name: plans plans_id_org_id_key; Type: CONSTRAINT; Schema: authoring; Owner: -
+--
+
+ALTER TABLE ONLY authoring.plans
+    ADD CONSTRAINT plans_id_org_id_key UNIQUE (id, org_id);
+
+
+--
+-- Name: plans plans_pkey; Type: CONSTRAINT; Schema: authoring; Owner: -
+--
+
+ALTER TABLE ONLY authoring.plans
+    ADD CONSTRAINT plans_pkey PRIMARY KEY (id);
+
+
+--
 -- Name: admin_agent_entitlements admin_agent_entitlements_pkey; Type: CONSTRAINT; Schema: builder; Owner: -
 --
 
@@ -1469,10 +1546,24 @@ CREATE UNIQUE INDEX graph_versions_one_live_idx ON authoring.graph_versions USIN
 
 
 --
+-- Name: graph_versions_pending_idx; Type: INDEX; Schema: authoring; Owner: -
+--
+
+CREATE INDEX graph_versions_pending_idx ON authoring.graph_versions USING btree (graph_id, requested_at DESC) WHERE (status = 'pending_go_live'::text);
+
+
+--
 -- Name: graphs_key_per_org_idx; Type: INDEX; Schema: authoring; Owner: -
 --
 
 CREATE UNIQUE INDEX graphs_key_per_org_idx ON authoring.graphs USING btree (COALESCE((org_id)::text, '~global~'::text), graph_key);
+
+
+--
+-- Name: plan_steps_awaiting_owner_idx; Type: INDEX; Schema: authoring; Owner: -
+--
+
+CREATE INDEX plan_steps_awaiting_owner_idx ON authoring.plan_steps USING btree (owner_application) WHERE ((owner_application IS NOT NULL) AND (approved_at IS NULL));
 
 
 --
@@ -1686,6 +1777,13 @@ CREATE TRIGGER authoring_graphs_updated_at BEFORE UPDATE ON authoring.graphs FOR
 
 
 --
+-- Name: plans authoring_plans_updated_at; Type: TRIGGER; Schema: authoring; Owner: -
+--
+
+CREATE TRIGGER authoring_plans_updated_at BEFORE UPDATE ON authoring.plans FOR EACH ROW EXECUTE FUNCTION app.set_updated_at();
+
+
+--
 -- Name: agent_definitions agent_definitions_set_updated_at; Type: TRIGGER; Schema: builder; Owner: -
 --
 
@@ -1849,6 +1947,14 @@ ALTER TABLE ONLY authoring.graph_drafts
 
 
 --
+-- Name: graph_versions graph_versions_approved_by_fkey; Type: FK CONSTRAINT; Schema: authoring; Owner: -
+--
+
+ALTER TABLE ONLY authoring.graph_versions
+    ADD CONSTRAINT graph_versions_approved_by_fkey FOREIGN KEY (approved_by) REFERENCES platform.users(id);
+
+
+--
 -- Name: graph_versions graph_versions_compiled_by_fkey; Type: FK CONSTRAINT; Schema: authoring; Owner: -
 --
 
@@ -1862,6 +1968,14 @@ ALTER TABLE ONLY authoring.graph_versions
 
 ALTER TABLE ONLY authoring.graph_versions
     ADD CONSTRAINT graph_versions_graph_id_org_id_fkey FOREIGN KEY (graph_id, org_id) REFERENCES authoring.graphs(id, org_id);
+
+
+--
+-- Name: graph_versions graph_versions_requested_by_fkey; Type: FK CONSTRAINT; Schema: authoring; Owner: -
+--
+
+ALTER TABLE ONLY authoring.graph_versions
+    ADD CONSTRAINT graph_versions_requested_by_fkey FOREIGN KEY (requested_by) REFERENCES platform.users(id);
 
 
 --
@@ -1894,6 +2008,78 @@ ALTER TABLE ONLY authoring.graphs
 
 ALTER TABLE ONLY authoring.node_registry
     ADD CONSTRAINT node_registry_application_fkey FOREIGN KEY (application) REFERENCES platform.applications(key);
+
+
+--
+-- Name: plan_steps plan_steps_approved_by_fkey; Type: FK CONSTRAINT; Schema: authoring; Owner: -
+--
+
+ALTER TABLE ONLY authoring.plan_steps
+    ADD CONSTRAINT plan_steps_approved_by_fkey FOREIGN KEY (approved_by) REFERENCES platform.users(id);
+
+
+--
+-- Name: plan_steps plan_steps_graph_id_fkey; Type: FK CONSTRAINT; Schema: authoring; Owner: -
+--
+
+ALTER TABLE ONLY authoring.plan_steps
+    ADD CONSTRAINT plan_steps_graph_id_fkey FOREIGN KEY (graph_id) REFERENCES authoring.graphs(id);
+
+
+--
+-- Name: plan_steps plan_steps_owner_application_fkey; Type: FK CONSTRAINT; Schema: authoring; Owner: -
+--
+
+ALTER TABLE ONLY authoring.plan_steps
+    ADD CONSTRAINT plan_steps_owner_application_fkey FOREIGN KEY (owner_application) REFERENCES platform.applications(key);
+
+
+--
+-- Name: plan_steps plan_steps_plan_id_fkey; Type: FK CONSTRAINT; Schema: authoring; Owner: -
+--
+
+ALTER TABLE ONLY authoring.plan_steps
+    ADD CONSTRAINT plan_steps_plan_id_fkey FOREIGN KEY (plan_id) REFERENCES authoring.plans(id) ON DELETE CASCADE;
+
+
+--
+-- Name: plan_steps plan_steps_target_version_id_fkey; Type: FK CONSTRAINT; Schema: authoring; Owner: -
+--
+
+ALTER TABLE ONLY authoring.plan_steps
+    ADD CONSTRAINT plan_steps_target_version_id_fkey FOREIGN KEY (target_version_id) REFERENCES authoring.graph_versions(id);
+
+
+--
+-- Name: plans plans_approved_by_fkey; Type: FK CONSTRAINT; Schema: authoring; Owner: -
+--
+
+ALTER TABLE ONLY authoring.plans
+    ADD CONSTRAINT plans_approved_by_fkey FOREIGN KEY (approved_by) REFERENCES platform.users(id);
+
+
+--
+-- Name: plans plans_created_by_fkey; Type: FK CONSTRAINT; Schema: authoring; Owner: -
+--
+
+ALTER TABLE ONLY authoring.plans
+    ADD CONSTRAINT plans_created_by_fkey FOREIGN KEY (created_by) REFERENCES platform.users(id);
+
+
+--
+-- Name: plans plans_org_id_fkey; Type: FK CONSTRAINT; Schema: authoring; Owner: -
+--
+
+ALTER TABLE ONLY authoring.plans
+    ADD CONSTRAINT plans_org_id_fkey FOREIGN KEY (org_id) REFERENCES platform.organizations(id);
+
+
+--
+-- Name: plans plans_requested_by_fkey; Type: FK CONSTRAINT; Schema: authoring; Owner: -
+--
+
+ALTER TABLE ONLY authoring.plans
+    ADD CONSTRAINT plans_requested_by_fkey FOREIGN KEY (requested_by) REFERENCES platform.users(id);
 
 
 --
@@ -2238,6 +2424,50 @@ CREATE POLICY node_registry_migrator_all ON authoring.node_registry TO syntra_mi
 --
 
 CREATE POLICY node_registry_shared ON authoring.node_registry USING (true) WITH CHECK (true);
+
+
+--
+-- Name: plan_steps; Type: ROW SECURITY; Schema: authoring; Owner: -
+--
+
+ALTER TABLE authoring.plan_steps ENABLE ROW LEVEL SECURITY;
+
+--
+-- Name: plan_steps plan_steps_migrator_all; Type: POLICY; Schema: authoring; Owner: -
+--
+
+CREATE POLICY plan_steps_migrator_all ON authoring.plan_steps TO syntra_migrator USING (true) WITH CHECK (true);
+
+
+--
+-- Name: plan_steps plan_steps_tenant; Type: POLICY; Schema: authoring; Owner: -
+--
+
+CREATE POLICY plan_steps_tenant ON authoring.plan_steps USING ((EXISTS ( SELECT 1
+   FROM authoring.plans p
+  WHERE (p.id = plan_steps.plan_id)))) WITH CHECK ((EXISTS ( SELECT 1
+   FROM authoring.plans p
+  WHERE (p.id = plan_steps.plan_id))));
+
+
+--
+-- Name: plans; Type: ROW SECURITY; Schema: authoring; Owner: -
+--
+
+ALTER TABLE authoring.plans ENABLE ROW LEVEL SECURITY;
+
+--
+-- Name: plans plans_migrator_all; Type: POLICY; Schema: authoring; Owner: -
+--
+
+CREATE POLICY plans_migrator_all ON authoring.plans TO syntra_migrator USING (true) WITH CHECK (true);
+
+
+--
+-- Name: plans plans_tenant; Type: POLICY; Schema: authoring; Owner: -
+--
+
+CREATE POLICY plans_tenant ON authoring.plans USING (((org_id IS NULL) OR ((org_id)::text = NULLIF(current_setting('app.org_id'::text, true), ''::text)))) WITH CHECK (((org_id IS NULL) OR ((org_id)::text = NULLIF(current_setting('app.org_id'::text, true), ''::text))));
 
 
 --

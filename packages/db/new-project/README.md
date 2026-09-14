@@ -73,6 +73,85 @@ no errors. On that database:
 - a second live version of one workflow is **refused**
 - a binding naming a queue nobody declared is **refused**
 
+## Creating the project
+
+**1 · Make the project.** Supabase dashboard → New project. Pick the region
+closest to you; nothing here depends on which. Note the database password when
+it is shown, because it is shown once.
+
+**2 · Get a connection string.** Project Settings → Database → Connection
+string → URI. Use the **session** pooler (port 5432) or the direct connection
+for the steps below — DDL and `psql -f` want a session, not the transaction
+pooler on 6543.
+
+**3 · Apply the schema.** From the repository root:
+
+```
+psql "<new project URI>" -v ON_ERROR_STOP=1 -f packages/db/new-project/V1__baseline.sql
+psql "<new project URI>" -v ON_ERROR_STOP=1 -f packages/db/new-project/V2__reference_data.sql
+```
+
+`V1` needs the `vector`, `citext` and `pg_trgm` extensions; it creates them
+itself and all three are available on Supabase.
+
+**4 · Seed what the platform needs to author anything.** These are the
+repeatable migrations, and they are safe to run more than once:
+
+```
+for f in packages/db/migrations/R__seed_*.sql; do
+  psql "<new project URI>" -v ON_ERROR_STOP=1 -f "$f"
+done
+```
+
+**5 · Create your first organisation and user.** Nothing is seeded for you.
+Membership lives in `platform.org_members`, not on the user — a person can
+belong to more than one tenant:
+
+```sql
+-- id has no default on either table; the application generates it.
+INSERT INTO platform.organizations (id, name, slug)
+VALUES (gen_random_uuid(), 'Your Company', 'your-company');
+INSERT INTO platform.users (id, email, full_name)
+VALUES (gen_random_uuid(), 'you@example.com', 'Your Name');
+INSERT INTO platform.org_members (org_id, user_id, role)
+SELECT o.id, u.id, 'admin'
+  FROM platform.organizations o, platform.users u
+ WHERE o.slug = 'your-company' AND u.email = 'you@example.com';
+```
+
+**6 · Point a stack at it.** Set all three in `.env` — they are the only
+database variables the code reads:
+
+```
+DATABASE_URL=<new project URI>
+DATABASE_MIGRATOR_URL=<new project URI>
+DATABASE_RELAY_URL=<new project URI>
+```
+
+**7 · Let the two libraries build their own tables.** pg-boss and the LangGraph
+checkpointer own their DDL and create it at boot; `V1` only makes the empty
+schemas for them:
+
+```
+npm run bootstrap:runtime -w @tekisho/worker
+```
+
+**8 · Publish the node registry from the code.** It is generated from the node
+contracts in git, so it is not seeded — that would let the database and the
+contracts drift:
+
+```
+npm run materialize:nodes -w @tekisho/worker
+```
+
+Then start the stack as usual (`npm run dev:full`).
+
+### Verified
+
+Running steps 3 and 4 against an empty database produces 32 tables, 14
+applications, 7 queues and 25 catalogued events, every one of them owned by an
+application. `V2` applied twice changes nothing the second time.
+
 ## Getting data into it
 
 `V1__baseline.sql` is schema only. Copy whatever you want with `pg_dump
