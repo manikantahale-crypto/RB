@@ -7,11 +7,20 @@ maps the response onto graph state. That is the whole job.
 
 If you are writing an `if` about a candidate's skills, a score threshold, or a
 document's contents, you are in the wrong directory — that logic belongs in
-`modules/<module>/service/`, which lives in this repo but is owned by the
+`node-api/src/modules/<module>/`, which lives in this repo but is owned by the
 module team.
 
-    orchestrator/adapters/syntra/     the orchestrator's shells for SYNTRA
-    modules/syntra/service/           SYNTRA itself
+    adapters/syntra/nodes/            the orchestrator's shells for SYNTRA
+    node-api/src/modules/syntra/      SYNTRA itself — services/, routes/,
+                                      workers/, repositories/, matching/
+
+Those are the real paths. This file used to say `orchestrator/adapters/` and
+`modules/<module>/service/` — the three-zone layout from a repository
+restructure that was deferred on purpose (Orchestrator_Decisions.md §4) and
+never done. Neither directory exists, and the wording sent at least one
+onboarding to look for a folder that is not there. Plural `services/`, inside
+`node-api/src/modules/`, is what SYNTRA actually uses and what a new module
+mirrors.
 
 ## Layout
 

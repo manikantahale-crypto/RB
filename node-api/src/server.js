@@ -72,7 +72,7 @@ async function start() {
       await seedEventSchemas();
       await ensureRecruiterReviewSchema();
     });
-    log.info("Platform event schemas verified/seeded.", {
+    log.info("Platform event catalogue checked (read-only).", {
       platformEvents: env.PLATFORM_EVENTS_ENABLED,
       delegateMatch: env.ORCH_DELEGATE_MATCH,
       emitJdReceived: env.ORCH_EMIT_JD_RECEIVED,

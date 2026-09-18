@@ -2,8 +2,9 @@ const { pool } = require("../config/db");
 const crypto = require("crypto");
 const env = require("../config/env");
 const PLATFORM = require("../constants/platformEvents");
+const log = require("../utils/logger");
 
-/** Syntra + ASTRA platform events — FK-safe seed for event_outbox. */
+/** Every event type this service emits. Checked against the catalogue at boot — never written. */
 const PLATFORM_EVENT_TYPES = [
   PLATFORM.JD_RECEIVED,
   PLATFORM.JD_PARSED,
@@ -28,30 +29,38 @@ const PLATFORM_EVENT_TYPES = [
 ];
 
 /**
- * Seed the event catalogue so outbox inserts satisfy their FK (orch Flyway may
- * already have these).
+ * Check that the events this service emits are in the catalogue. Read-only.
  *
- * `application` is derived from the name prefix the one way the platform does
- * it, rather than left NULL — see registerEvent in packages/authoring. These
- * rows reach the legacy public.event_schemas, which is what the outbox FK
- * still points at, through the mirror in V20260909.34.
+ * This used to INSERT them, with payload_schema = '{}', ON CONFLICT DO NOTHING.
+ * That did two things nobody wanted: an empty schema switches off the ingress
+ * gate's input check, idempotency keys and trigger ranking for that event, and
+ * DO NOTHING meant a row deliberately deleted by a migration came back at the
+ * next boot (the astra.* ghosts, V20260909.57 → .68). The catalogue is the
+ * platform's — migrations write it (V20260909.60, .68), code does not.
+ *
+ * So this only looks. A missing entry is logged loudly at startup, which is
+ * where somebody will read it, and the outbox insert for that event will then
+ * fail its foreign key, which is the right outcome: an event nobody wrote down
+ * must not be published.
+ *
+ * @returns {Promise<string[]>} the event types not found in the catalogue
  */
 async function seedEventSchemas() {
-  for (const eventType of PLATFORM_EVENT_TYPES) {
-    await pool.query(
-      `INSERT INTO authoring.event_catalog (
-         event_type, schema_version, application, description,
-         payload_schema, envelope_fields, status
-       ) VALUES (
-         $1, '1.0',
-         (SELECT a.key FROM platform.applications a
-           WHERE $1 LIKE a.key || '.%' LIMIT 1),
-         $2, '{}'::jsonb, '{}'::jsonb, 'active'
-       )
-       ON CONFLICT (event_type, schema_version) DO NOTHING`,
-      [eventType, `Syntra platform event: ${eventType}`],
+  const { rows } = await pool.query(
+    `SELECT event_type FROM authoring.event_catalog
+      WHERE event_type = ANY($1::text[])`,
+    [PLATFORM_EVENT_TYPES],
+  );
+  const present = new Set(rows.map((r) => r.event_type));
+  const missing = PLATFORM_EVENT_TYPES.filter((t) => !present.has(t));
+  if (missing.length) {
+    log.error(
+      `[event catalogue] ${missing.length} event type(s) this service emits are not in ` +
+      `authoring.event_catalog and will be REFUSED by the outbox: ${missing.join(", ")}. ` +
+      `Add them with a migration (see V20260909.60 for the shape); this code will not.`,
     );
   }
+  return missing;
 }
 
 /**
