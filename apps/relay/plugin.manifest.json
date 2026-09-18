@@ -1,0 +1,28 @@
+{
+  "id": "relay",
+  "name": "Smart Inbox Relay",
+  "version": "1.0.0",
+  "description": "IMAP/Gmail ingest, classify staffing emails, follow-ups, SLA chase",
+  "standalone": false,
+  "embeddedIn": "node-api",
+  "publicApiPort": 4000,
+  "healthPath": "/relay-health",
+  "migration": "V28__relay_inbox_schema.sql",
+  "dbSchema": "relay",
+  "ui": {
+    "screen": "inbox",
+    "viteProxy": "/api"
+  },
+  "env": [
+    "DATABASE_URL",
+    "EMAIL_PROVIDER",
+    "MARKETING_IMAP_USER",
+    "MARKETING_IMAP_PASSWORD",
+    "GMAIL_CLIENT_ID",
+    "GMAIL_REFRESH_TOKEN",
+    "OPENROUTER_API_KEY",
+    "SMTP_HOST",
+    "SMTP_USERNAME",
+    "SMTP_PASSWORD"
+  ]
+}

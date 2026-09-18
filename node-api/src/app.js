@@ -45,6 +45,9 @@ app.use((req, res, next) => {
 
 app.use(express.json());
 
+/** RELAY (Smart Inbox): its paths are served by the RELAY process; node-api forwards. */
+app.use(require("./modules/relay/routes/relayProxy.routes"));
+
 app.get("/health", (req, res) => res.json({ status: "ok" }));
 
 app.get("/dump-schema", async (req, res) => {

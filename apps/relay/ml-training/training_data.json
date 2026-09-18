@@ -1,0 +1,257 @@
+[
+  {
+    "text": "Looking for suitable profiles for this new opening. ASAP.",
+    "expected_probabilities": {
+      "Candidate Shortlisted": 0.0034477008866610538,
+      "Client Submission": 0.0017966534870661817,
+      "Follow-Up Needed": 0.000901224391342079,
+      "Interview Request": 0.003181294061679361,
+      "Need Resume": 0.0009886541009982105,
+      "Non-Vendor Email": 0.001989203835503362,
+      "Not Interested": 0.004346942739850537,
+      "Rate Asked": 0.0015137317797306732,
+      "Rejected": 0.007643036109683206,
+      "Requirement Shared": 0.9665374962194244,
+      "Selected for Interview": 0.003942463802808393,
+      "Vendor Reply": 0.0037115985852525
+    }
+  },
+  {
+    "text": "What is the expected hourly rate for this role?",
+    "expected_probabilities": {
+      "Candidate Shortlisted": 0.004239474740729179,
+      "Client Submission": 0.0016562453946812195,
+      "Follow-Up Needed": 0.004507502834288734,
+      "Interview Request": 0.00347138018590291,
+      "Need Resume": 0.0012453416948727339,
+      "Non-Vendor Email": 0.0028790116939987932,
+      "Not Interested": 0.0008995950714505097,
+      "Rate Asked": 0.9650702892065259,
+      "Rejected": 0.0057537965767637,
+      "Requirement Shared": 0.005859095305225324,
+      "Selected for Interview": 0.0029641220818599017,
+      "Vendor Reply": 0.0014541452137008665
+    }
+  },
+  {
+    "text": "Hello, just checking in. ASAP.",
+    "expected_probabilities": {
+      "Candidate Shortlisted": 0.0022371127568073107,
+      "Client Submission": 0.0022821241481284973,
+      "Follow-Up Needed": 0.0012493975020582086,
+      "Interview Request": 0.0030015456823838725,
+      "Need Resume": 0.0027566016460977153,
+      "Non-Vendor Email": 0.9680111773292952,
+      "Not Interested": 0.0035494204211662748,
+      "Rate Asked": 0.001938084784171307,
+      "Rejected": 0.0033599683944941605,
+      "Requirement Shared": 0.005578907231008053,
+      "Selected for Interview": 0.0033002005856735744,
+      "Vendor Reply": 0.002735459518715864
+    }
+  },
+  {
+    "text": "The candidate has been selected for an interview. Let me know.",
+    "expected_probabilities": {
+      "Candidate Shortlisted": 0.012851852587954677,
+      "Client Submission": 0.002898235731238925,
+      "Follow-Up Needed": 0.0026254419957908556,
+      "Interview Request": 0.007801619964125347,
+      "Need Resume": 0.0013253531281461806,
+      "Non-Vendor Email": 0.0015408904911601857,
+      "Not Interested": 0.0014392571890654658,
+      "Rate Asked": 0.0009846073091272188,
+      "Rejected": 0.007620546022271266,
+      "Requirement Shared": 0.0021014896241347792,
+      "Selected for Interview": 0.9566121721217475,
+      "Vendor Reply": 0.0021985338352374737
+    }
+  },
+  {
+    "text": "Please provide interview slot for the candidate. Thanks.",
+    "expected_probabilities": {
+      "Candidate Shortlisted": 0.002783659029474009,
+      "Client Submission": 0.004071704841634467,
+      "Follow-Up Needed": 0.0020608067300222576,
+      "Interview Request": 0.9400157892219627,
+      "Need Resume": 0.0018768593485442033,
+      "Non-Vendor Email": 0.00137870615784666,
+      "Not Interested": 0.0015416357610011698,
+      "Rate Asked": 0.001540593508964618,
+      "Rejected": 0.0021094683167736565,
+      "Requirement Shared": 0.004796260733634896,
+      "Selected for Interview": 0.03408352024171768,
+      "Vendor Reply": 0.00374099610842367
+    }
+  },
+  {
+    "text": "Please provide interview slot for the candidate. ASAP.",
+    "expected_probabilities": {
+      "Candidate Shortlisted": 0.002949738198765912,
+      "Client Submission": 0.0043730252723347095,
+      "Follow-Up Needed": 0.0022344173923599473,
+      "Interview Request": 0.9366862950300971,
+      "Need Resume": 0.002117091387447821,
+      "Non-Vendor Email": 0.0015098697094279687,
+      "Not Interested": 0.001656006719815178,
+      "Rate Asked": 0.0015606128427021104,
+      "Rejected": 0.0024424144900356704,
+      "Requirement Shared": 0.005654243085526488,
+      "Selected for Interview": 0.037432324905320245,
+      "Vendor Reply": 0.0013839609661669072
+    }
+  },
+  {
+    "text": "General inquiry about your services. Let me know.",
+    "expected_probabilities": {
+      "Candidate Shortlisted": 0.0024548270106527674,
+      "Client Submission": 0.001969587226298662,
+      "Follow-Up Needed": 0.0030624994590987124,
+      "Interview Request": 0.002722910770749992,
+      "Need Resume": 0.002491812307042885,
+      "Non-Vendor Email": 0.9644474344158781,
+      "Not Interested": 0.0068720014253754865,
+      "Rate Asked": 0.0039037302662651516,
+      "Rejected": 0.0027915212091099476,
+      "Requirement Shared": 0.003731244827618246,
+      "Selected for Interview": 0.0018641777741254576,
+      "Vendor Reply": 0.003688253307784611
+    }
+  },
+  {
+    "text": "Hot requirement: Senior React Developer. Thanks.",
+    "expected_probabilities": {
+      "Candidate Shortlisted": 0.006996918129597009,
+      "Client Submission": 0.001796895278483842,
+      "Follow-Up Needed": 0.0009236222735978383,
+      "Interview Request": 0.002595760137362702,
+      "Need Resume": 0.002030674482322861,
+      "Non-Vendor Email": 0.004316192438046131,
+      "Not Interested": 0.0027656267988594298,
+      "Rate Asked": 0.0016543118565355921,
+      "Rejected": 0.0023062734243323077,
+      "Requirement Shared": 0.9638525355736584,
+      "Selected for Interview": 0.002463347053023256,
+      "Vendor Reply": 0.008297842554180543
+    }
+  },
+  {
+    "text": "We have submitted the profile to the client. Thanks.",
+    "expected_probabilities": {
+      "Candidate Shortlisted": 0.011510569192214472,
+      "Client Submission": 0.9456905115524415,
+      "Follow-Up Needed": 0.0004239953712119816,
+      "Interview Request": 0.0019717854542667754,
+      "Need Resume": 0.011922815226515322,
+      "Non-Vendor Email": 0.001952935233525857,
+      "Not Interested": 0.0008727740683737255,
+      "Rate Asked": 0.0014747708577809366,
+      "Rejected": 0.009194814611739278,
+      "Requirement Shared": 0.001386021356676687,
+      "Selected for Interview": 0.0015099317437482092,
+      "Vendor Reply": 0.012089075331505154
+    }
+  },
+  {
+    "text": "Hot requirement: Senior React Developer.",
+    "expected_probabilities": {
+      "Candidate Shortlisted": 0.008329726647450365,
+      "Client Submission": 0.0019362816060770822,
+      "Follow-Up Needed": 0.000881664641365973,
+      "Interview Request": 0.0028182991095964116,
+      "Need Resume": 0.00226877394321342,
+      "Non-Vendor Email": 0.004631337271757797,
+      "Not Interested": 0.002835206571774071,
+      "Rate Asked": 0.0016468384942334735,
+      "Rejected": 0.00270898614531025,
+      "Requirement Shared": 0.9672358085951864,
+      "Selected for Interview": 0.002695692351978874,
+      "Vendor Reply": 0.0020113846220560306
+    }
+  },
+  {
+    "text": "Submission done for the candidate. Let me know.",
+    "expected_probabilities": {
+      "Candidate Shortlisted": 0.0036019244624247606,
+      "Client Submission": 0.9596738958787344,
+      "Follow-Up Needed": 0.00829326184271688,
+      "Interview Request": 0.005132774730394964,
+      "Need Resume": 0.0019701054785340633,
+      "Non-Vendor Email": 0.0018437944353538725,
+      "Not Interested": 0.0019468005560928689,
+      "Rate Asked": 0.0015415116685932137,
+      "Rejected": 0.0036014822866325697,
+      "Requirement Shared": 0.004109262335225016,
+      "Selected for Interview": 0.00451092092151479,
+      "Vendor Reply": 0.0037742654037826256
+    }
+  },
+  {
+    "text": "Please find the job description attached.",
+    "expected_probabilities": {
+      "Candidate Shortlisted": 0.0018594678464118584,
+      "Client Submission": 0.0024194417829699055,
+      "Follow-Up Needed": 0.001279874570350923,
+      "Interview Request": 0.003742765110858747,
+      "Need Resume": 0.004835538114905,
+      "Non-Vendor Email": 0.003045093379051806,
+      "Not Interested": 0.00635023466026086,
+      "Rate Asked": 0.003475042153666133,
+      "Rejected": 0.001840648085518637,
+      "Requirement Shared": 0.966939917748847,
+      "Selected for Interview": 0.0027429419233769986,
+      "Vendor Reply": 0.0014690346237819936
+    }
+  },
+  {
+    "text": "Looking for suitable profiles for this new opening. Let me know.",
+    "expected_probabilities": {
+      "Candidate Shortlisted": 0.002358496442867353,
+      "Client Submission": 0.0017851172789981145,
+      "Follow-Up Needed": 0.0028777911453359466,
+      "Interview Request": 0.0033883450985966873,
+      "Need Resume": 0.0011428118966006877,
+      "Non-Vendor Email": 0.0017928775849386529,
+      "Not Interested": 0.00529362110851128,
+      "Rate Asked": 0.0018065106168308211,
+      "Rejected": 0.007129564345863156,
+      "Requirement Shared": 0.9639671327267644,
+      "Selected for Interview": 0.002485408604185085,
+      "Vendor Reply": 0.005972323150507833
+    }
+  },
+  {
+    "text": "Hot requirement: Senior React Developer.",
+    "expected_probabilities": {
+      "Candidate Shortlisted": 0.008329726647450365,
+      "Client Submission": 0.0019362816060770822,
+      "Follow-Up Needed": 0.000881664641365973,
+      "Interview Request": 0.0028182991095964116,
+      "Need Resume": 0.00226877394321342,
+      "Non-Vendor Email": 0.004631337271757797,
+      "Not Interested": 0.002835206571774071,
+      "Rate Asked": 0.0016468384942334735,
+      "Rejected": 0.00270898614531025,
+      "Requirement Shared": 0.9672358085951864,
+      "Selected for Interview": 0.002695692351978874,
+      "Vendor Reply": 0.0020113846220560306
+    }
+  },
+  {
+    "text": "What is your billing rate? ASAP.",
+    "expected_probabilities": {
+      "Candidate Shortlisted": 0.0025175361623967487,
+      "Client Submission": 0.0011848581734151798,
+      "Follow-Up Needed": 0.0009053403263481605,
+      "Interview Request": 0.0036507109345801664,
+      "Need Resume": 0.001383074738637884,
+      "Non-Vendor Email": 0.016561473836336986,
+      "Not Interested": 0.0045888953761493954,
+      "Rate Asked": 0.9611595241483021,
+      "Rejected": 0.0016698020579045173,
+      "Requirement Shared": 0.00211206405824479,
+      "Selected for Interview": 0.0030319906690405053,
+      "Vendor Reply": 0.0012347295186435302
+    }
+  }
+]
