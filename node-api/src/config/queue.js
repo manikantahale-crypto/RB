@@ -15,6 +15,11 @@ const QUEUES = [
   "module.astra.requirement",
   "astra.requirement.normalized",
   "astra.email.poll",
+  // PRISM: the hourly sweep that re-sends unanswered consent requests
+  // (modules/prism/workers/consentAutoResend.worker). pg-boss 12 refuses to
+  // work a queue nobody created; on the old project this one existed because
+  // something else had created it first.
+  "prism.consent.autoresend",
 ];
 
 let boss = null;

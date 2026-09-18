@@ -20,6 +20,9 @@ const {
 const {
   registerAstraEmailPollerWorker,
 } = require("./workers/astraEmailPoller.worker");
+const {
+  registerConsentAutoResendWorker,
+} = require("./modules/prism/workers/consentAutoResend.worker");
 
 let server = null;
 let isShuttingDown = false;
@@ -36,6 +39,7 @@ async function bootstrapPgBossWorkers() {
     await registerActivationWorkers(boss);
     await registerAstraRequirementReceivedWorker(boss);
     await registerAstraEmailPollerWorker(boss);
+    await registerConsentAutoResendWorker(boss);
   });
   log.info("pg-boss workers registered successfully");
 
