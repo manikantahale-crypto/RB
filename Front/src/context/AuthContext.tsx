@@ -22,7 +22,18 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
 
   useEffect(() => {
     const restoreSession = async () => {
-      const savedToken = localStorage.getItem(TOKEN_KEY);
+      let savedToken = localStorage.getItem(TOKEN_KEY);
+      const urlParams = new URLSearchParams(window.location.search);
+      const queryToken = urlParams.get('token');
+      if (queryToken) {
+        savedToken = queryToken;
+        localStorage.setItem(TOKEN_KEY, queryToken);
+        const cleanSearch = new URLSearchParams(window.location.search);
+        cleanSearch.delete('token');
+        const searchStr = cleanSearch.toString() ? `?${cleanSearch.toString()}` : '';
+        window.history.replaceState(null, '', `${window.location.pathname}${searchStr}${window.location.hash}`);
+      }
+
       if (!savedToken) {
         setIsLoading(false);
         return;
@@ -46,6 +57,7 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
   }, []);
 
   const login = async (email: string, password: string) => {
+    localStorage.removeItem(TOKEN_KEY);
     const res = await authService.login(email, password);
     localStorage.setItem(TOKEN_KEY, res.token);
     setUser(res.user);
@@ -53,6 +65,7 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
   };
 
   const signup = async (fullName: string, email: string, password: string) => {
+    localStorage.removeItem(TOKEN_KEY);
     const res = await authService.signup(fullName, email, password);
     localStorage.setItem(TOKEN_KEY, res.token);
     setUser(res.user);

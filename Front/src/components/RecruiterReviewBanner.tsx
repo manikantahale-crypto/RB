@@ -29,7 +29,9 @@ export const RecruiterReviewBanner: React.FC<RecruiterReviewBannerProps> = ({
       const res = await apiFetch('/recruiter/reviews/pending');
       if (!res.ok) return;
       const data = await res.json();
-      const list = (data.items || []) as RecruiterReviewItem[];
+      const rawList = (data.items || []) as RecruiterReviewItem[];
+      // Keep banner strictly for non-watch human approval/parked reviews to prevent duplicate notifications
+      const list = rawList.filter((item) => item.actionType !== 'watch_match');
       setItems(list);
       onCountChange?.(list.length);
       if (list.length > 0) setDismissed(false);
@@ -136,3 +138,4 @@ export const RecruiterReviewBanner: React.FC<RecruiterReviewBannerProps> = ({
     </div>
   );
 };
+

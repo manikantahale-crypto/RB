@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { UploadCloud, FileText, CheckCircle2, Loader2, AlertCircle, Zap, Bookmark, Trash2, Check, X, FolderOpen, RefreshCw } from 'lucide-react';
-import { ExtractedAnalysis } from '../types';
+import { ExtractedAnalysis, Vendor } from '../types';
 import { cleanJobTitle } from '../utils';
 import { apiFetch } from '../services/api';
 
@@ -8,6 +8,12 @@ interface UploadAnalyzeProps {
   onSaveToLibrary?: (tab: 'jobs' | 'resumes') => void | Promise<void>;
   onGoToMatch?: (mode: 'job' | 'resume', id: string) => void;
   initialInputType?: 'jd' | 'resume';
+}
+
+function existingTitleFromDuplicatePayload(data: Record<string, unknown> | null | undefined, fallback: string): string {
+  const msg = String(data?.message || data?.error || '');
+  const quoted = msg.match(/"([^"]+)"/);
+  return (quoted?.[1] || fallback).trim() || fallback;
 }
 
 export const UploadAnalyze: React.FC<UploadAnalyzeProps> = ({
@@ -24,10 +30,31 @@ export const UploadAnalyze: React.FC<UploadAnalyzeProps> = ({
     setInputType(initialInputType);
   }, [initialInputType]);
 
+  // Vendor State
+  const [vendors, setVendors] = useState<Vendor[]>([]);
+  const [selectedVendorId, setSelectedVendorId] = useState<string>('');
+
+  useEffect(() => {
+    // Only fetch vendors if we are uploading a JD
+    if (inputType === 'jd') {
+      apiFetch('/vendors')
+        .then(res => res.json())
+        .then(data => {
+          if (data.data) setVendors(data.data);
+        })
+        .catch(err => console.error('Failed to load vendors:', err));
+    }
+  }, [inputType]);
+
   // Single Upload File State
   const [singleFile, setSingleFile] = useState<{ name: string; size: string } | null>(null);
   const [singleFileObj, setSingleFileObj] = useState<File | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [libraryNotice, setLibraryNotice] = useState<{
+    kind: 'jd' | 'resume';
+    existingTitle: string;
+    existingId?: string;
+  } | null>(null);
 
   // Bulk Upload state variables
   const [bulkState, setBulkState] = useState<'upload' | 'processing' | 'results'>('upload');
@@ -243,6 +270,7 @@ export const UploadAnalyze: React.FC<UploadAnalyzeProps> = ({
     setBulkState('processing');
     setIsBulkProgressFinished(false);
     setError(null);
+    setLibraryNotice(null);
 
     const total = bulkFiles.length;
     if (total === 0) return;
@@ -283,7 +311,7 @@ export const UploadAnalyze: React.FC<UploadAnalyzeProps> = ({
             if (response.status === 409) {
               const data = await response.json().catch(() => ({}));
               console.info(`[Upload] Duplicate job description detected: ${fileItem.name}`);
-              setBulkFiles(prev => prev.map((f, i) => i === index ? { ...f, status: 'duplicate' as const, jobId: data.jobId, error: "Duplicate / Already uploaded" } : f));
+              setBulkFiles(prev => prev.map((f, i) => i === index ? { ...f, status: 'duplicate' as const, jobId: data.jobId, error: data.message || data.error || "Duplicate JD — already in your library" } : f));
               return;
             }
             throw new Error("Upload failed");
@@ -371,6 +399,7 @@ export const UploadAnalyze: React.FC<UploadAnalyzeProps> = ({
       setSingleFileObj(file);
       setRawText(''); // Clear pasted text
       setError(null);
+      setLibraryNotice(null);
     }
   };
 
@@ -409,6 +438,7 @@ export const UploadAnalyze: React.FC<UploadAnalyzeProps> = ({
       setSingleFileObj(file);
       setRawText('');
       setError(null);
+      setLibraryNotice(null);
     }
   };
 
@@ -439,27 +469,29 @@ export const UploadAnalyze: React.FC<UploadAnalyzeProps> = ({
     setBulkFiles(prev => prev.filter((_, i) => i !== index));
   };
 
-function formatUserFriendlyError(rawError: string | null | undefined, fallback: string): string {
-  if (!rawError) return fallback;
-  const msg = rawError.trim();
-  
-  // Document type mismatch — keep specific UX guidance intact
-  if (msg.includes("appears to be a Candidate Resume") || msg.includes("appears to be a Job Description")) {
+  function formatUserFriendlyError(rawError: string | null | undefined, fallback: string): string {
+    if (!rawError) return fallback;
+    const msg = rawError.trim();
+    const lower = msg.toLowerCase();
+
+    if (msg.includes("appears to be a Candidate Resume") || msg.includes("appears to be a Job Description")) {
+      return msg;
+    }
+    if (/\bduplicate\b/i.test(msg) || /already in your library/i.test(msg)) {
+      return msg;
+    }
+    if (/insufficient credits|invalid api key|incorrect api key/i.test(lower)) {
+      return "AI processing is currently unavailable. Please try again in a moment.";
+    }
+    if (/server returned status 401/i.test(lower) || /jwt|session expired|invalid token/i.test(lower)) {
+      return "Your session expired. Please sign in again.";
+    }
+    if (msg.startsWith("404") || msg.startsWith("500") || msg.includes("status code (no body)")) {
+      return fallback;
+    }
+
     return msg;
   }
-  
-  // AI Auth / Credit errors — friendly message
-  if (/\b(401|402|403|unauthorized|user not found|insufficient credits|invalid api key)\b/i.test(msg)) {
-    return "AI processing is currently unavailable. Please check the AI configuration.";
-  }
-  
-  // Raw status codes without body
-  if (msg.startsWith("404") || msg.startsWith("500") || msg.includes("status code (no body)")) {
-    return fallback;
-  }
-
-  return msg;
-}
 
   // Helper method: Polling Candidate extraction status
   const startPollingCandidate = (candidateId: string) => {
@@ -653,6 +685,7 @@ function formatUserFriendlyError(rawError: string | null | undefined, fallback: 
       singlePollIntervalRef.current = null;
     }
     setError(null);
+    setLibraryNotice(null);
     setShowResults(false);
     setExtractedData(null);
     setAnalyzedId(null);
@@ -702,13 +735,18 @@ function formatUserFriendlyError(rawError: string | null | undefined, fallback: 
 
         if (!response.ok) {
           if (response.status === 409) {
-            const data = await response.json().catch(() => ({ message: "This resume already exists (duplicate detected)." }));
-            setError(data.message || "This resume already exists (duplicate detected).");
+            const data = await response.json().catch(() => ({}));
+            setError(null);
+            setLibraryNotice({
+              kind: 'resume',
+              existingTitle: data.fullName || existingTitleFromDuplicatePayload(data, name || 'this resume'),
+              existingId: data.candidateId || data.candidate?.id,
+            });
             setIsProcessing(false);
             return;
           }
           const errData = await response.json().catch(async () => ({ message: await response.text() }));
-          throw new Error(errData.message || `Server returned status ${response.status}`);
+          throw new Error(errData.message || errData.error || `Server returned status ${response.status}`);
         }
 
         const data = await response.json();
@@ -737,6 +775,10 @@ function formatUserFriendlyError(rawError: string | null | undefined, fallback: 
         }
         formData.append('title', title);
 
+        if (selectedVendorId) {
+          formData.append('vendor_id', selectedVendorId);
+        }
+
         const response = await apiFetch('/jobs', {
           method: 'POST',
           body: formData,
@@ -744,13 +786,18 @@ function formatUserFriendlyError(rawError: string | null | undefined, fallback: 
 
         if (!response.ok) {
           if (response.status === 409) {
-            const data = await response.json().catch(() => ({ message: "This job description already exists (duplicate detected)." }));
-            setError(data.message || "This job description already exists (duplicate detected).");
+            const data = await response.json().catch(() => ({}));
+            setError(null);
+            setLibraryNotice({
+              kind: 'jd',
+              existingTitle: existingTitleFromDuplicatePayload(data, title),
+              existingId: data.jobId || data.job?.id,
+            });
             setIsProcessing(false);
             return;
           }
           const errData = await response.json().catch(async () => ({ message: await response.text() }));
-          throw new Error(errData.message || `Server returned status ${response.status}`);
+          throw new Error(errData.message || errData.error || `Server returned status ${response.status}`);
         }
 
         const data = await response.json();
@@ -779,6 +826,7 @@ function formatUserFriendlyError(rawError: string | null | undefined, fallback: 
     setSingleFileObj(null);
     setRawText('');
     setError(null);
+    setLibraryNotice(null);
     setAnalyzedId(null);
     setIsProcessing(false);
   };
@@ -788,8 +836,12 @@ function formatUserFriendlyError(rawError: string | null | undefined, fallback: 
     setBulkFiles([]);
   };
 
+  const [isSavingSingle, setIsSavingSingle] = useState(false);
+  const [isSavingBulk, setIsSavingBulk] = useState(false);
+
   const handleBulkSaveAll = async () => {
     try {
+      setIsSavingBulk(true);
       const successfulFiles = bulkFiles.filter(f => f.status === 'completed');
       if (successfulFiles.length > 0) {
         if (inputType === 'jd') {
@@ -804,13 +856,14 @@ function formatUserFriendlyError(rawError: string | null | undefined, fallback: 
           }
         }
       }
-      const hasResumes = bulkFiles.some(f => f.status === 'completed' && !f.jobId);
       if (onSaveToLibrary) {
-        onSaveToLibrary(hasResumes ? 'resumes' : 'jobs');
+        await onSaveToLibrary(inputType === 'jd' ? 'jobs' : 'resumes');
       }
-    } catch (err) {
+    } catch (err: any) {
       console.error("Bulk save error", err);
-      alert("Failed to save some items.");
+      alert(err?.message || "Failed to save some items.");
+    } finally {
+      setIsSavingBulk(false);
     }
   };
 
@@ -849,6 +902,7 @@ function formatUserFriendlyError(rawError: string | null | undefined, fallback: 
         setIsProcessing(true);
         setCurrentStepIndex(0);
         setError(null);
+        setLibraryNotice(null);
         if (inputType === 'jd' && jobId) {
           startPollingJob(jobId);
         } else if (inputType === 'resume' && resumeId) {
@@ -874,20 +928,14 @@ function formatUserFriendlyError(rawError: string | null | undefined, fallback: 
       if (inputType === 'jd') {
         const res = await apiFetch('/jobs/bulk-save', { method: 'POST', body: JSON.stringify({ jobIds: [analyzedId] }) });
         const data = await res.json().catch(() => ({}));
-        if (!res.ok) {
+        if (!res.ok && res.status !== 409) {
           throw new Error(data.message || `Save failed (${res.status})`);
-        }
-        if (data.count === 0) {
-          throw new Error("Job was not saved to the library. It may still be processing.");
         }
       } else {
         const res = await apiFetch('/resumes/bulk-save', { method: 'POST', body: JSON.stringify({ candidateIds: [analyzedId] }) });
         const data = await res.json().catch(() => ({}));
-        if (!res.ok) {
+        if (!res.ok && res.status !== 409) {
           throw new Error(data.message || `Save failed (${res.status})`);
-        }
-        if (data.count === 0) {
-          throw new Error("Resume was not saved to the library.");
         }
       }
     } catch (err: any) {
@@ -900,19 +948,152 @@ function formatUserFriendlyError(rawError: string | null | undefined, fallback: 
   const handleActionClick = async (actionName: string) => {
     if (actionName === 'Save to Library') {
       try {
+        setIsSavingSingle(true);
         await saveSingleFile();
-        if (onSaveToLibrary) await onSaveToLibrary(inputType === 'jd' ? 'jobs' : 'resumes');
-      } catch (e) {}
-    } else if (actionName === 'Match + Save') {
-      try {
-        await saveSingleFile();
-        if (onGoToMatch && analyzedId) {
-          onGoToMatch(inputType === 'jd' ? 'job' : 'resume', analyzedId);
+        if (onSaveToLibrary) {
+          await onSaveToLibrary(inputType === 'jd' ? 'jobs' : 'resumes');
         }
-      } catch (e) {}
+      } catch (err: any) {
+        console.error("Save to library failed:", err);
+      } finally {
+        setIsSavingSingle(false);
+      }
+    } else if (actionName === 'Match + Save' || actionName === 'Match Now') {
+      try {
+        setIsSavingSingle(true);
+        await saveSingleFile();
+      } catch (err: any) {
+        console.warn("Auto-save before match failed:", err);
+      } finally {
+        setIsSavingSingle(false);
+      }
+      if (onGoToMatch && analyzedId) {
+        onGoToMatch(inputType === 'jd' ? 'job' : 'resume', analyzedId);
+      }
     } else {
-      alert(`${actionName} action triggered (local mock interface).`);
+      alert(`${actionName} action triggered.`);
     }
+  };
+
+  const renderFileCard = (file: any, idx: number) => {
+    const isSuccess = file.status === 'completed';
+    const isDuplicate = file.status === 'duplicate';
+    const fileType = inputType === 'jd' ? 'Job Description' : 'Resume';
+    
+    return (
+      <div 
+        key={`${file.name}-${idx}`}
+        className="glass-card p-6 rounded-2xl border border-white/10 hover:border-purple-500/30 transition duration-300 flex flex-col sm:flex-row sm:items-center justify-between gap-6"
+      >
+        <div className="space-y-3 min-w-0 flex-1">
+          <div className="flex items-center gap-2">
+            {isSuccess ? (
+              <CheckCircle2 className="w-5 h-5 text-emerald-400 shrink-0" />
+            ) : isDuplicate ? (
+              <CheckCircle2 className="w-5 h-5 text-emerald-400 shrink-0" />
+            ) : (
+              <AlertCircle className="w-5 h-5 text-red-400 shrink-0" />
+            )}
+            <h4 className="text-sm font-bold text-slate-200 truncate">{file.name}</h4>
+          </div>
+
+          <div className="flex items-center gap-2 text-xs">
+            <span className="text-slate-400 font-medium">{fileType}</span>
+            <span className="text-slate-600">•</span>
+            <span className={`font-semibold ${isSuccess ? 'text-emerald-400' : isDuplicate ? 'text-emerald-400' : 'text-red-400'}`}>
+              {isSuccess ? 'Processed' : isDuplicate ? 'Already in library' : 'Needs Review'}
+            </span>
+          </div>
+
+          {isSuccess && file.details && (
+            <div className="p-3 rounded-xl bg-white/5 border border-white/5 space-y-2">
+              {/* Extracted Attributes Row */}
+              <div className="flex flex-wrap gap-x-4 gap-y-1.5 text-xs">
+                {inputType === 'jd' ? (
+                  <>
+                    <div><span className="text-slate-400">Title:</span> <span className="font-semibold text-slate-200">{cleanJobTitle(file.details.title)}</span></div>
+                    <div><span className="text-slate-400">Experience:</span> <span className="font-semibold text-slate-200">{file.details.experience}</span></div>
+                    <div><span className="text-slate-400">Location:</span> <span className="font-semibold text-slate-200">{file.details.location}</span></div>
+                    <div><span className="text-slate-400">Mode:</span> <span className="font-semibold text-slate-200">{file.details.workMode}</span></div>
+                  </>
+                ) : (
+                  <>
+                    <div><span className="text-slate-400">Name:</span> <span className="font-semibold text-slate-200">{file.details.title}</span></div>
+                    <div><span className="text-slate-400">Experience:</span> <span className="font-semibold text-slate-200">{file.details.experience}</span></div>
+                    <div><span className="text-slate-400">Location:</span> <span className="font-semibold text-slate-200">{file.details.location}</span></div>
+                    <div><span className="text-slate-400">Visa:</span> <span className="font-semibold text-slate-200">{file.details.visa}</span></div>
+                  </>
+                )}
+              </div>
+
+              {/* Extracted Skills List */}
+              {file.details.skills && file.details.skills.length > 0 && (
+                <div className="flex flex-wrap gap-1.5 pt-1">
+                  {file.details.skills.map((skill: string) => (
+                    <span
+                      key={skill}
+                      className="px-2 py-0.5 rounded bg-purple-500/10 border border-purple-500/20 text-purple-300 text-[10px] font-semibold"
+                    >
+                      {skill}
+                    </span>
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
+        </div>
+
+        <div className="shrink-0 flex items-center justify-end">
+          {isSuccess ? (
+            <button
+              onClick={async () => {
+                if (onGoToMatch) {
+                  try {
+                    if (inputType === 'jd' && file.jobId) {
+                      await apiFetch('/jobs/bulk-save', { method: 'POST', body: JSON.stringify({ jobIds: [file.jobId] }) });
+                      onGoToMatch('job', file.jobId);
+                    } else if (inputType === 'resume' && file.candidateId) {
+                      await apiFetch('/resumes/bulk-save', { method: 'POST', body: JSON.stringify({ candidateIds: [file.candidateId] }) });
+                      onGoToMatch('resume', file.candidateId);
+                    }
+                  } catch (e) {
+                    console.error(e);
+                    alert("Failed to save before matching");
+                  }
+                }
+              }}
+              className="px-5 py-2 rounded-xl bg-purple-600 hover:bg-purple-500 text-white font-bold text-xs md:text-sm shadow-md transition cursor-pointer flex items-center gap-1.5"
+            >
+              <Zap className="w-4 h-4 text-purple-200" />
+              <span>Match Now</span>
+            </button>
+          ) : isDuplicate ? (
+            <div className="flex items-center gap-2">
+               <span className="px-4 py-2 rounded-xl bg-emerald-600/15 text-emerald-300 border border-emerald-500/25 font-bold text-xs md:text-sm">
+                 Already in library
+               </span>
+            </div>
+          ) : (
+            <div className="flex items-center gap-2">
+              <button
+                onClick={() => handleRetry(file.resumeId, file.jobId, idx)}
+                disabled={file.status === 'processing'}
+                className="px-4 py-2 rounded-xl bg-red-600/20 text-red-400 border border-red-500/30 hover:bg-red-600/30 hover:text-red-300 font-bold text-xs md:text-sm transition cursor-pointer flex items-center gap-1.5"
+              >
+                {file.status === 'processing' ? <Loader2 className="w-4 h-4 animate-spin" /> : <RefreshCw className="w-4 h-4" />}
+                {file.status === 'processing' ? 'Retrying...' : 'Retry'}
+              </button>
+              <button
+                onClick={() => setReviewFile({ name: file.name, error: file.error, resumeId: file.resumeId, candidateId: file.candidateId, jobId: file.jobId, index: idx, isRetrying: false })}
+                className="px-5 py-2 rounded-xl bg-white/5 border border-white/10 hover:bg-white/10 text-slate-300 font-bold text-xs md:text-sm transition cursor-pointer"
+              >
+                Review
+              </button>
+            </div>
+          )}
+        </div>
+      </div>
+    );
   };
 
   return (
@@ -972,6 +1153,61 @@ function formatUserFriendlyError(rawError: string | null | undefined, fallback: 
               Resume
             </button>
           </div>
+        </div>
+      )}
+
+      {/* Optional Vendor Selection (Job Description Only) */}
+      {((mode === 'single' && !showResults) || (mode === 'bulk' && bulkState === 'upload')) && inputType === 'jd' && (
+        <div className="flex justify-center">
+          <div className="w-full max-w-md bg-white/5 p-4 rounded-xl border border-white/5 space-y-2">
+            <label className="block text-xs font-semibold text-slate-400 uppercase tracking-wider">
+              Associate Vendor (Optional)
+            </label>
+            <select
+              value={selectedVendorId}
+              onChange={(e) => setSelectedVendorId(e.target.value)}
+              className="w-full bg-[#0b0813] border border-white/10 rounded-lg px-4 py-2 text-sm text-white focus:outline-none focus:border-purple-500/50"
+            >
+              <option value="">No Vendor Selected</option>
+              {vendors.map(v => (
+                <option key={v.id} value={v.id}>
+                  {v.name} ({v.vendor_type.replace('_', ' ')}) - {v.status}
+                </option>
+              ))}
+            </select>
+          </div>
+        </div>
+      )}
+
+      {/* Already-in-library notice (not an error) */}
+      {libraryNotice && (
+        <div className="max-w-2xl mx-auto p-4 rounded-xl bg-emerald-500/10 border border-emerald-400/25 flex items-start gap-3">
+          <CheckCircle2 className="w-5 h-5 text-emerald-400 shrink-0 mt-0.5" />
+          <div className="min-w-0 flex-1">
+            <p className="text-sm font-semibold text-emerald-100">Already in your library</p>
+            <p className="text-sm text-slate-300 font-normal mt-0.5 leading-relaxed">
+              {libraryNotice.kind === 'jd'
+                ? `This job description matches “${libraryNotice.existingTitle}”. Nothing new was added.`
+                : `This resume matches “${libraryNotice.existingTitle}”. Nothing new was added.`}
+            </p>
+            {libraryNotice.existingId && onGoToMatch && (
+              <button
+                type="button"
+                onClick={() => onGoToMatch(libraryNotice.kind === 'jd' ? 'job' : 'resume', libraryNotice.existingId as string)}
+                className="mt-2.5 text-xs font-semibold text-emerald-300 hover:text-white underline underline-offset-2 cursor-pointer"
+              >
+                Open existing {libraryNotice.kind === 'jd' ? 'job' : 'candidate'}
+              </button>
+            )}
+          </div>
+          <button
+            type="button"
+            onClick={() => setLibraryNotice(null)}
+            className="text-slate-500 hover:text-slate-200 cursor-pointer shrink-0"
+            aria-label="Dismiss"
+          >
+            <X className="w-4 h-4" />
+          </button>
         </div>
       )}
 
@@ -1321,151 +1557,60 @@ function formatUserFriendlyError(rawError: string | null | undefined, fallback: 
             </div>
           </div>
 
+
           {/* File cards list */}
-          <div className="space-y-4">
-            {bulkFiles.map((file, idx) => {
-              const isSuccess = file.status === 'completed';
-              const isDuplicate = file.status === 'duplicate';
-              const fileType = inputType === 'jd' ? 'Job Description' : 'Resume';
-              
-              return (
-                <div 
-                  key={`${file.name}-${idx}`}
-                  className="glass-card p-6 rounded-2xl border border-white/10 hover:border-purple-500/30 transition duration-300 flex flex-col sm:flex-row sm:items-center justify-between gap-6"
-                >
-                  <div className="space-y-3 min-w-0 flex-1">
-                    <div className="flex items-center gap-2">
-                      {isSuccess ? (
-                        <CheckCircle2 className="w-5 h-5 text-emerald-400 shrink-0" />
-                      ) : isDuplicate ? (
-                        <AlertCircle className="w-5 h-5 text-orange-400 shrink-0" />
-                      ) : (
-                        <AlertCircle className="w-5 h-5 text-red-400 shrink-0" />
-                      )}
-                      <h4 className="text-sm font-bold text-slate-200 truncate">{file.name}</h4>
-                    </div>
-
-                    <div className="flex items-center gap-2 text-xs">
-                      <span className="text-slate-400 font-medium">{fileType}</span>
-                      <span className="text-slate-600">•</span>
-                      <span className={`font-semibold ${isSuccess ? 'text-emerald-400' : isDuplicate ? 'text-orange-400' : 'text-red-400'}`}>
-                        {isSuccess ? 'Processed' : isDuplicate ? 'Already Uploaded' : 'Needs Review'}
-                      </span>
-                    </div>
-
-                    {isSuccess && file.details && (
-                      <div className="p-3 rounded-xl bg-white/5 border border-white/5 space-y-2">
-                        {/* Extracted Attributes Row */}
-                        <div className="flex flex-wrap gap-x-4 gap-y-1.5 text-xs">
-                          {inputType === 'jd' ? (
-                            <>
-                              <div><span className="text-slate-400">Title:</span> <span className="font-semibold text-slate-200">{cleanJobTitle(file.details.title)}</span></div>
-                              <div><span className="text-slate-400">Experience:</span> <span className="font-semibold text-slate-200">{file.details.experience}</span></div>
-                              <div><span className="text-slate-400">Location:</span> <span className="font-semibold text-slate-200">{file.details.location}</span></div>
-                              <div><span className="text-slate-400">Mode:</span> <span className="font-semibold text-slate-200">{file.details.workMode}</span></div>
-                            </>
-                          ) : (
-                            <>
-                              <div><span className="text-slate-400">Name:</span> <span className="font-semibold text-slate-200">{file.details.title}</span></div>
-                              <div><span className="text-slate-400">Experience:</span> <span className="font-semibold text-slate-200">{file.details.experience}</span></div>
-                              <div><span className="text-slate-400">Location:</span> <span className="font-semibold text-slate-200">{file.details.location}</span></div>
-                              <div><span className="text-slate-400">Visa:</span> <span className="font-semibold text-slate-200">{file.details.visa}</span></div>
-                            </>
-                          )}
-                        </div>
-
-                        {/* Extracted Skills List */}
-                        {file.details.skills && file.details.skills.length > 0 && (
-                          <div className="flex flex-wrap gap-1.5 pt-1">
-                            {file.details.skills.map((skill: string) => (
-                              <span
-                                key={skill}
-                                className="px-2 py-0.5 rounded bg-purple-500/10 border border-purple-500/20 text-purple-300 text-[10px] font-semibold"
-                              >
-                                {skill}
-                              </span>
-                            ))}
-                          </div>
-                        )}
-                      </div>
-                    )}
-                  </div>
-
-                  <div className="shrink-0 flex items-center justify-end">
-                    {isSuccess ? (
-                      <button
-                        onClick={async () => {
-                          if (onGoToMatch) {
-                            try {
-                              if (inputType === 'jd' && file.jobId) {
-                                await apiFetch('/jobs/bulk-save', { method: 'POST', body: JSON.stringify({ jobIds: [file.jobId] }) });
-                                onGoToMatch('job', file.jobId);
-                              } else if (inputType === 'resume' && file.candidateId) {
-                                await apiFetch('/resumes/bulk-save', { method: 'POST', body: JSON.stringify({ candidateIds: [file.candidateId] }) });
-                                onGoToMatch('resume', file.candidateId);
-                              }
-                            } catch (e) {
-                              console.error(e);
-                              alert("Failed to save before matching");
-                            }
-                          }
-                        }}
-                        className="px-5 py-2 rounded-xl bg-purple-600 hover:bg-purple-500 text-white font-bold text-xs md:text-sm shadow-md transition cursor-pointer flex items-center gap-1.5"
-                      >
-                        <Zap className="w-4 h-4 text-purple-200" />
-                        <span>Match Now</span>
-                      </button>
-                    ) : isDuplicate ? (
-                      <div className="flex items-center gap-2">
-                         <span className="px-4 py-2 rounded-xl bg-orange-600/20 text-orange-400 border border-orange-500/30 font-bold text-xs md:text-sm">
-                           Conflict / Duplicate
-                         </span>
-                      </div>
-                    ) : (
-                      <div className="flex items-center gap-2">
-                        <button
-                          onClick={() => handleRetry(file.resumeId, file.jobId, idx)}
-                          disabled={file.status === 'processing'}
-                          className="px-4 py-2 rounded-xl bg-red-600/20 text-red-400 border border-red-500/30 hover:bg-red-600/30 hover:text-red-300 font-bold text-xs md:text-sm transition cursor-pointer flex items-center gap-1.5"
-                        >
-                          {file.status === 'processing' ? <Loader2 className="w-4 h-4 animate-spin" /> : <RefreshCw className="w-4 h-4" />}
-                          {file.status === 'processing' ? 'Retrying...' : 'Retry'}
-                        </button>
-                        <button
-                          onClick={() => setReviewFile({ name: file.name, error: file.error, resumeId: file.resumeId, candidateId: file.candidateId, jobId: file.jobId, index: idx, isRetrying: false })}
-                          className="px-5 py-2 rounded-xl bg-white/5 border border-white/10 hover:bg-white/10 text-slate-300 font-bold text-xs md:text-sm transition cursor-pointer"
-                        >
-                          Review
-                        </button>
-                      </div>
-                    )}
-                  </div>
+          <div className="space-y-8">
+            {/* SUCCESSFULLY PARSED SECTION */}
+            {bulkFiles.some(f => f.status === 'completed') && (
+              <div className="space-y-4">
+                <div className="flex items-center justify-between border-b border-emerald-500/20 pb-2">
+                  <h4 className="text-sm font-bold text-emerald-400">Successfully Parsed ({bulkFiles.filter(f => f.status === 'completed').length})</h4>
+                  <button
+                    onClick={handleBulkSaveAll}
+                    disabled={isSavingBulk}
+                    className={`px-4 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs shadow-md transition cursor-pointer flex items-center gap-1.5 ${isSavingBulk ? 'opacity-70 cursor-not-allowed' : ''}`}
+                  >
+                    {isSavingBulk ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Bookmark className="w-3.5 h-3.5" />}
+                    <span>{isSavingBulk ? 'Saving...' : `Save Successfully Parsed ${inputType === 'jd' ? 'Jobs' : 'Resumes'}`}</span>
+                  </button>
                 </div>
-              );
-            })}
+                {bulkFiles.map((file, idx) => {
+                  if (file.status !== 'completed') return null;
+                  return renderFileCard(file, idx);
+                })}
+              </div>
+            )}
+
+            {/* DUPLICATE SECTION */}
+            {bulkFiles.some(f => f.status === 'duplicate') && (
+              <div className="space-y-4">
+                <div className="border-b border-orange-500/20 pb-2">
+                  <h4 className="text-sm font-bold text-orange-400">Duplicate / Already Uploaded ({bulkFiles.filter(f => f.status === 'duplicate').length})</h4>
+                </div>
+                {bulkFiles.map((file, idx) => {
+                  if (file.status !== 'duplicate') return null;
+                  return renderFileCard(file, idx);
+                })}
+              </div>
+            )}
+
+            {/* FAILED / NEEDS ATTENTION SECTION */}
+            {bulkFiles.some(f => f.status !== 'completed' && f.status !== 'duplicate') && (
+              <div className="space-y-4">
+                <div className="border-b border-red-500/20 pb-2">
+                  <h4 className="text-sm font-bold text-red-400">Failed / Needs Attention ({bulkFiles.filter(f => f.status !== 'completed' && f.status !== 'duplicate').length})</h4>
+                </div>
+                {bulkFiles.map((file, idx) => {
+                  if (file.status === 'completed' || file.status === 'duplicate') return null;
+                  return renderFileCard(file, idx);
+                })}
+              </div>
+            )}
           </div>
 
           {/* Bottom global actions */}
           <div className="flex justify-between items-center pt-4">
-            <button
-              onClick={handleBulkReset}
-              className="px-5 py-2.5 rounded-xl bg-white/5 hover:bg-white/10 text-slate-300 font-bold text-xs md:text-sm transition cursor-pointer"
-            >
-              Clear & Upload New
-            </button>
-
-            <button
-              onClick={handleBulkSaveAll}
-              disabled={!bulkFiles.some(f => f.status === 'completed')}
-              className={`px-6 py-2.5 rounded-xl text-white font-bold text-xs md:text-sm shadow-lg transition cursor-pointer flex items-center gap-2 ${
-                bulkFiles.some(f => f.status === 'completed')
-                  ? 'bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 shadow-emerald-950/40 cursor-pointer'
-                  : 'bg-white/5 text-slate-500 border border-white/10 cursor-not-allowed'
-              }`}
-            >
-              <Bookmark className="w-4 h-4 text-emerald-100" />
-              <span>Save All to Data Store</span>
-            </button>
+            
           </div>
         </div>
       )}
@@ -1546,14 +1691,8 @@ function formatUserFriendlyError(rawError: string | null | undefined, fallback: 
             <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
               {/* Option 1: Match Now */}
               <div
-                onClick={() => {
-                  if (onGoToMatch && analyzedId) {
-                    onGoToMatch(inputType === 'jd' ? 'job' : 'resume', analyzedId);
-                  } else {
-                    handleActionClick('Match Now');
-                  }
-                }}
-                className="glass-card p-6 rounded-2xl flex flex-col justify-between border border-purple-500/30 cursor-pointer hover:border-purple-500 hover:bg-purple-950/30 transition-all duration-300 group space-y-4"
+                onClick={() => handleActionClick('Match Now')}
+                className={`glass-card p-6 rounded-2xl flex flex-col justify-between border border-purple-500/30 cursor-pointer hover:border-purple-500 hover:bg-purple-950/30 transition-all duration-300 group space-y-4 ${isSavingSingle ? 'opacity-50 pointer-events-none' : ''}`}
               >
                 <div className="flex items-start gap-4">
                   <div className="w-12 h-12 rounded-xl bg-purple-600/20 border border-purple-500/30 flex items-center justify-center text-purple-400 group-hover:scale-105 transition shrink-0">
@@ -1561,7 +1700,7 @@ function formatUserFriendlyError(rawError: string | null | undefined, fallback: 
                   </div>
                   <div>
                     <h5 className="text-base font-bold text-slate-100 group-hover:text-purple-300 transition">Match Now</h5>
-                    <p className="text-xs text-slate-400 mt-1">Find candidates immediately</p>
+                    <p className="text-xs text-slate-400 mt-1">Save and find candidates immediately</p>
                   </div>
                 </div>
               </div>
@@ -1569,14 +1708,20 @@ function formatUserFriendlyError(rawError: string | null | undefined, fallback: 
               {/* Option 2: Save to Library */}
               <div
                 onClick={() => handleActionClick('Save to Library')}
-                className="glass-card p-6 rounded-2xl flex flex-col justify-between border border-emerald-500/30 cursor-pointer hover:border-emerald-500 hover:bg-emerald-950/30 transition-all duration-300 group space-y-4"
+                className={`glass-card p-6 rounded-2xl flex flex-col justify-between border border-emerald-500/30 cursor-pointer hover:border-emerald-500 hover:bg-emerald-950/30 transition-all duration-300 group space-y-4 ${isSavingSingle ? 'opacity-75 pointer-events-none' : ''}`}
               >
                 <div className="flex items-start gap-4">
                   <div className="w-12 h-12 rounded-xl bg-emerald-600/20 border border-emerald-500/30 flex items-center justify-center text-emerald-400 group-hover:scale-105 transition shrink-0">
-                    <Bookmark className="w-6 h-6 fill-emerald-500 text-emerald-400" />
+                    {isSavingSingle ? (
+                      <Loader2 className="w-6 h-6 text-emerald-400 animate-spin" />
+                    ) : (
+                      <Bookmark className="w-6 h-6 fill-emerald-500 text-emerald-400" />
+                    )}
                   </div>
                   <div>
-                    <h5 className="text-base font-bold text-slate-100 group-hover:text-emerald-300 transition">Save to Library</h5>
+                    <h5 className="text-base font-bold text-slate-100 group-hover:text-emerald-300 transition">
+                      {isSavingSingle ? 'Saving to Library...' : 'Save to Library'}
+                    </h5>
                     <p className="text-xs text-slate-400 mt-1">Store for later use</p>
                   </div>
                 </div>

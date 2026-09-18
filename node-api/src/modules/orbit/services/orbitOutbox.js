@@ -22,14 +22,11 @@ async function emitOrbitEvent(client, {
     return null;
   }
 
-  const orgId =
-    organizationId ||
-    env.ORCH_ORGANIZATION_ID ||
-    "00000000-0000-0000-0000-000000000001";
-
+  // When the caller does not know, insertEvent takes the organisation from
+  // the aggregate (the person, the placement) — not from the env.
   return outboxRepo.insertEvent(client, {
     eventType,
-    organizationId: orgId,
+    organizationId: organizationId || null,
     aggregateType,
     aggregateId,
     correlationId,

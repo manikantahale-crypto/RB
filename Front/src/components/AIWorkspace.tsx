@@ -1,7 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import {
   Search,
-  Filter,
   X,
   Briefcase,
   User,
@@ -20,7 +19,7 @@ import {
   Loader2,
   AlertCircle
 } from 'lucide-react';
-import { JobRequirement, CandidateProfile } from '../types';
+import { JobRequirement, CandidateProfile, NavigationScreen, NavigationContext } from '../types';
 import { cleanJobTitle } from '../utils';
 import { apiFetch } from '../services/api';
 
@@ -30,16 +29,55 @@ interface AIWorkspaceProps {
   initialMatchMode?: 'job' | 'resume';
   initialSelectedJobId?: string | null;
   initialSelectedCandidateId?: string | null;
+  onNavigate?: (screen: NavigationScreen, context?: NavigationContext | null) => void;
 }
 
-/** Prefer jobs that already have matches / finished AI — newest uploads often have 0 matches. */
+function profileFromApiCandidate(c: any): CandidateProfile {
+  const resume = c.currentResume || {};
+  const name = c.fullName || c.name || 'Candidate';
+  const title =
+    resume.currentRole ||
+    c.currentRole ||
+    (resume.primaryRole && resume.primaryRole !== 'other' ? resume.primaryRole : null) ||
+    (c.primaryRole && c.primaryRole !== 'other' ? c.primaryRole : null) ||
+    'Software Professional';
+  const skills = resume.skills || c.skills || [];
+  const skillList = Array.isArray(skills) ? skills : [];
+  const experienceVal = resume.totalExperience || c.totalExperience || 'Not specified';
+  return {
+    id: c.id,
+    name,
+    title,
+    location: c.location || 'N/A',
+    experience: experienceVal,
+    expYears: parseInt(String(experienceVal), 10) || 0,
+    visa: c.immigrationStatus || c.visa || 'N/A',
+    matchedSkills: skillList,
+    missingSkills: [],
+    matchScore: 90,
+    aiConfidence: 85,
+    badge: 'Recommended',
+    summary: resume.profileSummary || resume.summary || c.profileSummary || '',
+    breakdown: { skills: 90, experience: 85, location: 80, visa: 85, education: 90, availability: 90 },
+    resumeEvidence: [],
+    aiRecommendationReason: '',
+    matchingHistory: [],
+    resumeId: resume.id || c.resumeId,
+    processingStatus: resume.processingStatus || c.processingStatus,
+    currentRole: resume.currentRole || c.currentRole,
+    currentCompany: resume.currentCompany || c.currentCompany,
+    email: c.email,
+    phone: c.phone,
+  };
+}
+
+/** Prefer the requested job. Never silently substitute a different JD. */
 function pickDefaultJob(
   jobsList: JobRequirement[],
   preferredId?: string | null
 ): JobRequirement | undefined {
   if (preferredId) {
-    const found = jobsList.find((j) => j.id === preferredId);
-    if (found) return found;
+    return jobsList.find((j) => j.id === preferredId);
   }
   return (
     jobsList.find((j) => (j.matchCount ?? 0) > 0) ||
@@ -48,15 +86,95 @@ function pickDefaultJob(
   );
 }
 
+function deriveAiRecommendation(
+  m: any,
+  pending: boolean,
+  failed: boolean,
+  matchScore: number | null,
+): { label: string; action: string; reason: string } {
+  if (pending) {
+    return {
+      label: 'Pending',
+      action: 'Hold',
+      reason: 'AI scoring is still running. The Strong / Potential / Low decision will appear when the match completes.',
+    };
+  }
+  if (failed || matchScore == null) {
+    return {
+      label: 'Unavailable',
+      action: 'Hold',
+      reason: 'AI scoring failed. Re-run match before deciding shortlist, hold, or reject.',
+    };
+  }
+  const band = matchScore >= 80 ? 'strong' : matchScore >= 50 ? 'moderate' : 'weak';
+  const label =
+    m.recommendationLabel ||
+    (band === 'strong' ? 'Strong Match' : band === 'moderate' ? 'Potential Match' : 'Low Match');
+  const rawAction = String(m.nextAction || '').toLowerCase();
+  const action =
+    rawAction.includes('shortlist')
+      ? 'Shortlist'
+      : rawAction.includes('reject')
+        ? 'Reject'
+        : rawAction.includes('hold')
+          ? 'Hold'
+          : band === 'strong'
+            ? 'Shortlist'
+            : band === 'moderate'
+              ? 'Hold'
+              : 'Reject';
+  const bullets = String(m.reasoning || '').trim();
+  let reason = String(m.rankingExplanation || '').trim();
+  if (!reason || reason === bullets || /^why matched/i.test(reason)) {
+    const strengths = (m.strengths || []).slice(0, 2).join(', ');
+    const gaps = (m.gaps || []).slice(0, 2).join(', ');
+    if (band === 'strong') {
+      reason = `Shortlist this candidate. ${matchScore}% is a Strong Match.${strengths ? ` Strengths include ${strengths}.` : ''} Send to recruiter review and consent next.`;
+    } else if (band === 'moderate') {
+      reason = `Hold for recruiter review. ${matchScore}% is a Potential Match.${gaps ? ` Validate gaps: ${gaps}.` : ''} Confirm must-have skills before shortlisting.`;
+    } else {
+      reason = `Reject for this JD. ${matchScore}% is a Low Match.${gaps ? ` Missing: ${gaps}.` : ''} Keep in the pool only if another requirement is a better fit.`;
+    }
+  }
+  return { label, action, reason };
+}
+
+function parseMatchSummaryPoints(raw: string | undefined): { heading: string; points: string[] } {
+  const text = String(raw || '').trim();
+  if (!text) return { heading: 'Why Matched', points: [] };
+
+  let body = text.replace(/^why matched:\s*/i, '').trim();
+  const points = body
+    .split(/\n+|•|[\u2022]|\s+-\s+|;\s+(?=[A-Z])/)
+    .map((p) => p.replace(/^[-–—*\d.)\s]+/, '').trim())
+    .filter((p) => p.length > 8);
+
+  if (points.length <= 1 && body.includes('•')) {
+    return {
+      heading: 'Why Matched',
+      points: body.split('•').map((p) => p.trim()).filter(Boolean),
+    };
+  }
+
+  return {
+    heading: /^why matched/i.test(text) ? 'Why Matched' : 'Summary',
+    points: points.length ? points : [body],
+  };
+}
+
 export const AIWorkspace: React.FC<AIWorkspaceProps> = ({
   jobs,
   candidates,
   initialMatchMode = 'job',
   initialSelectedJobId,
-  initialSelectedCandidateId
+  initialSelectedCandidateId,
+  onNavigate,
 }) => {
   const [matchMode, setMatchMode] = useState<'job' | 'resume'>(initialMatchMode);
-  const [localMatchThreshold, setLocalMatchThreshold] = useState<number>(50);
+  const [localMatchThreshold, setLocalMatchThreshold] = useState<number>(() => {
+    const initialJob = pickDefaultJob(jobs, initialSelectedJobId);
+    return initialJob?.scoreThreshold ?? 50;
+  });
 
   // Active Job selection (Job Mode)
   const [selectedJob, setSelectedJob] = useState<JobRequirement | undefined>(() =>
@@ -71,21 +189,24 @@ export const AIWorkspace: React.FC<AIWorkspaceProps> = ({
         // Update selectedJob if any fields changed (including scoreThreshold)
         setSelectedJob(updatedJob);
         // Sync local match threshold to job's scoreThreshold or default 50
-        setLocalMatchThreshold(updatedJob.scoreThreshold || 50);
+        setLocalMatchThreshold(updatedJob.scoreThreshold ?? 50);
       }
     }
   }, [jobs, selectedJob?.id]);
-  const [selectedCandidateId, setSelectedCandidateId] = useState<string | null>(candidates[0]?.id || null);
+  const [selectedCandidateId, setSelectedCandidateId] = useState<string | null>(null);
 
-  // Active Resume selection (Resume Mode)
+  // Active Resume selection (Resume Mode) — do not fall back to another person
   const [selectedResumeCandidate, setSelectedResumeCandidate] = useState<CandidateProfile | undefined>(() => {
     if (initialSelectedCandidateId) {
-      const found = candidates.find((c) => c.id === initialSelectedCandidateId);
-      if (found) return found;
+      return candidates.find((c) => c.id === initialSelectedCandidateId);
     }
     return candidates[0] || undefined;
   });
   const [selectedJobIdForResume, setSelectedJobIdForResume] = useState<string | null>(jobs[0]?.id || null);
+
+  // Candidate Match History state
+  const [candidateMatchHistory, setCandidateMatchHistory] = useState<any[]>([]);
+  const [isFetchingHistory, setIsFetchingHistory] = useState(false);
 
   // Dropdown / Combobox states
   const [isJobDropdownOpen, setIsJobDropdownOpen] = useState(false);
@@ -104,7 +225,7 @@ export const AIWorkspace: React.FC<AIWorkspaceProps> = ({
       const found = jobs.find((j) => j.id === initialSelectedJobId);
       if (found) {
         setSelectedJob(found);
-        setLocalMatchThreshold(found.scoreThreshold || 50);
+        setLocalMatchThreshold(found.scoreThreshold ?? 50);
       }
     } else if (jobs.length > 0) {
       // If current selection is a stuck/empty upload but a sibling job has matches, switch.
@@ -116,11 +237,11 @@ export const AIWorkspace: React.FC<AIWorkspaceProps> = ({
         const better = pickDefaultJob(jobs, null);
         if (better && better.id !== current?.id) {
           setSelectedJob(better);
-          setLocalMatchThreshold(better.scoreThreshold || 50);
+          setLocalMatchThreshold(better.scoreThreshold ?? 50);
         } else if (!current) {
           const better = pickDefaultJob(jobs, null);
           setSelectedJob(better);
-          if (better) setLocalMatchThreshold(better.scoreThreshold || 50);
+          if (better) setLocalMatchThreshold(better.scoreThreshold ?? 50);
         }
       }
     }
@@ -131,6 +252,76 @@ export const AIWorkspace: React.FC<AIWorkspaceProps> = ({
       setSelectedResumeCandidate(candidates[0]);
     }
   }, [initialMatchMode, initialSelectedJobId, initialSelectedCandidateId, jobs, candidates]);
+
+  useEffect(() => {
+    if (!initialSelectedCandidateId) return;
+    if (candidates.some((c) => c.id === initialSelectedCandidateId)) return;
+    if (selectedResumeCandidate?.id === initialSelectedCandidateId) return;
+
+    let cancelled = false;
+    (async () => {
+      try {
+        const res = await apiFetch(`/candidates/${initialSelectedCandidateId}`);
+        if (!res.ok || cancelled) return;
+        const data = await res.json();
+        if (data.candidate && !cancelled) {
+          setSelectedResumeCandidate(profileFromApiCandidate(data.candidate));
+        }
+      } catch {
+        // Keep an empty selection rather than showing a different candidate.
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [initialSelectedCandidateId, candidates, selectedResumeCandidate?.id]);
+
+  // Fetch Candidate Match History on demand
+  useEffect(() => {
+    const candidateId = matchMode === 'job' ? selectedCandidateId : selectedResumeCandidate?.id;
+    if (!candidateId) {
+      setCandidateMatchHistory([]);
+      return;
+    }
+    let isMounted = true;
+    setIsFetchingHistory(true);
+    apiFetch(`/candidates/${candidateId}/matches?status=completed`)
+      .then((res) => (res.ok ? res.json() : Promise.reject(new Error(`HTTP ${res.status}`))))
+      .then((data: any) => {
+        if (!isMounted) return;
+        const rows = data?.matches || data?.data || [];
+        setCandidateMatchHistory(
+          rows.map((m: any) => {
+            const raw = m.score != null ? Number(m.score) : Number(m.skillMatchScore ?? m.skill_match_score ?? 0);
+            const score =
+              Number.isFinite(raw) && raw > 0 && raw < 1 ? Math.round(raw * 100) : Math.round(raw || 0);
+            const when = m.createdAt || m.created_at;
+            const statusRaw = String(m.matchStatus || m.match_status || 'completed');
+            const statusLabel =
+              statusRaw.toLowerCase() === 'completed'
+                ? 'Shortlisted'
+                : statusRaw.replace(/_/g, ' ').replace(/\b\w/g, (c: string) => c.toUpperCase());
+            return {
+              jobTitle: cleanJobTitle(m.jobTitle || m.job_title || m.title || 'Unknown Job'),
+              company: m.company || m.companyName || m.company_name || '—',
+              score,
+              status: statusLabel,
+              date: when ? new Date(when).toLocaleDateString() : 'N/A',
+            };
+          }),
+        );
+      })
+      .catch((err) => {
+        console.error('Failed to fetch candidate matches', err);
+        if (isMounted) setCandidateMatchHistory([]);
+      })
+      .finally(() => {
+        if (isMounted) setIsFetchingHistory(false);
+      });
+    return () => {
+      isMounted = false;
+    };
+  }, [matchMode, selectedCandidateId, selectedResumeCandidate?.id]);
 
   // Close dropdowns on click outside
   useEffect(() => {
@@ -144,9 +335,6 @@ export const AIWorkspace: React.FC<AIWorkspaceProps> = ({
     return () => document.removeEventListener('mousedown', handleClickOutside);
   }, []);
 
-  const [showFilters, setShowFilters] = useState(false);
-
-  // Live matching states
   const [jobMatches, setJobMatches] = useState<any[]>([]);
   const [resumeMatches, setResumeMatches] = useState<any[]>([]);
   const [loadingMatches, setLoadingMatches] = useState<boolean>(false);
@@ -168,7 +356,12 @@ export const AIWorkspace: React.FC<AIWorkspaceProps> = ({
       setLoadingMatches(true);
       setMatchesError(null);
       try {
-        const res = await apiFetch(`/jobs/${selectedJob.id}/matches`);
+        const minScore = Number.isFinite(Number(localMatchThreshold))
+          ? Number(localMatchThreshold)
+          : 0;
+        const res = await apiFetch(
+          `/jobs/${selectedJob.id}/matches?status=completed&minScore=${encodeURIComponent(String(minScore))}`,
+        );
         if (!res.ok) {
           let detail = `HTTP ${res.status}`;
           try {
@@ -189,12 +382,13 @@ export const AIWorkspace: React.FC<AIWorkspaceProps> = ({
         const data = await res.json();
         if (isMounted) {
           setJobMatches(data.matches || []);
-          // Automatically set active selectedCandidateId to the first matched candidate's ID, or null if none
-          if (data.matches && data.matches.length > 0) {
-            setSelectedCandidateId(data.matches[0].candidateId);
-          } else {
-            setSelectedCandidateId(null);
-          }
+          const ranked = (data.matches || [])
+            .filter((m: any) => {
+              const status = String(m.matchStatus || m.match_status || '').toLowerCase();
+              return m.candidateId && m.score != null && status === 'completed';
+            })
+            .sort((a: any, b: any) => Number(b.score) - Number(a.score));
+          setSelectedCandidateId(ranked[0]?.candidateId || null);
         }
       } catch (err: any) {
         console.error(err);
@@ -212,7 +406,7 @@ export const AIWorkspace: React.FC<AIWorkspaceProps> = ({
     return () => {
       isMounted = false;
     };
-  }, [selectedJob, matchMode]);
+  }, [selectedJob, matchMode, localMatchThreshold]);
 
   // Fetch job matches for selectedResumeCandidate
   useEffect(() => {
@@ -231,19 +425,18 @@ export const AIWorkspace: React.FC<AIWorkspaceProps> = ({
       setLoadingMatches(true);
       setMatchesError(null);
       try {
-        const res = await apiFetch(`/candidates/${selectedResumeCandidate.id}/matches`);
+        const minScore = localMatchThreshold ?? 50;
+        const res = await apiFetch(
+          `/candidates/${selectedResumeCandidate.id}/matches?status=completed&minScore=${encodeURIComponent(String(minScore))}`,
+        );
         if (!res.ok) {
           throw new Error("Failed to fetch matching jobs for this candidate.");
         }
         const data = await res.json();
         if (isMounted) {
           setResumeMatches(data.matches || []);
-          // Automatically set active selectedJobIdForResume to the first matched job's ID, or null if none
-          if (data.matches && data.matches.length > 0) {
-            setSelectedJobIdForResume(data.matches[0].jobId);
-          } else {
-            setSelectedJobIdForResume(null);
-          }
+          const ranked = (data.matches || []).filter((m: any) => m.jobId && m.score != null);
+          setSelectedJobIdForResume(ranked[0]?.jobId || null);
         }
       } catch (err: any) {
         console.error(err);
@@ -261,7 +454,7 @@ export const AIWorkspace: React.FC<AIWorkspaceProps> = ({
     return () => {
       isMounted = false;
     };
-  }, [selectedResumeCandidate, matchMode]);
+  }, [selectedResumeCandidate, matchMode, localMatchThreshold]);
 
   // Split Panel Divider Width state (default 50% left, 50% right)
   const [leftWidthPercent, setLeftWidthPercent] = useState<number>(50);
@@ -272,6 +465,7 @@ export const AIWorkspace: React.FC<AIWorkspaceProps> = ({
 
   // Status feedback toast
   const [toastMessage, setToastMessage] = useState<string | null>(null);
+  const [isSubmitting, setIsSubmitting] = useState(false);
 
   const toggleSection = (sectionKey: string) => {
     setCollapsedSections((prev) => ({
@@ -283,6 +477,69 @@ export const AIWorkspace: React.FC<AIWorkspaceProps> = ({
   const showToast = (msg: string) => {
     setToastMessage(msg);
     setTimeout(() => setToastMessage(null), 3000);
+  };
+
+  const submitToPrism = async () => {
+    if (!activeCandidate || !selectedJob) {
+      showToast("Missing candidate or job information.");
+      return;
+    }
+
+    const candidateId = activeCandidate.id;
+    const matchId = (activeCandidate as any).matchId;
+    const resumeId = (activeCandidate as any).resumeId;
+    const jobId = selectedJob.id;
+
+    console.log('[PRISM-SUBMIT] Payload:', {
+      candidateId,
+      resumeId,
+      jobId,
+      matchId
+    });
+
+    if (!candidateId || !matchId || !resumeId || !jobId) {
+      showToast("Missing required IDs for submission.");
+      return;
+    }
+
+    try {
+      setIsSubmitting(true);
+      const res = await apiFetch('/submissions', {
+        method: 'POST',
+        body: JSON.stringify({
+          candidateId,
+          resumeId,
+          jobId,
+          matchId
+        })
+      });
+
+      if (res.status === 409) {
+        showToast("This candidate has already been submitted for this job.");
+        onNavigate?.('prism', { candidateId, jobId, prismTab: 'All' });
+        return;
+      }
+
+      if (!res.ok) {
+        const errorData = await res.json().catch(() => ({}));
+        throw new Error(errorData.error || errorData.message || "Failed to submit candidate.");
+      }
+
+      const payload = await res.json().catch(() => ({}));
+      const submissionId = payload?.data?.id;
+      showToast("Candidate submitted successfully.");
+      onNavigate?.('prism', {
+        candidateId,
+        jobId,
+        submissionId,
+        prismTab: 'All',
+        openSubmission: true,
+      });
+    } catch (err: any) {
+      showToast(err.message || "Failed to submit candidate. Please try again.");
+    } finally {
+      setIsSubmitting(false);
+    }
   };
 
   // Drag handler for panel divider
@@ -308,30 +565,34 @@ export const AIWorkspace: React.FC<AIWorkspaceProps> = ({
   // Map job matches to CandidateProfile interface
   const mappedJobCandidates = jobMatches.map((m: any) => {
     const c = candidates.find((cand) => cand.id === m.candidateId);
-    const hasScore = m.score != null && !Number.isNaN(Number(m.score));
+    const status = (m.matchStatus || "").toLowerCase();
+    const isCompleted = status === "completed";
+    const hasScore = isCompleted && m.score != null && !Number.isNaN(Number(m.score));
     const rawScore = Number(m.score);
     const matchScore = hasScore
       ? (rawScore > 0 && rawScore < 1 ? Math.round(rawScore * 100) : Math.round(rawScore))
-      : m.skillMatchScore != null
-        ? Math.round(Number(m.skillMatchScore))
-        : 0;
-    const status = (m.matchStatus || "").toLowerCase();
+      : null;
     const pending =
       !hasScore &&
       (status === "requested" || status === "processing" || status === "waiting");
-    const failed = !hasScore && status === "failed";
+    const failed = !hasScore && (status === "failed" || !isCompleted);
 
     return {
       id: m.candidateId,
+      matchId: m.matchId,
+      resumeId: m.resumeId,
       name: m.fullName || c?.name || "Unnamed Candidate",
-      title: c?.title || "Candidate",
+      title: c?.title || c?.currentRole || "Candidate",
+      currentRole: c?.currentRole || c?.title,
       location: c?.location || "N/A",
       experience: c?.experience || "N/A",
       expYears: c?.expYears || 0,
       visa: c?.visa || "N/A",
-      matchedSkills: m.strengths && m.strengths.length > 0 ? m.strengths : (c?.matchedSkills || []),
-      missingSkills: m.gaps && m.gaps.length > 0 ? m.gaps : (c?.missingSkills || []),
-      matchScore,
+      matchedSkills: Array.isArray(m.strengths) ? m.strengths : [],
+      missingSkills: Array.isArray(m.gaps) ? m.gaps : [],
+      matchScore: matchScore ?? 0,
+      isCompleted,
+      hasValidScore: hasScore,
       aiConfidence: m.confidenceScore != null ? Math.round(Number(m.confidenceScore)) : (m.skillMatchScore != null ? Math.round(Number(m.skillMatchScore)) : 0),
       badge: (pending
         ? 'Potential Match'
@@ -360,7 +621,14 @@ export const AIWorkspace: React.FC<AIWorkspaceProps> = ({
         }
         : (c?.breakdown || { skills: 0, experience: 0, location: 0, visa: 0, education: 0, availability: 0 }),
       resumeEvidence: m.greenFlags && m.greenFlags.length > 0 ? m.greenFlags : (c?.resumeEvidence || []),
-      aiRecommendationReason: m.reasoning || c?.aiRecommendationReason || "Good fit based on matching indicators.",
+      ...(() => {
+        const rec = deriveAiRecommendation(m, pending, failed, matchScore);
+        return {
+          aiRecommendationLabel: rec.label,
+          aiRecommendationAction: rec.action,
+          aiRecommendationReason: rec.reason,
+        };
+      })(),
       matchingHistory: c?.matchingHistory || [],
       fileName: c?.fileName || "resume.pdf",
       uploadedDate: c?.uploadedDate || new Date().toLocaleDateString()
@@ -370,7 +638,9 @@ export const AIWorkspace: React.FC<AIWorkspaceProps> = ({
   // Map resume matches to JobRequirement interface
   const mappedResumeJobs = resumeMatches.map((m: any) => {
     const j = jobs.find((job) => job.id === m.jobId);
-    const hasScore = m.score != null && !Number.isNaN(Number(m.score));
+    const status = (m.matchStatus || "").toLowerCase();
+    const isCompleted = status === "completed";
+    const hasScore = isCompleted && m.score != null && !Number.isNaN(Number(m.score));
     return {
       id: m.jobId,
       title: cleanJobTitle(m.jobTitle || j?.title || "Untitled Job"),
@@ -379,13 +649,13 @@ export const AIWorkspace: React.FC<AIWorkspaceProps> = ({
       workMode: j?.workMode || 'Remote',
       experience: j?.experience || "3+ Years",
       visa: j?.visa || "Any",
-      skills: m.strengths && m.strengths.length > 0 ? m.strengths : (j?.skills || []),
+      skills: Array.isArray(m.strengths) ? m.strengths : [],
       matchCount: j?.matchCount || 0,
       avgMatchScore: hasScore
         ? Math.round(Number(m.score))
-        : m.skillMatchScore != null
-          ? Math.round(Number(m.skillMatchScore))
-          : 0,
+        : null,
+      isCompleted,
+      hasValidScore: hasScore,
       responsibilities: j?.responsibilities || [],
       education: j?.education || "",
       description: j?.description || "",
@@ -395,13 +665,11 @@ export const AIWorkspace: React.FC<AIWorkspaceProps> = ({
     };
   });
 
-  // Filter out resume jobs with a zero average match score and sort descending
+  // Filter out resume jobs with missing scores and sort descending
   const filteredResumeJobs = mappedResumeJobs
     .filter((j) => {
-      // Exclude missing scores or exactly 0
-      if (j.avgMatchScore === undefined || j.avgMatchScore === null) return false;
-      if (j.avgMatchScore === 0) return false;
-      return true;
+      if (!j.hasValidScore || j.avgMatchScore === undefined || j.avgMatchScore === null || Number.isNaN(Number(j.avgMatchScore))) return false;
+      return Number(j.avgMatchScore) >= localMatchThreshold;
     })
     .sort((a, b) => {
       const norm = (v: any) => {
@@ -413,12 +681,10 @@ export const AIWorkspace: React.FC<AIWorkspaceProps> = ({
       return norm(b.avgMatchScore) - norm(a.avgMatchScore);
     });
 
-  // Show all shortlisted candidates (excluding zero scores)
+  // Show all shortlisted candidates
   const filteredCandidates = mappedJobCandidates
     .filter((c) => {
-      // Exclude candidates with missing scores or exactly 0
-      if (c.matchScore === undefined || c.matchScore === null) return false;
-      if (c.matchScore === 0) return false;
+      if (!c.hasValidScore || c.matchScore === undefined || c.matchScore === null || Number.isNaN(Number(c.matchScore))) return false;
       return c.matchScore >= localMatchThreshold;
     })
     .sort((a, b) => b.matchScore - a.matchScore);
@@ -452,7 +718,7 @@ export const AIWorkspace: React.FC<AIWorkspaceProps> = ({
 
   return (
     <div
-      className="p-6 space-y-6 max-w-[1600px] mx-auto select-none"
+      className="p-6 space-y-6 max-w-[1600px] w-full mx-auto select-none"
       onMouseMove={handleMouseMove}
       onMouseUp={handleMouseUp}
     >
@@ -554,7 +820,7 @@ export const AIWorkspace: React.FC<AIWorkspaceProps> = ({
                         key={j.id}
                         onClick={() => {
                           setSelectedJob(j);
-                          setLocalMatchThreshold(j.scoreThreshold || 50);
+                          setLocalMatchThreshold(j.scoreThreshold ?? 50);
                           setSelectedCandidateId(candidates[0]?.id || null);
                           setIsJobDropdownOpen(false);
                           setJobSearchQuery('');
@@ -685,16 +951,6 @@ export const AIWorkspace: React.FC<AIWorkspaceProps> = ({
               />
             </div>
           )}
-          <button
-            onClick={() => setShowFilters(!showFilters)}
-            className={`px-4 py-3 rounded-xl border flex items-center gap-2 text-xs font-semibold transition cursor-pointer shrink-0 ${showFilters
-                ? 'bg-purple-600/30 border-purple-500 text-purple-200'
-                : 'bg-white/5 border-white/10 text-slate-300 hover:bg-white/10'
-              }`}
-          >
-            <Filter className="w-3.5 h-3.5 text-purple-400" />
-            <span>Filters</span>
-          </button>
         </div>
       </div>
 
@@ -841,7 +1097,7 @@ export const AIWorkspace: React.FC<AIWorkspaceProps> = ({
                   const isSelected = selectedCandidateId === cand.id;
                   return (
                     <div
-                      key={cand.id}
+                      key={cand.matchId || cand.id}
                       onClick={() => setSelectedCandidateId(cand.id)}
                       className={`p-5 rounded-2xl transition-all cursor-pointer relative ${isSelected ? 'bg-purple-950/20 border border-purple-500/40' : 'bg-white/5 border border-white/10 hover:border-purple-500/20'
                         }`}
@@ -1056,11 +1312,31 @@ export const AIWorkspace: React.FC<AIWorkspaceProps> = ({
                     {collapsedSections['summary'] ? <ChevronDown className="w-4 h-4" /> : <ChevronUp className="w-4 h-4" />}
                   </button>
 
-                  {!collapsedSections['summary'] && (
-                    <p className="text-xs text-slate-300 leading-relaxed pt-1 font-normal">
-                      {activeCandidate.summary}
-                    </p>
-                  )}
+                  {!collapsedSections['summary'] && (() => {
+                    const { heading, points } = parseMatchSummaryPoints(activeCandidate.summary);
+                    return (
+                      <div className="pt-1 space-y-2">
+                        <p className="text-[10px] font-bold text-purple-300 uppercase tracking-widest">
+                          {heading}
+                        </p>
+                        {points.length ? (
+                          <ul className="space-y-2">
+                            {points.map((point, i) => (
+                              <li
+                                key={i}
+                                className="flex gap-2 text-xs text-slate-300 leading-relaxed font-normal"
+                              >
+                                <span className="mt-1.5 h-1.5 w-1.5 shrink-0 rounded-full bg-purple-400" />
+                                <span>{point}</span>
+                              </li>
+                            ))}
+                          </ul>
+                        ) : (
+                          <p className="text-xs text-slate-500 italic">No match summary yet.</p>
+                        )}
+                      </div>
+                    );
+                  })()}
                 </div>
 
                 {/* SKILLS ALIGNMENT */}
@@ -1164,10 +1440,18 @@ export const AIWorkspace: React.FC<AIWorkspaceProps> = ({
                 </div>
 
                 {/* AI RECOMMENDATION */}
-                <div className="glass-card p-5 rounded-2xl space-y-2 border border-purple-500/30 bg-purple-950/20">
+                <div className="glass-card p-5 rounded-2xl space-y-3 border border-purple-500/30 bg-purple-950/20">
                   <span className="text-xs font-bold text-purple-300 uppercase tracking-wider">
                     AI Recommendation
                   </span>
+                  <div className="flex flex-wrap items-center gap-2">
+                    <span className="px-2.5 py-1 rounded-lg bg-purple-500/20 border border-purple-400/30 text-purple-100 text-xs font-bold">
+                      {activeCandidate.aiRecommendationLabel || 'Potential Match'}
+                    </span>
+                    <span className="px-2.5 py-1 rounded-lg bg-emerald-500/10 border border-emerald-500/30 text-emerald-300 text-xs font-semibold">
+                      Next step: {activeCandidate.aiRecommendationAction || 'Hold'}
+                    </span>
+                  </div>
                   <p className="text-xs text-slate-200 leading-relaxed font-normal">
                     {activeCandidate.aiRecommendationReason}
                   </p>
@@ -1185,10 +1469,14 @@ export const AIWorkspace: React.FC<AIWorkspaceProps> = ({
 
                   {!collapsedSections['history'] && (
                     <div className="space-y-3 pt-2">
-                      {activeCandidate.matchingHistory.length === 0 ? (
+                      {isFetchingHistory ? (
+                        <div className="flex items-center gap-2 text-slate-400 text-xs italic">
+                          <Loader2 className="w-3 h-3 animate-spin" /> Fetching history...
+                        </div>
+                      ) : candidateMatchHistory.length === 0 ? (
                         <div className="text-slate-500 text-xs italic">No matching history found.</div>
                       ) : (
-                        activeCandidate.matchingHistory.map((hist, idx) => (
+                        candidateMatchHistory.map((hist, idx) => (
                           <div
                             key={idx}
                             className="p-3 rounded-xl bg-white/5 border border-white/5 flex items-center justify-between text-xs"
@@ -1242,10 +1530,19 @@ export const AIWorkspace: React.FC<AIWorkspaceProps> = ({
                     </button>
 
                     <button
-                      onClick={() => showToast(`${activeCandidate.name} Submitted to Client!`)}
-                      className="py-2.5 px-3 rounded-xl bg-gradient-to-r from-purple-600 to-indigo-600 hover:from-purple-500 hover:to-indigo-500 text-white text-xs font-bold flex items-center justify-center gap-1.5 shadow-lg shadow-purple-900/40 transition cursor-pointer"
+                      onClick={submitToPrism}
+                      disabled={isSubmitting}
+                      className="py-2.5 px-3 rounded-xl bg-gradient-to-r from-purple-600 to-indigo-600 hover:from-purple-500 hover:to-indigo-500 text-white text-xs font-bold flex items-center justify-center gap-1.5 shadow-lg shadow-purple-900/40 transition cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
                     >
-                      <Send className="w-3.5 h-3.5" /> Submit
+                      {isSubmitting ? (
+                        <>
+                          <Loader2 className="w-3.5 h-3.5 animate-spin" /> Submitting...
+                        </>
+                      ) : (
+                        <>
+                          <Send className="w-3.5 h-3.5" /> Submit
+                        </>
+                      )}
                     </button>
                   </div>
                 </div>
@@ -1284,7 +1581,7 @@ export const AIWorkspace: React.FC<AIWorkspaceProps> = ({
 
                   <div className="p-4 rounded-xl bg-purple-950/30 border border-purple-500/30 flex items-center justify-between">
                     <div>
-                      <div className="text-3xl font-extrabold text-emerald-400">{activeJobForResume.avgMatchScore || 85}%</div>
+                      <div className="text-3xl font-extrabold text-emerald-400">{activeJobForResume.avgMatchScore ?? 0}%</div>
                       <div className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">
                         MATCH SCORE
                       </div>

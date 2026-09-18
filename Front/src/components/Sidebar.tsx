@@ -1,5 +1,5 @@
 import React from 'react';
-import { LayoutDashboard, UploadCloud, Sliders, Settings, Zap, FileText, User } from 'lucide-react';
+import { LayoutDashboard, UploadCloud, Sliders, Settings, Zap, FileText, User, Inbox, Building2, Send } from 'lucide-react';
 import { NavigationScreen } from '../types';
 
 interface SidebarProps {
@@ -12,12 +12,15 @@ export const Sidebar: React.FC<SidebarProps> = ({ activeScreen, onNavigate }) =>
     { id: 'dashboard' as NavigationScreen, label: 'Dashboard', icon: LayoutDashboard },
     { id: 'upload' as NavigationScreen, label: 'Upload & Analyze', icon: UploadCloud },
     { id: 'matching' as NavigationScreen, label: 'AI Workspace', icon: Sliders },
+    { id: 'inbox' as NavigationScreen, label: 'Smart Inbox', icon: Inbox },
     { id: 'jobs' as NavigationScreen, label: 'Job Descriptions', icon: FileText },
     { id: 'resumes' as NavigationScreen, label: 'Resumes', icon: User },
+    { id: 'vendors' as NavigationScreen, label: 'Vendors', icon: Building2 },
+    { id: 'prism' as NavigationScreen, label: 'Submission & RTR', icon: Send },
   ];
 
   return (
-    <aside className="w-64 min-h-screen bg-[#0d0918]/90 border-r border-[#261e38] flex flex-col justify-between shrink-0 z-20">
+    <aside className="w-64 h-screen sticky top-0 bg-[#0d0918]/90 border-r border-[#261e38] flex flex-col justify-between shrink-0 z-20 overflow-hidden">
       <div>
         {/* SYNTRA Brand Header */}
         <div className="h-16 flex items-center px-6 gap-3 border-b border-[#261e38]">
@@ -38,11 +41,10 @@ export const Sidebar: React.FC<SidebarProps> = ({ activeScreen, onNavigate }) =>
               <button
                 key={item.id}
                 onClick={() => onNavigate?.(item.id)}
-                className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl text-sm font-medium transition-all duration-200 cursor-pointer ${
-                  isActive
-                    ? 'bg-purple-600/20 text-purple-200 border border-purple-500/30 shadow-lg shadow-purple-950/50'
-                    : 'text-slate-400 hover:text-slate-200 hover:bg-white/5 border border-transparent'
-                }`}
+                className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl text-sm font-medium transition-all duration-200 cursor-pointer ${isActive
+                  ? 'bg-purple-600/20 text-purple-200 border border-purple-500/30 shadow-lg shadow-purple-950/50'
+                  : 'text-slate-400 hover:text-slate-200 hover:bg-white/5 border border-transparent'
+                  }`}
               >
                 <Icon className={`w-4 h-4 ${isActive ? 'text-purple-400' : 'text-slate-400'}`} />
                 <span>{item.label}</span>
@@ -55,10 +57,14 @@ export const Sidebar: React.FC<SidebarProps> = ({ activeScreen, onNavigate }) =>
       {/* Bottom Settings Link */}
       <div className="p-4 border-t border-[#261e38]">
         <button
-          onClick={() => alert('SYNTRA Settings: System parameters, AI thresholds & integrations configured.')}
-          className="w-full flex items-center gap-3 px-4 py-3 rounded-xl text-sm font-medium text-slate-400 hover:text-slate-200 hover:bg-white/5 transition-all cursor-pointer"
+          onClick={() => onNavigate?.('settings')}
+          className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl text-sm font-medium transition-all duration-200 cursor-pointer ${
+            activeScreen === 'settings'
+              ? 'bg-purple-600/20 text-purple-200 border border-purple-500/30 shadow-lg shadow-purple-950/50'
+              : 'text-slate-400 hover:text-slate-200 hover:bg-white/5 border border-transparent'
+          }`}
         >
-          <Settings className="w-4 h-4 text-slate-400" />
+          <Settings className={`w-4 h-4 ${activeScreen === 'settings' ? 'text-purple-400' : 'text-slate-400'}`} />
           <span>Settings</span>
         </button>
       </div>

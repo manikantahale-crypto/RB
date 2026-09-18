@@ -1,4 +1,4 @@
-import React, { useState, useRef, useEffect } from 'react';
+import React, { useState, useRef, useEffect, useMemo } from 'react';
 import {
   UploadCloud,
   Search,
@@ -22,10 +22,13 @@ import {
   Briefcase,
   Layers,
   RefreshCw,
+  Landmark,
 } from 'lucide-react';
 import { NavigationScreen, JobRequirement, FetchedJDItem } from '../../types';
 import { cleanJobTitle, cleanFileName, calculateSeniority } from '../../utils';
 import { apiFetch } from '../../services/api';
+import { JobDiscoveryModal } from './JobDiscoveryModal';
+import { PaginationFooter } from './PaginationFooter';
 
 
 interface JobsWorkspaceProps {
@@ -57,6 +60,10 @@ export const JobsWorkspace: React.FC<JobsWorkspaceProps> = ({
   onThresholdChange,
 }) => {
   const [searchQuery, setSearchQuery] = useState('');
+
+  // Pagination state
+  const [currentPage, setCurrentPage] = useState(1);
+  const [rowsPerPage, setRowsPerPage] = useState(10);
 
   // Filter state
   const [isFilterOpen, setIsFilterOpen] = useState(false);
@@ -113,6 +120,7 @@ export const JobsWorkspace: React.FC<JobsWorkspaceProps> = ({
     setSelectedSeniorities([]);
     setSelectedSources([]);
     setSkillSearchQuery('');
+    setCurrentPage(1);
   };
 
   const [rowThresholds, setRowThresholds] = useState<Record<string, number>>({});
@@ -131,6 +139,7 @@ export const JobsWorkspace: React.FC<JobsWorkspaceProps> = ({
 
   // --- ASTRA INTAKE STATE ---
   const [isFetchDropdownOpen, setIsFetchDropdownOpen] = useState(false);
+  const [isDiscoveryModalOpen, setIsDiscoveryModalOpen] = useState(false);
   const fetchDropdownRef = useRef<HTMLDivElement>(null);
 
   // Email Modal State
@@ -141,7 +150,7 @@ export const JobsWorkspace: React.FC<JobsWorkspaceProps> = ({
 
   // Job Board Modal State
   const [isJobBoardModalOpen, setIsJobBoardModalOpen] = useState(false);
-  const [selectedJobBoard, setSelectedJobBoard] = useState<'Adzuna' | 'Jooble' | 'Indeed' | 'JobPipe' | 'Monster'>('Adzuna');
+  const [selectedJobBoard, setSelectedJobBoard] = useState<'Adzuna' | 'Jooble' | 'Indeed' | 'JobPipe' | 'Monster' | 'Careerjet' | 'USAJOBS' | 'Web Search'>('Adzuna');
   const [jobBoardKeyword, setJobBoardKeyword] = useState('Python Developer');
   const [jobBoardLocation, setJobBoardLocation] = useState('Dallas, TX');
   const [isFetchingJobBoard, setIsFetchingJobBoard] = useState(false);
@@ -239,7 +248,7 @@ export const JobsWorkspace: React.FC<JobsWorkspaceProps> = ({
     }
   };
 
-  const openJobBoardModal = (source: 'Adzuna' | 'Jooble' | 'Indeed' | 'JobPipe' | 'Monster') => {
+  const openJobBoardModal = (source: 'Adzuna' | 'Jooble' | 'Indeed' | 'JobPipe' | 'Monster' | 'Careerjet' | 'USAJOBS' | 'Web Search') => {
     setSelectedJobBoard(source);
     setJobBoardError(null);
     setIsJobBoardModalOpen(true);
@@ -253,11 +262,13 @@ export const JobsWorkspace: React.FC<JobsWorkspaceProps> = ({
     setIsFetchingJobBoard(true);
     setJobBoardError(null);
 
+    const sourcePayload = selectedJobBoard === 'Web Search' ? 'web_search' : selectedJobBoard.toLowerCase();
+
     try {
       const res = await apiFetch('/api/job-boards/fetch-requirements', {
         method: 'POST',
         body: JSON.stringify({
-          source: selectedJobBoard.toLowerCase(),
+          source: sourcePayload,
           keyword: jobBoardKeyword.trim(),
           location: jobBoardLocation.trim() || undefined,
         }),
@@ -348,7 +359,7 @@ export const JobsWorkspace: React.FC<JobsWorkspaceProps> = ({
   };
 
   const renderSourceBadge = (sourceName?: string, sourceEmail?: string | null) => {
-    const s = (sourceName || (sourceEmail ? 'email' : 'manual')).toLowerCase();
+    const s = (sourceName || (sourceEmail ? 'email' : 'manual')).toLowerCase().trim();
     if (s === 'email' || sourceEmail) {
       return (
         <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-purple-500/15 border border-purple-500/30 text-purple-300 text-xs font-semibold">
@@ -394,6 +405,83 @@ export const JobsWorkspace: React.FC<JobsWorkspaceProps> = ({
         <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-fuchsia-500/15 border border-fuchsia-500/30 text-fuchsia-300 text-xs font-semibold">
           <Sparkles className="w-3 h-3 text-fuchsia-400" />
           <span>Monster</span>
+        </span>
+      );
+    }
+    if (s === 'careerjet') {
+      return (
+        <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-amber-500/15 border border-amber-500/30 text-amber-300 text-xs font-semibold">
+          <Globe className="w-3 h-3 text-amber-400" />
+          <span>Careerjet</span>
+        </span>
+      );
+    }
+    if (s === 'usajobs') {
+      return (
+        <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-red-500/15 border border-red-500/30 text-red-300 text-xs font-semibold">
+          <Landmark className="w-3 h-3 text-red-400" />
+          <span>USAJOBS</span>
+        </span>
+      );
+    }
+    if (s === 'dice') {
+      return (
+        <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-rose-500/15 border border-rose-500/30 text-rose-300 text-xs font-semibold">
+          <Briefcase className="w-3 h-3 text-rose-400" />
+          <span>Dice</span>
+        </span>
+      );
+    }
+    if (s === 'linkedin') {
+      return (
+        <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-sky-500/15 border border-sky-500/30 text-sky-300 text-xs font-semibold">
+          <Globe className="w-3 h-3 text-sky-400" />
+          <span>LinkedIn</span>
+        </span>
+      );
+    }
+    if (s === 'ziprecruiter') {
+      return (
+        <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-teal-500/15 border border-teal-500/30 text-teal-300 text-xs font-semibold">
+          <Layers className="w-3 h-3 text-teal-400" />
+          <span>ZipRecruiter</span>
+        </span>
+      );
+    }
+    if (s === 'glassdoor') {
+      return (
+        <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-emerald-500/15 border border-emerald-500/30 text-emerald-300 text-xs font-semibold">
+          <Briefcase className="w-3 h-3 text-emerald-400" />
+          <span>Glassdoor</span>
+        </span>
+      );
+    }
+    if (s === 'upwork') {
+      return (
+        <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-lime-500/15 border border-lime-500/30 text-lime-300 text-xs font-semibold">
+          <Sparkles className="w-3 h-3 text-lime-400" />
+          <span>Upwork</span>
+        </span>
+      );
+    }
+    if (s === 'web_search' || s === 'web search' || s === 'jsearch') {
+      return (
+        <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-violet-500/15 border border-violet-500/30 text-violet-300 text-xs font-semibold">
+          <Search className="w-3 h-3 text-violet-400" />
+          <span>Web Search</span>
+        </span>
+      );
+    }
+    if (s && s !== 'manual' && s !== 'job_board') {
+      const formatted = s
+        .replace(/_/g, ' ')
+        .split(' ')
+        .map((w) => w.charAt(0).toUpperCase() + w.slice(1))
+        .join(' ');
+      return (
+        <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-indigo-500/15 border border-indigo-500/30 text-indigo-300 text-xs font-semibold">
+          <Globe className="w-3 h-3 text-indigo-400" />
+          <span>{formatted}</span>
         </span>
       );
     }
@@ -464,11 +552,12 @@ export const JobsWorkspace: React.FC<JobsWorkspaceProps> = ({
     }
 
     if (selectedSources.length > 0) {
-      const jobSrc = (job.sourceName || (job.sourceEmail ? 'email' : 'manual')).toLowerCase();
+      const jobSrc = (job.sourceName || (job.sourceEmail ? 'email' : 'manual')).toLowerCase().replace(/_/g, ' ');
       const match = selectedSources.some((src) => {
-        if (src.toLowerCase() === 'email') return jobSrc === 'email' || Boolean(job.sourceEmail);
-        if (src.toLowerCase() === 'manual') return jobSrc === 'manual' || !job.sourceName;
-        return jobSrc.includes(src.toLowerCase());
+        const s = src.toLowerCase().trim();
+        if (s === 'email') return jobSrc === 'email' || Boolean(job.sourceEmail);
+        if (s === 'manual') return jobSrc === 'manual' || !job.sourceName;
+        return jobSrc === s || jobSrc.includes(s);
       });
       if (!match) return false;
     }
@@ -476,14 +565,28 @@ export const JobsWorkspace: React.FC<JobsWorkspaceProps> = ({
     return true;
   });
 
-  const allFilteredJobsSelected =
-    filteredJobs.length > 0 && filteredJobs.every((j) => selectedJobIds.has(j.id));
+  // Paginated Slices
+  const paginatedJobs = useMemo(() => {
+    const start = (currentPage - 1) * rowsPerPage;
+    return filteredJobs.slice(start, start + rowsPerPage);
+  }, [filteredJobs, currentPage, rowsPerPage]);
+
+  const allCurrentPageSelected =
+    paginatedJobs.length > 0 && paginatedJobs.every((j) => selectedJobIds.has(j.id));
 
   const toggleSelectAllJobs = () => {
-    if (allFilteredJobsSelected) {
-      setSelectedJobIds(new Set());
+    if (allCurrentPageSelected) {
+      setSelectedJobIds((prev) => {
+        const next = new Set(prev);
+        paginatedJobs.forEach((j) => next.delete(j.id));
+        return next;
+      });
     } else {
-      setSelectedJobIds(new Set(filteredJobs.map((j) => j.id)));
+      setSelectedJobIds((prev) => {
+        const next = new Set(prev);
+        paginatedJobs.forEach((j) => next.add(j.id));
+        return next;
+      });
     }
   };
 
@@ -576,9 +679,9 @@ export const JobsWorkspace: React.FC<JobsWorkspaceProps> = ({
   const countFailed = fetchedResultsModal.items.filter((i) => i.status === 'Failed').length;
 
   return (
-    <div className="p-6 md:p-8 space-y-6 max-w-[1600px] mx-auto font-sans">
+    <div className="p-6 md:p-8 space-y-4 max-w-[1600px] w-full mx-auto font-sans h-full min-h-0 flex flex-col overflow-hidden">
       {/* PAGE HEADER */}
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 shrink-0">
         <div>
           <div className="flex items-center gap-3">
             <h1 className="text-2xl md:text-3xl font-extrabold text-white tracking-tight">
@@ -619,7 +722,7 @@ export const JobsWorkspace: React.FC<JobsWorkspaceProps> = ({
       </div>
 
       {/* SEARCH & FILTERS & FETCH CONTROLS */}
-      <div className="space-y-4">
+      <div className="space-y-4 shrink-0">
         <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
           <div className="flex flex-wrap items-center gap-3 flex-1 md:justify-start">
             {/* Search Input */}
@@ -628,13 +731,19 @@ export const JobsWorkspace: React.FC<JobsWorkspaceProps> = ({
               <input
                 type="text"
                 value={searchQuery}
-                onChange={(e) => setSearchQuery(e.target.value)}
+                onChange={(e) => {
+                  setSearchQuery(e.target.value);
+                  setCurrentPage(1);
+                }}
                 placeholder="Search by title, role, company..."
                 className="w-full pl-10 pr-9 py-2.5 rounded-xl border border-purple-500/40 bg-[#161028] text-xs md:text-sm text-slate-100 placeholder-slate-400 hover:border-purple-400/60 focus:border-purple-400 focus:outline-none focus:ring-1 focus:ring-purple-400/40 transition shadow-inner shadow-black/20"
               />
               {searchQuery && (
                 <button
-                  onClick={() => setSearchQuery('')}
+                  onClick={() => {
+                    setSearchQuery('');
+                    setCurrentPage(1);
+                  }}
                   className="absolute right-3 top-3 text-slate-400 hover:text-white cursor-pointer"
                 >
                   <X className="w-3.5 h-3.5" />
@@ -647,11 +756,10 @@ export const JobsWorkspace: React.FC<JobsWorkspaceProps> = ({
               <button
                 type="button"
                 onClick={() => setIsFilterOpen(!isFilterOpen)}
-                className={`px-4 py-2.5 rounded-xl border font-bold text-xs md:text-sm flex items-center justify-center gap-2 transition cursor-pointer shrink-0 ${
-                  activeFilterCount > 0
+                className={`px-4 py-2.5 rounded-xl border font-bold text-xs md:text-sm flex items-center justify-center gap-2 transition cursor-pointer shrink-0 ${activeFilterCount > 0
                     ? 'border-purple-400 bg-purple-600/30 text-purple-200 shadow-md shadow-purple-900/30'
                     : 'border-purple-500/40 bg-[#161028] text-slate-300 hover:border-purple-400/60 hover:text-white'
-                }`}
+                  }`}
               >
                 <Filter className="w-4 h-4 text-purple-400" />
                 <span>Filters</span>
@@ -688,7 +796,7 @@ export const JobsWorkspace: React.FC<JobsWorkspaceProps> = ({
                         Source
                       </label>
                       <div className="flex flex-wrap gap-1.5">
-                        {['Email', 'Adzuna', 'Jooble', 'Indeed', 'JobPipe', 'Monster', 'Manual'].map((src) => {
+                        {['Email', 'Web Search', 'Adzuna', 'Jooble', 'Indeed', 'JobPipe', 'Monster', 'Careerjet', 'USAJOBS', 'Manual'].map((src) => {
                           const isSelected = selectedSources.includes(src);
                           return (
                             <button
@@ -699,11 +807,10 @@ export const JobsWorkspace: React.FC<JobsWorkspaceProps> = ({
                                   isSelected ? prev.filter((s) => s !== src) : [...prev, src]
                                 );
                               }}
-                              className={`px-2.5 py-1 rounded-lg text-xs font-semibold transition cursor-pointer border ${
-                                isSelected
+                              className={`px-2.5 py-1 rounded-lg text-xs font-semibold transition cursor-pointer border ${isSelected
                                   ? 'bg-purple-600 text-white border-purple-500'
                                   : 'bg-[#1a142c] text-slate-300 border-[#2b2144] hover:border-purple-500/50'
-                              }`}
+                                }`}
                             >
                               {src}
                             </button>
@@ -729,11 +836,10 @@ export const JobsWorkspace: React.FC<JobsWorkspaceProps> = ({
                                   isSelected ? prev.filter((l) => l !== loc) : [...prev, loc]
                                 );
                               }}
-                              className={`px-2.5 py-1 rounded-lg text-xs font-semibold transition cursor-pointer border ${
-                                isSelected
+                              className={`px-2.5 py-1 rounded-lg text-xs font-semibold transition cursor-pointer border ${isSelected
                                   ? 'bg-purple-600 text-white border-purple-500'
                                   : 'bg-[#1a142c] text-slate-300 border-[#2b2144] hover:border-purple-500/50'
-                              }`}
+                                }`}
                             >
                               {loc}
                             </button>
@@ -759,11 +865,10 @@ export const JobsWorkspace: React.FC<JobsWorkspaceProps> = ({
                                   isSelected ? prev.filter((m) => m !== wm) : [...prev, wm]
                                 );
                               }}
-                              className={`flex-1 py-1.5 rounded-lg text-xs font-semibold transition cursor-pointer border text-center ${
-                                isSelected
+                              className={`flex-1 py-1.5 rounded-lg text-xs font-semibold transition cursor-pointer border text-center ${isSelected
                                   ? 'bg-purple-600 text-white border-purple-500'
                                   : 'bg-[#1a142c] text-slate-300 border-[#2b2144] hover:border-purple-500/50'
-                              }`}
+                                }`}
                             >
                               {wm}
                             </button>
@@ -789,11 +894,10 @@ export const JobsWorkspace: React.FC<JobsWorkspaceProps> = ({
                                   isSelected ? prev.filter((v) => v !== visa) : [...prev, visa]
                                 );
                               }}
-                              className={`px-2.5 py-1 rounded-lg text-xs font-semibold transition cursor-pointer border ${
-                                isSelected
+                              className={`px-2.5 py-1 rounded-lg text-xs font-semibold transition cursor-pointer border ${isSelected
                                   ? 'bg-purple-600 text-white border-purple-500'
                                   : 'bg-[#1a142c] text-slate-300 border-[#2b2144] hover:border-purple-500/50'
-                              }`}
+                                }`}
                             >
                               {visa}
                             </button>
@@ -846,11 +950,10 @@ export const JobsWorkspace: React.FC<JobsWorkspaceProps> = ({
                                   isSelected ? prev.filter((s) => s !== sen) : [...prev, sen]
                                 );
                               }}
-                              className={`px-2.5 py-1 rounded-lg text-xs font-semibold transition cursor-pointer border ${
-                                isSelected
+                              className={`px-2.5 py-1 rounded-lg text-xs font-semibold transition cursor-pointer border ${isSelected
                                   ? 'bg-purple-600 text-white border-purple-500'
                                   : 'bg-[#1a142c] text-slate-300 border-[#2b2144] hover:border-purple-500/50'
-                              }`}
+                                }`}
                             >
                               {sen}
                             </button>
@@ -938,11 +1041,10 @@ export const JobsWorkspace: React.FC<JobsWorkspaceProps> = ({
                                     isSelected ? prev.filter((s) => s !== skill) : [...prev, skill]
                                   );
                                 }}
-                                className={`px-2.5 py-0.5 rounded-md border text-[11px] font-medium transition cursor-pointer flex items-center gap-1 ${
-                                  isSelected
+                                className={`px-2.5 py-0.5 rounded-md border text-[11px] font-medium transition cursor-pointer flex items-center gap-1 ${isSelected
                                     ? 'bg-purple-600 text-white border-purple-500 font-semibold'
                                     : 'bg-[#1a142c] text-slate-300 border-[#2b2144] hover:border-purple-500/50'
-                                }`}
+                                  }`}
                               >
                                 {isSelected ? (
                                   <Check className="w-3 h-3" />
@@ -968,7 +1070,10 @@ export const JobsWorkspace: React.FC<JobsWorkspaceProps> = ({
                     </button>
                     <button
                       type="button"
-                      onClick={() => setIsFilterOpen(false)}
+                      onClick={() => {
+                        setIsFilterOpen(false);
+                        setCurrentPage(1);
+                      }}
                       className="px-4 py-1.5 rounded-xl bg-purple-600 hover:bg-purple-500 text-white text-xs font-bold shadow-lg shadow-purple-900/40 transition cursor-pointer"
                     >
                       Apply Filters
@@ -977,6 +1082,16 @@ export const JobsWorkspace: React.FC<JobsWorkspaceProps> = ({
                 </div>
               )}
             </div>
+
+            {/* AGENTIC DISCOVERY ACTION: Find Jobs for My Candidates */}
+            <button
+              type="button"
+              onClick={() => setIsDiscoveryModalOpen(true)}
+              className="px-4 py-2.5 rounded-xl bg-gradient-to-r from-purple-600 to-indigo-600 hover:from-purple-500 hover:to-indigo-500 text-white font-bold text-xs md:text-sm flex items-center justify-center gap-2 shadow-lg shadow-purple-950/40 transition cursor-pointer hover:border-purple-400/70 border border-purple-500/50 hover:scale-[1.02] active:scale-[0.98]"
+            >
+              <Sparkles className="w-4 h-4 text-purple-200" />
+              <span>Find Jobs for My Candidates</span>
+            </button>
 
             {/* ASTRA PRIMARY ACTION: Fetch JDs ▼ */}
             <div className="relative" ref={fetchDropdownRef}>
@@ -991,7 +1106,22 @@ export const JobsWorkspace: React.FC<JobsWorkspaceProps> = ({
               </button>
 
               {isFetchDropdownOpen && (
-                <div className="absolute left-0 top-12 z-50 w-60 rounded-2xl bg-[#140e26] border border-purple-500/30 shadow-2xl p-2 space-y-1 text-slate-200 text-xs animate-in fade-in zoom-in-95 duration-150">
+                <div className="absolute left-0 top-12 z-50 w-64 rounded-2xl bg-[#140e26] border border-purple-500/30 shadow-2xl p-2 space-y-1 text-slate-200 text-xs animate-in fade-in zoom-in-95 duration-150">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setIsFetchDropdownOpen(false);
+                      setIsDiscoveryModalOpen(true);
+                    }}
+                    className="w-full px-3 py-2.5 rounded-xl bg-purple-500/10 hover:bg-purple-600/30 text-purple-200 hover:text-white text-left flex items-center gap-2.5 transition cursor-pointer border border-purple-500/30 mb-1"
+                  >
+                    <Sparkles className="w-4 h-4 text-purple-400" />
+                    <div className="flex flex-col">
+                      <span className="font-bold text-xs">For My Candidates (Agentic)</span>
+                      <span className="text-[10px] text-purple-400/80">AI search for bench consultants</span>
+                    </div>
+                  </button>
+
                   <button
                     type="button"
                     onClick={() => {
@@ -1006,6 +1136,27 @@ export const JobsWorkspace: React.FC<JobsWorkspaceProps> = ({
 
                   <div className="pt-2 pb-1 px-3 border-t border-purple-500/20">
                     <span className="text-[10px] font-bold text-purple-400/80 uppercase tracking-wider">
+                      Web & Aggregators
+                    </span>
+                  </div>
+
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setIsFetchDropdownOpen(false);
+                      openJobBoardModal('Web Search');
+                    }}
+                    className="w-full px-3 py-2 rounded-xl hover:bg-purple-600/20 text-slate-300 hover:text-white text-left flex items-center justify-between transition cursor-pointer"
+                  >
+                    <div className="flex items-center gap-2.5">
+                      <span className="w-2 h-2 rounded-full bg-violet-500/20 border border-current text-violet-400" />
+                      <span className="font-medium text-xs">Web Search</span>
+                    </div>
+                    <ChevronRight className="w-3.5 h-3.5 text-slate-500" />
+                  </button>
+
+                  <div className="pt-2 pb-1 px-3 border-t border-purple-500/20">
+                    <span className="text-[10px] font-bold text-purple-400/80 uppercase tracking-wider">
                       Job Boards
                     </span>
                   </div>
@@ -1016,6 +1167,8 @@ export const JobsWorkspace: React.FC<JobsWorkspaceProps> = ({
                     { name: 'Indeed', color: 'text-indigo-400', bg: 'bg-indigo-500/20' },
                     { name: 'JobPipe', color: 'text-cyan-400', bg: 'bg-cyan-500/20' },
                     { name: 'Monster', color: 'text-fuchsia-400', bg: 'bg-fuchsia-500/20' },
+                    { name: 'Careerjet', color: 'text-amber-400', bg: 'bg-amber-500/20' },
+                    { name: 'USAJOBS', color: 'text-red-400', bg: 'bg-red-500/20' },
                   ].map((jb) => (
                     <button
                       key={jb.name}
@@ -1041,27 +1194,27 @@ export const JobsWorkspace: React.FC<JobsWorkspaceProps> = ({
       </div>
 
       {/* JOB DESCRIPTIONS TABLE */}
-      <div className="rounded-2xl overflow-hidden border border-[#261e38] bg-[#0c0916]/80 glass-card">
-        <div className="overflow-x-auto">
-          <table className="w-full text-left border-collapse">
-            <thead>
-              <tr className="border-b border-[#261e38] bg-[#150f27] text-[#94a3b8] font-semibold text-xs uppercase tracking-wider sticky top-0 z-10">
-                <th className="py-4 px-4 w-10 text-center">
+      <div className="flex-1 min-h-0 w-full rounded-2xl border border-[#261e38] bg-[#0c0916]/80 glass-card flex flex-col overflow-hidden shadow-xl">
+        <div className="flex-1 min-h-0 w-full overflow-auto">
+          <table className="w-full text-left border-collapse min-w-[1150px]">
+            <thead className="sticky top-0 z-20 bg-[#150f27] border-b border-[#261e38] shadow-sm">
+              <tr className="border-b border-[#261e38] bg-[#150f27] text-[#94a3b8] font-semibold text-xs uppercase tracking-wider">
+                <th className="py-4 px-4 w-10 text-center bg-[#150f27]">
                   <input
                     type="checkbox"
-                    checked={allFilteredJobsSelected}
+                    checked={allCurrentPageSelected}
                     onChange={toggleSelectAllJobs}
                     className="w-4 h-4 rounded border-slate-700 bg-slate-900/50 text-purple-600 focus:ring-purple-500 accent-purple-600 cursor-pointer"
-                    title="Select all jobs"
+                    title="Select all jobs on current page"
                   />
                 </th>
-                <th className="py-4 px-5">FILE</th>
-                <th className="py-4 px-5">ROLE</th>
-                <th className="py-4 px-5">SOURCE</th>
-                <th className="py-4 px-5">COMPANY</th>
-                <th className="py-4 px-5">SENIORITY</th>
-                <th className="py-4 px-5 w-32">THRESHOLD</th>
-                <th className="py-4 px-5" title="Resumes with semantic vector similarity >= threshold">
+                <th className="py-4 px-5 bg-[#150f27]">FILE</th>
+                <th className="py-4 px-5 bg-[#150f27]">ROLE</th>
+                <th className="py-4 px-5 bg-[#150f27]">SOURCE</th>
+                <th className="py-4 px-5 bg-[#150f27]">COMPANY</th>
+                <th className="py-4 px-5 bg-[#150f27]">SENIORITY</th>
+                <th className="py-4 px-5 w-32 bg-[#150f27]">THRESHOLD</th>
+                <th className="py-4 px-5 bg-[#150f27]" title="Resumes with semantic vector similarity >= threshold">
                   <div className="flex flex-col">
                     <span>MATCHES</span>
                     <span className="text-[9px] text-purple-400/80 font-normal lowercase tracking-normal">
@@ -1069,19 +1222,19 @@ export const JobsWorkspace: React.FC<JobsWorkspaceProps> = ({
                     </span>
                   </div>
                 </th>
-                <th className="py-4 px-5">UPLOADED</th>
-                <th className="py-4 px-5 text-right">ACTIONS</th>
+                <th className="py-4 px-5 bg-[#150f27]">UPLOADED</th>
+                <th className="py-4 px-5 text-right bg-[#150f27]">ACTIONS</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-[#261e38]/60 text-xs text-slate-300">
-              {filteredJobs.length === 0 ? (
+              {paginatedJobs.length === 0 ? (
                 <tr>
                   <td colSpan={10} className="py-12 text-center text-slate-400">
                     No matching Job Descriptions found.
                   </td>
                 </tr>
               ) : (
-                filteredJobs.map((job) => {
+                paginatedJobs.map((job) => {
                   const fileName = cleanFileName(
                     job.fileName || `${(job.title || 'job').toLowerCase().replace(/\s+/g, '_')}_jd.pdf`
                   );
@@ -1094,9 +1247,8 @@ export const JobsWorkspace: React.FC<JobsWorkspaceProps> = ({
                   return (
                     <tr
                       key={job.id}
-                      className={`transition-colors duration-150 group ${
-                        isSelected ? 'bg-purple-900/20' : 'hover:bg-purple-900/10'
-                      }`}
+                      className={`transition-colors duration-150 group ${isSelected ? 'bg-purple-900/20' : 'hover:bg-purple-900/10'
+                        }`}
                     >
                       {/* CHECKBOX */}
                       <td className="py-4 px-4 text-center">
@@ -1234,909 +1386,899 @@ export const JobsWorkspace: React.FC<JobsWorkspaceProps> = ({
         </div>
 
         {/* Table Footer / Pagination */}
-        <div className="p-4 border-t border-[#261e38] bg-[#0d0918]/60 flex items-center justify-between text-xs text-slate-400 flex-wrap gap-3">
-          <div>
-            Showing{' '}
-            <span className="font-semibold text-slate-200">
-              {filteredJobs.length === 0 ? 0 : 1}
-            </span>{' '}
-            -{' '}
-            <span className="font-semibold text-slate-200">
-              {filteredJobs.length}
-            </span>{' '}
-            of{' '}
-            <span className="font-semibold text-slate-200">
-              {jobs.length}
-            </span>{' '}
-            job descriptions
-          </div>
-
-          <div className="flex items-center gap-1.5">
-            <button
-              disabled
-              className="px-3 py-1.5 rounded-lg bg-white/5 border border-white/5 text-slate-500 cursor-not-allowed text-xs font-medium"
-            >
-              Previous
-            </button>
-            <button className="px-3 py-1.5 rounded-lg bg-purple-600 text-white font-bold text-xs shadow">
-              1
-            </button>
-            <button
-              disabled
-              className="px-3 py-1.5 rounded-lg bg-white/5 border border-white/5 text-slate-500 cursor-not-allowed text-xs font-medium"
-            >
-              Next
-            </button>
-          </div>
+        <div className="p-4 border-t border-[#261e38] bg-[#0d0918]/60">
+          <PaginationFooter
+            currentPage={currentPage}
+            totalItems={filteredJobs.length}
+            rowsPerPage={rowsPerPage}
+            onPageChange={setCurrentPage}
+            onRowsPerPageChange={setRowsPerPage}
+            itemLabel="job descriptions"
+          />
         </div>
       </div>
 
       {/* PERMANENT DELETE CONFIRMATION MODAL */}
-      {deleteModal.isOpen && (
-        <div className="fixed inset-0 z-50 bg-black/75 backdrop-blur-sm flex items-center justify-center p-4">
-          <div className="bg-[#150f27] border border-red-500/30 rounded-2xl p-6 max-w-md w-full space-y-4 shadow-2xl relative animate-in fade-in zoom-in-95">
-            <div className="flex items-center gap-3">
-              <div className="w-10 h-10 rounded-xl bg-red-600/20 border border-red-500/30 flex items-center justify-center text-red-400 shrink-0">
-                <AlertTriangle className="w-5 h-5" />
+  {
+    deleteModal.isOpen && (
+      <div className="fixed inset-0 z-50 bg-black/75 backdrop-blur-sm flex items-center justify-center p-4">
+        <div className="bg-[#150f27] border border-red-500/30 rounded-2xl p-6 max-w-md w-full space-y-4 shadow-2xl relative animate-in fade-in zoom-in-95">
+          <div className="flex items-center gap-3">
+            <div className="w-10 h-10 rounded-xl bg-red-600/20 border border-red-500/30 flex items-center justify-center text-red-400 shrink-0">
+              <AlertTriangle className="w-5 h-5" />
+            </div>
+            <div>
+              <h3 className="text-lg font-extrabold text-white">Delete permanently?</h3>
+              {deleteModal.targetTitle && (
+                <p className="text-xs text-slate-400 truncate max-w-[280px]">
+                  {deleteModal.targetTitle}
+                </p>
+              )}
+            </div>
+          </div>
+
+          <p className="text-xs md:text-sm text-slate-300 leading-relaxed">
+            This job description and all associated data will be permanently deleted from the database. This action cannot be undone.
+          </p>
+
+          {deleteModal.error && (
+            <div className="p-3 rounded-xl bg-red-500/15 border border-red-500/30 text-red-300 text-xs font-semibold flex items-center gap-2">
+              <AlertTriangle className="w-4 h-4 shrink-0" />
+              <span>{deleteModal.error}</span>
+            </div>
+          )}
+
+          <div className="pt-3 border-t border-white/10 flex items-center justify-end gap-3">
+            <button
+              type="button"
+              onClick={closeDeleteModal}
+              className="px-4 py-2 rounded-xl bg-white/5 hover:bg-white/10 text-slate-300 text-xs font-semibold transition cursor-pointer"
+            >
+              Cancel
+            </button>
+            <button
+              type="button"
+              onClick={handleConfirmDelete}
+              disabled={deleteModal.isDeleting}
+              className="px-4 py-2 rounded-xl bg-red-600 hover:bg-red-500 text-white text-xs font-bold flex items-center gap-1.5 shadow-lg shadow-red-900/40 transition cursor-pointer disabled:opacity-50"
+            >
+              {deleteModal.isDeleting ? (
+                <>
+                  <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                  <span>Deleting...</span>
+                </>
+              ) : (
+                <>
+                  <Trash2 className="w-3.5 h-3.5" />
+                  <span>Delete</span>
+                </>
+              )}
+            </button>
+          </div>
+        </div>
+      </div>
+    )
+  }
+
+  {/* JOB DETAIL VIEW MODAL (WITH ASTRA SOURCE INFO) */ }
+  {
+    viewingJob && (
+      <div className="fixed inset-0 z-50 bg-black/75 backdrop-blur-sm flex items-center justify-center p-4">
+        <div className="bg-[#120c24] border border-purple-500/30 rounded-2xl p-6 max-w-2xl w-full space-y-5 shadow-2xl relative max-h-[90vh] overflow-y-auto animate-in fade-in zoom-in-95">
+          <button
+            onClick={() => setViewingJob(null)}
+            className="absolute top-4 right-4 text-slate-400 hover:text-white p-1 rounded-lg hover:bg-white/10 transition cursor-pointer"
+          >
+            <X className="w-5 h-5" />
+          </button>
+
+          <div className="flex items-start justify-between gap-4 pr-8">
+            <div className="flex items-start gap-3">
+              <div className="w-10 h-10 rounded-xl bg-purple-600/20 border border-purple-500/30 flex items-center justify-center text-purple-300 shrink-0">
+                <FileText className="w-5 h-5" />
               </div>
               <div>
-                <h3 className="text-lg font-extrabold text-white">Delete permanently?</h3>
-                {deleteModal.targetTitle && (
-                  <p className="text-xs text-slate-400 truncate max-w-[280px]">
-                    {deleteModal.targetTitle}
-                  </p>
-                )}
+                <div className="flex items-center gap-2 flex-wrap">
+                  <span className="text-xs font-mono text-purple-400 font-bold">{viewingJob.id}</span>
+                  {renderSourceBadge(viewingJob.sourceName, viewingJob.sourceEmail)}
+                </div>
+                <h3 className="text-xl font-extrabold text-white mt-1">{cleanJobTitle(viewingJob.title)}</h3>
+                <p className="text-xs text-slate-400">{viewingJob.company}</p>
               </div>
             </div>
 
-            <p className="text-xs md:text-sm text-slate-300 leading-relaxed">
-              This job description and all associated data will be permanently deleted from the database. This action cannot be undone.
-            </p>
+            {/* View Original Job Button */}
+            {viewingJob.sourceUrl && (
+              <a
+                href={viewingJob.sourceUrl}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="px-3.5 py-1.5 rounded-xl bg-purple-600/20 hover:bg-purple-600/40 text-purple-200 border border-purple-500/40 text-xs font-bold flex items-center gap-1.5 transition shrink-0 hover:scale-105 active:scale-95"
+              >
+                <ExternalLink className="w-3.5 h-3.5 text-purple-300" />
+                <span>View Original Job</span>
+              </a>
+            )}
+          </div>
 
-            {deleteModal.error && (
-              <div className="p-3 rounded-xl bg-red-500/15 border border-red-500/30 text-red-300 text-xs font-semibold flex items-center gap-2">
-                <AlertTriangle className="w-4 h-4 shrink-0" />
-                <span>{deleteModal.error}</span>
+          {/* ASTRA Metadata Grid */}
+          <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 p-3.5 rounded-xl bg-white/5 border border-white/10 text-xs text-slate-300">
+            <div>
+              <span className="text-[10px] text-slate-400 uppercase font-bold block">Work Mode</span>
+              <span className="font-semibold text-slate-100">{viewingJob.workMode || 'Remote'}</span>
+            </div>
+            <div>
+              <span className="text-[10px] text-slate-400 uppercase font-bold block">Experience</span>
+              <span className="font-semibold text-slate-100">{viewingJob.experience || '3+ Years'}</span>
+            </div>
+            <div>
+              <span className="text-[10px] text-slate-400 uppercase font-bold block">Employment Type</span>
+              <span className="font-semibold text-slate-100">{viewingJob.employmentType || 'Full-time'}</span>
+            </div>
+            <div>
+              <span className="text-[10px] text-slate-400 uppercase font-bold block">Visa Requirement</span>
+              <span className="font-semibold text-slate-100">{viewingJob.visaRequirement || viewingJob.visa || 'Any'}</span>
+            </div>
+            <div>
+              <span className="text-[10px] text-slate-400 uppercase font-bold block">Location</span>
+              <span className="font-semibold text-slate-100">{viewingJob.location || 'USA'}</span>
+            </div>
+            <div>
+              <span className="text-[10px] text-slate-400 uppercase font-bold block">Source</span>
+              <span className="font-semibold text-purple-300 capitalize">{viewingJob.sourceName || (viewingJob.sourceEmail ? 'Email' : 'Manual')}</span>
+            </div>
+            {viewingJob.sourceEmail ? (
+              <div className="col-span-2">
+                <span className="text-[10px] text-slate-400 uppercase font-bold block">Sender Email</span>
+                <span className="font-semibold text-purple-300 truncate block">{viewingJob.sourceEmail}</span>
+              </div>
+            ) : (
+              <div>
+                <span className="text-[10px] text-slate-400 uppercase font-bold block">Processing</span>
+                <span className="font-semibold text-emerald-300 capitalize">{viewingJob.processingStatus || 'processed'}</span>
               </div>
             )}
+          </div>
 
-            <div className="pt-3 border-t border-white/10 flex items-center justify-end gap-3">
+          <div className="space-y-2">
+            <span className="text-xs font-bold text-slate-300 uppercase tracking-wider block">Description / AI Summary</span>
+            <p className="text-xs text-slate-300 leading-relaxed bg-white/5 p-3.5 rounded-xl border border-white/5 font-normal whitespace-pre-wrap min-h-[3.5rem]">
+              {viewingJobLoading
+                ? 'Loading AI summary…'
+                : viewingJob.description?.trim()
+                  ? viewingJob.description
+                  : 'No AI summary yet — job may still be processing.'}
+            </p>
+          </div>
+
+          <div className="space-y-2">
+            <span className="text-xs font-bold text-slate-300 uppercase tracking-wider block">Required Skills</span>
+            <div className="flex flex-wrap gap-2">
+              {viewingJob.skills && viewingJob.skills.length > 0 ? (
+                viewingJob.skills.map((s) => (
+                  <span key={s} className="px-2.5 py-1 rounded-lg bg-emerald-500/10 border border-emerald-500/30 text-emerald-300 text-xs font-semibold">
+                    {s}
+                  </span>
+                ))
+              ) : (
+                <span className="text-xs text-slate-400 italic">No specific skills parsed</span>
+              )}
+            </div>
+          </div>
+
+          <div className="pt-3 border-t border-white/10 flex items-center justify-end gap-3">
+            <button
+              onClick={() => setViewingJob(null)}
+              className="px-4 py-2 rounded-xl bg-white/5 hover:bg-white/10 text-slate-300 text-xs font-semibold transition cursor-pointer"
+            >
+              Close
+            </button>
+            <button
+              onClick={() => {
+                const jobId = viewingJob.id;
+                setViewingJob(null);
+                onGoToMatch('job', jobId);
+              }}
+              className="px-4 py-2 rounded-xl bg-purple-600 hover:bg-purple-500 text-white text-xs font-bold flex items-center gap-1.5 shadow-lg shadow-purple-900/50 transition cursor-pointer hover:scale-105 active:scale-95"
+            >
+              <Target className="w-4 h-4" />
+              <span>Go to Match</span>
+            </button>
+          </div>
+        </div>
+      </div>
+    )
+  }
+
+  {/* ASTRA MODAL 1: FETCH JDs FROM EMAIL (IMAP) */ }
+  {
+    isEmailModalOpen && (
+      <div className="fixed inset-0 z-50 bg-black/75 backdrop-blur-sm flex items-center justify-center p-4">
+        <div className="bg-[#150f27] border border-purple-500/30 rounded-2xl p-6 max-w-md w-full space-y-5 shadow-2xl relative animate-in fade-in zoom-in-95">
+          <button
+            onClick={() => setIsEmailModalOpen(false)}
+            className="absolute top-4 right-4 text-slate-400 hover:text-white p-1 rounded-lg hover:bg-white/10 transition cursor-pointer"
+          >
+            <X className="w-5 h-5" />
+          </button>
+
+          <div className="flex items-center gap-3">
+            <div className="w-10 h-10 rounded-xl bg-purple-600/20 border border-purple-500/30 flex items-center justify-center text-purple-300 shrink-0">
+              <Mail className="w-5 h-5" />
+            </div>
+            <div>
+              <h3 className="text-lg font-extrabold text-white">Fetch JDs from Email</h3>
+              <p className="text-xs text-slate-400">Poll configured IMAP inbox for incoming JD requirements</p>
+            </div>
+          </div>
+
+          <div className="space-y-3 p-4 rounded-xl bg-white/5 border border-white/10 text-xs">
+            <div>
+              <label className="text-[10px] font-bold text-purple-300 uppercase tracking-wider block mb-1">
+                Email Account
+              </label>
+              <div className="p-2.5 rounded-lg bg-[#1a142c] border border-[#2b2144] text-slate-200 font-mono text-xs">
+                {emailAccount}
+              </div>
+            </div>
+            <div className="grid grid-cols-2 gap-3">
+              <div>
+                <label className="text-[10px] font-bold text-purple-300 uppercase tracking-wider block mb-1">
+                  Folder
+                </label>
+                <div className="p-2.5 rounded-lg bg-[#1a142c] border border-[#2b2144] text-slate-200 text-xs">
+                  INBOX
+                </div>
+              </div>
+              <div>
+                <label className="text-[10px] font-bold text-purple-300 uppercase tracking-wider block mb-1">
+                  Status
+                </label>
+                <div className="p-2.5 rounded-lg bg-[#1a142c] border border-[#2b2144] text-emerald-400 font-semibold text-xs flex items-center gap-1.5">
+                  <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
+                  <span>Connected</span>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          {emailFetchError && (
+            <div className="p-3 rounded-xl bg-red-500/15 border border-red-500/30 text-red-300 text-xs font-semibold flex items-center gap-2">
+              <AlertTriangle className="w-4 h-4 shrink-0" />
+              <span>{emailFetchError}</span>
+            </div>
+          )}
+
+          <div className="pt-3 border-t border-white/10 flex items-center justify-end gap-3">
+            <button
+              type="button"
+              onClick={() => setIsEmailModalOpen(false)}
+              className="px-4 py-2 rounded-xl bg-white/5 hover:bg-white/10 text-slate-300 text-xs font-semibold transition cursor-pointer"
+            >
+              Cancel
+            </button>
+            <button
+              type="button"
+              onClick={handleFetchEmails}
+              disabled={isPollingEmail}
+              className="px-5 py-2 rounded-xl bg-purple-600 hover:bg-purple-500 text-white text-xs font-bold flex items-center gap-2 shadow-lg shadow-purple-900/50 transition cursor-pointer disabled:opacity-50 hover:scale-105 active:scale-95"
+            >
+              {isPollingEmail ? (
+                <>
+                  <Loader2 className="w-4 h-4 animate-spin" />
+                  <span>Polling Inbox...</span>
+                </>
+              ) : (
+                <>
+                  <RefreshCw className="w-4 h-4" />
+                  <span>Fetch Emails</span>
+                </>
+              )}
+            </button>
+          </div>
+        </div>
+      </div>
+    )
+  }
+
+  {/* ASTRA MODAL 2: FETCH FROM JOB BOARD */ }
+  {
+    isJobBoardModalOpen && (
+      <div className="fixed inset-0 z-50 bg-black/75 backdrop-blur-sm flex items-center justify-center p-4">
+        <div className="bg-[#150f27] border border-purple-500/30 rounded-2xl p-6 max-w-md w-full space-y-5 shadow-2xl relative animate-in fade-in zoom-in-95">
+          <button
+            onClick={() => setIsJobBoardModalOpen(false)}
+            className="absolute top-4 right-4 text-slate-400 hover:text-white p-1 rounded-lg hover:bg-white/10 transition cursor-pointer"
+          >
+            <X className="w-5 h-5" />
+          </button>
+
+          <div className="flex items-center gap-3">
+            <div className="w-10 h-10 rounded-xl bg-purple-600/20 border border-purple-500/30 flex items-center justify-center text-purple-300 shrink-0">
+              <Globe className="w-5 h-5" />
+            </div>
+            <div>
+              <h3 className="text-lg font-extrabold text-white">Fetch JDs — {selectedJobBoard}</h3>
+              <p className="text-xs text-slate-400">Search and intake live job board listings</p>
+            </div>
+          </div>
+
+          <div className="space-y-4 text-xs">
+            <div>
+              <label className="font-bold text-purple-300 uppercase tracking-wider text-[10px] block mb-1.5">
+                Source
+              </label>
+              <div className="grid grid-cols-3 sm:grid-cols-4 gap-2">
+                {(['Web Search', 'Adzuna', 'Jooble', 'Indeed', 'JobPipe', 'Monster', 'Careerjet', 'USAJOBS'] as const).map((source) => (
+                  <button
+                    key={source}
+                    type="button"
+                    onClick={() => setSelectedJobBoard(source)}
+                    className={`py-2 px-3 rounded-xl border text-xs font-semibold transition cursor-pointer text-center ${selectedJobBoard === source
+                        ? 'bg-purple-600 text-white border-purple-400 shadow-md shadow-purple-900/30'
+                        : 'bg-[#1a142c] text-slate-300 border-[#2b2144] hover:border-purple-500/50'
+                      }`}
+                  >
+                    {source}
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            <div>
+              <label className="font-bold text-purple-300 uppercase tracking-wider text-[10px] block mb-1.5">
+                Role / Keyword <span className="text-red-400">*</span>
+              </label>
+              <input
+                type="text"
+                value={jobBoardKeyword}
+                onChange={(e) => setJobBoardKeyword(e.target.value)}
+                placeholder="e.g. Python Developer, React Engineer"
+                className="w-full px-3.5 py-2.5 rounded-xl bg-[#1a142c] border border-[#2b2144] text-white placeholder-slate-500 text-xs focus:border-purple-400 focus:outline-none transition"
+              />
+            </div>
+
+            <div>
+              <label className="font-bold text-purple-300 uppercase tracking-wider text-[10px] block mb-1.5">
+                Location (Optional)
+              </label>
+              <input
+                type="text"
+                value={jobBoardLocation}
+                onChange={(e) => setJobBoardLocation(e.target.value)}
+                placeholder="e.g. Dallas, TX, Remote, Austin"
+                className="w-full px-3.5 py-2.5 rounded-xl bg-[#1a142c] border border-[#2b2144] text-white placeholder-slate-500 text-xs focus:border-purple-400 focus:outline-none transition"
+              />
+            </div>
+
+            <p className="text-[11px] text-slate-400 italic">
+              This will search and fetch latest JDs from {selectedJobBoard}.
+            </p>
+          </div>
+
+          {jobBoardError && (
+            <div className="p-3 rounded-xl bg-red-500/15 border border-red-500/30 text-red-300 text-xs font-semibold flex items-center gap-2">
+              <AlertTriangle className="w-4 h-4 shrink-0" />
+              <span>{jobBoardError}</span>
+            </div>
+          )}
+
+          <div className="pt-3 border-t border-white/10 flex items-center justify-end gap-3">
+            <button
+              type="button"
+              onClick={() => setIsJobBoardModalOpen(false)}
+              className="px-4 py-2 rounded-xl bg-white/5 hover:bg-white/10 text-slate-300 text-xs font-semibold transition cursor-pointer"
+            >
+              Cancel
+            </button>
+            <button
+              type="button"
+              onClick={handleFetchJobBoard}
+              disabled={isFetchingJobBoard}
+              className="px-5 py-2 rounded-xl bg-purple-600 hover:bg-purple-500 text-white text-xs font-bold flex items-center gap-2 shadow-lg shadow-purple-900/50 transition cursor-pointer disabled:opacity-50 hover:scale-105 active:scale-95"
+            >
+              {isFetchingJobBoard ? (
+                <>
+                  <Loader2 className="w-4 h-4 animate-spin" />
+                  <span>Searching {selectedJobBoard}...</span>
+                </>
+              ) : (
+                <>
+                  <Sparkles className="w-4 h-4" />
+                  <span>Fetch JDs</span>
+                </>
+              )}
+            </button>
+          </div>
+        </div>
+      </div>
+    )
+  }
+
+  {/* ASTRA MODAL 3: FETCHED JOB DESCRIPTIONS RESULTS */ }
+  {
+    fetchedResultsModal.isOpen && (
+      <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-center justify-center p-4">
+        <div className="bg-[#120c24] border border-purple-500/30 rounded-2xl p-6 max-w-4xl w-full space-y-4 shadow-2xl relative max-h-[90vh] flex flex-col animate-in fade-in zoom-in-95">
+          <button
+            onClick={() => setFetchedResultsModal({ isOpen: false, source: '', items: [] })}
+            className="absolute top-4 right-4 text-slate-400 hover:text-white p-1 rounded-lg hover:bg-white/10 transition cursor-pointer"
+          >
+            <X className="w-5 h-5" />
+          </button>
+
+          <div>
+            <div className="flex items-center gap-3">
+              <h3 className="text-xl font-extrabold text-white">Fetched Job Descriptions</h3>
+              <span className="px-2.5 py-0.5 rounded-full bg-purple-500/20 border border-purple-500/30 text-purple-300 text-xs font-bold">
+                {fetchedResultsModal.items.length} Results
+              </span>
+            </div>
+            <p className="text-xs text-slate-400 mt-1">
+              Source: <span className="text-purple-300 font-semibold">{fetchedResultsModal.source}</span> • Review and select JDs to save into your workspace.
+            </p>
+          </div>
+
+          {/* Filter Tabs */}
+          <div className="flex items-center gap-2 border-b border-purple-500/20 pb-2">
+            <button
+              type="button"
+              onClick={() => setFetchedResultsFilter('all')}
+              className={`px-3 py-1.5 rounded-lg text-xs font-bold transition cursor-pointer ${fetchedResultsFilter === 'all'
+                  ? 'bg-purple-600 text-white'
+                  : 'bg-white/5 text-slate-400 hover:text-white'
+                }`}
+            >
+              All Results ({fetchedResultsModal.items.length})
+            </button>
+            <button
+              type="button"
+              onClick={() => setFetchedResultsFilter('new')}
+              className={`px-3 py-1.5 rounded-lg text-xs font-bold transition cursor-pointer ${fetchedResultsFilter === 'new'
+                  ? 'bg-emerald-600 text-white'
+                  : 'bg-white/5 text-slate-400 hover:text-emerald-300'
+                }`}
+            >
+              New ({countNew})
+            </button>
+            <button
+              type="button"
+              onClick={() => setFetchedResultsFilter('duplicate')}
+              className={`px-3 py-1.5 rounded-lg text-xs font-bold transition cursor-pointer ${fetchedResultsFilter === 'duplicate'
+                  ? 'bg-amber-600 text-white'
+                  : 'bg-white/5 text-slate-400 hover:text-amber-300'
+                }`}
+            >
+              Duplicates ({countDup})
+            </button>
+            {countFailed > 0 && (
               <button
                 type="button"
-                onClick={closeDeleteModal}
+                onClick={() => setFetchedResultsFilter('failed')}
+                className={`px-3 py-1.5 rounded-lg text-xs font-bold transition cursor-pointer ${fetchedResultsFilter === 'failed'
+                    ? 'bg-red-600 text-white'
+                    : 'bg-white/5 text-slate-400 hover:text-red-300'
+                  }`}
+              >
+                Failed ({countFailed})
+              </button>
+            )}
+          </div>
+
+          {/* Results Table */}
+          <div className="overflow-y-auto flex-1 border border-[#261e38] rounded-xl bg-[#0c0916]/60">
+            <table className="w-full text-left border-collapse text-xs">
+              <thead>
+                <tr className="border-b border-[#261e38] bg-[#17102b] text-slate-400 font-semibold sticky top-0 z-10">
+                  <th className="py-3 px-3 w-8 text-center">
+                    <input
+                      type="checkbox"
+                      checked={
+                        filteredFetchedItems.length > 0 &&
+                        filteredFetchedItems.every((_, idx) =>
+                          selectedFetchedIndexes.has(
+                            fetchedResultsModal.items.indexOf(filteredFetchedItems[idx])
+                          )
+                        )
+                      }
+                      onChange={() => {
+                        const allSelected = filteredFetchedItems.every((_, idx) =>
+                          selectedFetchedIndexes.has(
+                            fetchedResultsModal.items.indexOf(filteredFetchedItems[idx])
+                          )
+                        );
+                        const next = new Set(selectedFetchedIndexes);
+                        filteredFetchedItems.forEach((_, idx) => {
+                          const realIdx = fetchedResultsModal.items.indexOf(filteredFetchedItems[idx]);
+                          if (allSelected) {
+                            next.delete(realIdx);
+                          } else {
+                            next.add(realIdx);
+                          }
+                        });
+                        setSelectedFetchedIndexes(next);
+                      }}
+                      className="w-4 h-4 rounded border-slate-700 bg-slate-900 text-purple-600 accent-purple-600 cursor-pointer"
+                    />
+                  </th>
+                  <th className="py-3 px-4">TITLE</th>
+                  <th className="py-3 px-4">COMPANY</th>
+                  <th className="py-3 px-4">LOCATION</th>
+                  <th className="py-3 px-4">SOURCE</th>
+                  <th className="py-3 px-4">POSTED</th>
+                  <th className="py-3 px-4">STATUS</th>
+                  <th className="py-3 px-4 text-right">ACTION</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-[#261e38]/60 text-slate-300">
+                {filteredFetchedItems.length === 0 ? (
+                  <tr>
+                    <td colSpan={8} className="py-8 text-center text-slate-500">
+                      No job descriptions found in this category.
+                    </td>
+                  </tr>
+                ) : (
+                  filteredFetchedItems.map((item) => {
+                    const realIndex = fetchedResultsModal.items.indexOf(item);
+                    const isSelected = selectedFetchedIndexes.has(realIndex);
+
+                    return (
+                      <tr
+                        key={realIndex}
+                        className={`hover:bg-purple-900/10 transition-colors ${isSelected ? 'bg-purple-900/20' : ''
+                          }`}
+                      >
+                        <td className="py-3 px-3 text-center">
+                          <input
+                            type="checkbox"
+                            checked={isSelected}
+                            onChange={() => {
+                              setSelectedFetchedIndexes((prev) => {
+                                const next = new Set(prev);
+                                if (next.has(realIndex)) next.delete(realIndex);
+                                else next.add(realIndex);
+                                return next;
+                              });
+                            }}
+                            className="w-4 h-4 rounded border-slate-700 bg-slate-900 text-purple-600 accent-purple-600 cursor-pointer"
+                          />
+                        </td>
+                        <td className="py-3 px-4 font-semibold text-white max-w-[200px] truncate" title={item.title}>
+                          {item.title}
+                        </td>
+                        <td className="py-3 px-4 text-slate-300 max-w-[150px] truncate" title={item.company}>
+                          {item.company}
+                        </td>
+                        <td className="py-3 px-4 text-slate-400">{item.location}</td>
+                        <td className="py-3 px-4">{renderSourceBadge(item.source)}</td>
+                        <td className="py-3 px-4 text-slate-400">
+                          {new Date(item.postedAt || Date.now()).toLocaleDateString('en-US', {
+                            month: 'short',
+                            day: 'numeric',
+                          })}
+                        </td>
+                        <td className="py-3 px-4">
+                          {item.status === 'New' && (
+                            <span className="px-2 py-0.5 rounded-md bg-emerald-500/20 border border-emerald-500/40 text-emerald-300 text-[11px] font-bold">
+                              New
+                            </span>
+                          )}
+                          {item.status === 'Duplicate' && (
+                            <span className="px-2 py-0.5 rounded-md bg-amber-500/20 border border-amber-500/40 text-amber-300 text-[11px] font-bold">
+                              Duplicate
+                            </span>
+                          )}
+                          {item.status === 'Failed' && (
+                            <span className="px-2 py-0.5 rounded-md bg-red-500/20 border border-red-500/40 text-red-300 text-[11px] font-bold">
+                              Failed
+                            </span>
+                          )}
+                        </td>
+                        <td className="py-3 px-4 text-right">
+                          <button
+                            type="button"
+                            onClick={() =>
+                              setPreviewModal({
+                                isOpen: true,
+                                item,
+                                activeTab: 'overview',
+                              })
+                            }
+                            className="px-2.5 py-1 rounded-lg bg-white/5 hover:bg-white/10 text-slate-300 hover:text-white border border-white/10 text-xs font-semibold flex items-center gap-1.5 ml-auto transition cursor-pointer"
+                          >
+                            <Eye className="w-3.5 h-3.5 text-purple-400" />
+                            <span>Preview</span>
+                          </button>
+                        </td>
+                      </tr>
+                    );
+                  })
+                )}
+              </tbody>
+            </table>
+          </div>
+
+          {/* Footer Actions */}
+          <div className="pt-3 border-t border-purple-500/20 flex items-center justify-between gap-4">
+            <span className="text-xs text-slate-400">
+              <strong className="text-white">{selectedFetchedIndexes.size}</strong> of {fetchedResultsModal.items.length} selected
+            </span>
+
+            <div className="flex items-center gap-3">
+              <button
+                type="button"
+                onClick={() => setFetchedResultsModal({ isOpen: false, source: '', items: [] })}
                 className="px-4 py-2 rounded-xl bg-white/5 hover:bg-white/10 text-slate-300 text-xs font-semibold transition cursor-pointer"
               >
                 Cancel
               </button>
               <button
                 type="button"
-                onClick={handleConfirmDelete}
-                disabled={deleteModal.isDeleting}
-                className="px-4 py-2 rounded-xl bg-red-600 hover:bg-red-500 text-white text-xs font-bold flex items-center gap-1.5 shadow-lg shadow-red-900/40 transition cursor-pointer disabled:opacity-50"
+                onClick={handleSaveSelectedFetched}
+                disabled={selectedFetchedIndexes.size === 0}
+                className="px-5 py-2 rounded-xl bg-purple-600 hover:bg-purple-500 text-white text-xs font-bold flex items-center gap-2 shadow-lg shadow-purple-900/50 transition cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed hover:scale-105 active:scale-95"
               >
-                {deleteModal.isDeleting ? (
-                  <>
-                    <Loader2 className="w-3.5 h-3.5 animate-spin" />
-                    <span>Deleting...</span>
-                  </>
-                ) : (
-                  <>
-                    <Trash2 className="w-3.5 h-3.5" />
-                    <span>Delete</span>
-                  </>
-                )}
+                <Check className="w-4 h-4" />
+                <span>Save Selected ({selectedFetchedIndexes.size})</span>
               </button>
             </div>
           </div>
         </div>
-      )}
+      </div>
+    )
+  }
 
-      {/* JOB DETAIL VIEW MODAL (WITH ASTRA SOURCE INFO) */}
-      {viewingJob && (
-        <div className="fixed inset-0 z-50 bg-black/75 backdrop-blur-sm flex items-center justify-center p-4">
-          <div className="bg-[#120c24] border border-purple-500/30 rounded-2xl p-6 max-w-2xl w-full space-y-5 shadow-2xl relative max-h-[90vh] overflow-y-auto animate-in fade-in zoom-in-95">
-            <button
-              onClick={() => setViewingJob(null)}
-              className="absolute top-4 right-4 text-slate-400 hover:text-white p-1 rounded-lg hover:bg-white/10 transition cursor-pointer"
-            >
-              <X className="w-5 h-5" />
-            </button>
+  {/* ASTRA MODAL 4: JD PREVIEW MODAL */ }
+  {
+    previewModal.isOpen && previewModal.item && (
+      <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-center justify-center p-4">
+        <div className="bg-[#120c24] border border-purple-500/30 rounded-2xl p-6 max-w-2xl w-full space-y-4 shadow-2xl relative max-h-[90vh] overflow-y-auto animate-in fade-in zoom-in-95">
+          <button
+            onClick={() => setPreviewModal({ isOpen: false, item: null, activeTab: 'overview' })}
+            className="absolute top-4 right-4 text-slate-400 hover:text-white p-1 rounded-lg hover:bg-white/10 transition cursor-pointer"
+          >
+            <X className="w-5 h-5" />
+          </button>
 
-            <div className="flex items-start justify-between gap-4 pr-8">
-              <div className="flex items-start gap-3">
-                <div className="w-10 h-10 rounded-xl bg-purple-600/20 border border-purple-500/30 flex items-center justify-center text-purple-300 shrink-0">
-                  <FileText className="w-5 h-5" />
+          {/* Header */}
+          <div>
+            <div className="flex items-center gap-2 flex-wrap mb-1">
+              <span className="text-xs font-bold text-purple-400 uppercase tracking-wider">JD Preview</span>
+              {previewModal.item.status === 'New' && (
+                <span className="px-2 py-0.5 rounded-md bg-emerald-500/20 border border-emerald-500/40 text-emerald-300 text-[10px] font-bold">
+                  New
+                </span>
+              )}
+              {previewModal.item.status === 'Duplicate' && (
+                <span className="px-2 py-0.5 rounded-md bg-amber-500/20 border border-amber-500/40 text-amber-300 text-[10px] font-bold">
+                  Duplicate
+                </span>
+              )}
+            </div>
+            <h3 className="text-xl font-extrabold text-white">{previewModal.item.title}</h3>
+            <p className="text-xs text-slate-400 mt-0.5">
+              {previewModal.item.company} • {previewModal.item.location} • Source: <strong className="text-purple-300">{previewModal.item.source}</strong>
+            </p>
+          </div>
+
+          {/* Tabs */}
+          <div className="flex items-center gap-2 border-b border-purple-500/20 pb-2">
+            {(['overview', 'details', 'skills', 'raw'] as const).map((tab) => (
+              <button
+                key={tab}
+                type="button"
+                onClick={() => setPreviewModal((prev) => ({ ...prev, activeTab: tab }))}
+                className={`px-3 py-1.5 rounded-lg text-xs font-bold capitalize transition cursor-pointer ${previewModal.activeTab === tab
+                    ? 'bg-purple-600 text-white'
+                    : 'bg-white/5 text-slate-400 hover:text-white'
+                  }`}
+              >
+                {tab === 'raw' ? 'Raw Content' : tab}
+              </button>
+            ))}
+          </div>
+
+          {/* Tab Content */}
+          {previewModal.activeTab === 'overview' && (
+            <div className="space-y-4">
+              <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 p-3.5 rounded-xl bg-white/5 border border-white/10 text-xs text-slate-300">
+                <div>
+                  <span className="text-[10px] text-slate-400 uppercase font-bold block">Source</span>
+                  <span className="font-semibold text-purple-300">{previewModal.item.source}</span>
                 </div>
                 <div>
-                  <div className="flex items-center gap-2 flex-wrap">
-                    <span className="text-xs font-mono text-purple-400 font-bold">{viewingJob.id}</span>
-                    {renderSourceBadge(viewingJob.sourceName, viewingJob.sourceEmail)}
+                  <span className="text-[10px] text-slate-400 uppercase font-bold block">Location</span>
+                  <span className="font-semibold text-slate-100">{previewModal.item.location}</span>
+                </div>
+                <div>
+                  <span className="text-[10px] text-slate-400 uppercase font-bold block">Experience</span>
+                  <span className="font-semibold text-slate-100">{previewModal.item.experience || '3+ Years'}</span>
+                </div>
+                <div>
+                  <span className="text-[10px] text-slate-400 uppercase font-bold block">Employment Type</span>
+                  <span className="font-semibold text-slate-100">{previewModal.item.employmentType || 'Full-time'}</span>
+                </div>
+                <div>
+                  <span className="text-[10px] text-slate-400 uppercase font-bold block">Visa Requirement</span>
+                  <span className="font-semibold text-slate-100">{previewModal.item.visa || 'Open'}</span>
+                </div>
+                <div>
+                  <span className="text-[10px] text-slate-400 uppercase font-bold block">Remote Policy</span>
+                  <span className="font-semibold text-slate-100">{previewModal.item.workMode || 'Remote'}</span>
+                </div>
+                <div>
+                  <span className="text-[10px] text-slate-400 uppercase font-bold block">Posted On</span>
+                  <span className="font-semibold text-slate-100">
+                    {new Date(previewModal.item.postedAt || Date.now()).toLocaleDateString('en-US', {
+                      month: 'short',
+                      day: 'numeric',
+                      year: 'numeric',
+                    })}
+                  </span>
+                </div>
+                {previewModal.item.sourceUrl && (
+                  <div>
+                    <span className="text-[10px] text-slate-400 uppercase font-bold block">Original URL</span>
+                    <a
+                      href={previewModal.item.sourceUrl}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="text-purple-400 hover:text-purple-300 font-semibold underline flex items-center gap-1 mt-0.5"
+                    >
+                      <span>View Link</span>
+                      <ExternalLink className="w-3 h-3" />
+                    </a>
                   </div>
-                  <h3 className="text-xl font-extrabold text-white mt-1">{cleanJobTitle(viewingJob.title)}</h3>
-                  <p className="text-xs text-slate-400">{viewingJob.company}</p>
-                </div>
+                )}
               </div>
 
-              {/* View Original Job Button */}
-              {viewingJob.sourceUrl && (
-                <a
-                  href={viewingJob.sourceUrl}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="px-3.5 py-1.5 rounded-xl bg-purple-600/20 hover:bg-purple-600/40 text-purple-200 border border-purple-500/40 text-xs font-bold flex items-center gap-1.5 transition shrink-0 hover:scale-105 active:scale-95"
-                >
-                  <ExternalLink className="w-3.5 h-3.5 text-purple-300" />
-                  <span>View Original Job</span>
-                </a>
-              )}
-            </div>
+              <div className="space-y-1.5">
+                <span className="text-xs font-bold text-slate-300 uppercase tracking-wider block">Job Summary</span>
+                <p className="text-xs text-slate-300 leading-relaxed bg-white/5 p-3.5 rounded-xl border border-white/5 whitespace-pre-wrap">
+                  {previewModal.item.description || 'No description provided.'}
+                </p>
+              </div>
 
-            {/* ASTRA Metadata Grid */}
-            <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 p-3.5 rounded-xl bg-white/5 border border-white/10 text-xs text-slate-300">
-              <div>
-                <span className="text-[10px] text-slate-400 uppercase font-bold block">Work Mode</span>
-                <span className="font-semibold text-slate-100">{viewingJob.workMode || 'Remote'}</span>
-              </div>
-              <div>
-                <span className="text-[10px] text-slate-400 uppercase font-bold block">Experience</span>
-                <span className="font-semibold text-slate-100">{viewingJob.experience || '3+ Years'}</span>
-              </div>
-              <div>
-                <span className="text-[10px] text-slate-400 uppercase font-bold block">Employment Type</span>
-                <span className="font-semibold text-slate-100">{viewingJob.employmentType || 'Full-time'}</span>
-              </div>
-              <div>
-                <span className="text-[10px] text-slate-400 uppercase font-bold block">Visa Requirement</span>
-                <span className="font-semibold text-slate-100">{viewingJob.visaRequirement || viewingJob.visa || 'Any'}</span>
-              </div>
-              <div>
-                <span className="text-[10px] text-slate-400 uppercase font-bold block">Location</span>
-                <span className="font-semibold text-slate-100">{viewingJob.location || 'USA'}</span>
-              </div>
-              <div>
-                <span className="text-[10px] text-slate-400 uppercase font-bold block">Source</span>
-                <span className="font-semibold text-purple-300 capitalize">{viewingJob.sourceName || (viewingJob.sourceEmail ? 'Email' : 'Manual')}</span>
-              </div>
-              {viewingJob.sourceEmail ? (
-                <div className="col-span-2">
-                  <span className="text-[10px] text-slate-400 uppercase font-bold block">Sender Email</span>
-                  <span className="font-semibold text-purple-300 truncate block">{viewingJob.sourceEmail}</span>
-                </div>
-              ) : (
-                <div>
-                  <span className="text-[10px] text-slate-400 uppercase font-bold block">Processing</span>
-                  <span className="font-semibold text-emerald-300 capitalize">{viewingJob.processingStatus || 'processed'}</span>
+              {previewModal.item.skills && previewModal.item.skills.length > 0 && (
+                <div className="space-y-1.5">
+                  <span className="text-xs font-bold text-slate-300 uppercase tracking-wider block">Key Skills</span>
+                  <div className="flex flex-wrap gap-2">
+                    {previewModal.item.skills.map((s) => (
+                      <span key={s} className="px-2.5 py-1 rounded-lg bg-emerald-500/10 border border-emerald-500/30 text-emerald-300 text-xs font-semibold">
+                        {s}
+                      </span>
+                    ))}
+                  </div>
                 </div>
               )}
             </div>
+          )}
 
-            <div className="space-y-2">
-              <span className="text-xs font-bold text-slate-300 uppercase tracking-wider block">Description / AI Summary</span>
-              <p className="text-xs text-slate-300 leading-relaxed bg-white/5 p-3.5 rounded-xl border border-white/5 font-normal whitespace-pre-wrap min-h-[3.5rem]">
-                {viewingJobLoading
-                  ? 'Loading AI summary…'
-                  : viewingJob.description?.trim()
-                  ? viewingJob.description
-                  : 'No AI summary yet — job may still be processing.'}
-              </p>
+          {previewModal.activeTab === 'details' && (
+            <div className="space-y-3 p-4 rounded-xl bg-white/5 border border-white/10 text-xs text-slate-300">
+              <div className="flex justify-between py-1.5 border-b border-white/5">
+                <span className="text-slate-400">Job Title:</span>
+                <span className="font-semibold text-white">{previewModal.item.title}</span>
+              </div>
+              <div className="flex justify-between py-1.5 border-b border-white/5">
+                <span className="text-slate-400">Company:</span>
+                <span className="font-semibold text-white">{previewModal.item.company}</span>
+              </div>
+              <div className="flex justify-between py-1.5 border-b border-white/5">
+                <span className="text-slate-400">Location:</span>
+                <span className="font-semibold text-white">{previewModal.item.location}</span>
+              </div>
+              <div className="flex justify-between py-1.5 border-b border-white/5">
+                <span className="text-slate-400">Source Platform:</span>
+                <span className="font-semibold text-purple-300">{previewModal.item.source}</span>
+              </div>
+              <div className="flex justify-between py-1.5 border-b border-white/5">
+                <span className="text-slate-400">Work Mode:</span>
+                <span className="font-semibold text-white">{previewModal.item.workMode || 'Remote'}</span>
+              </div>
+              <div className="flex justify-between py-1.5 border-b border-white/5">
+                <span className="text-slate-400">Employment Type:</span>
+                <span className="font-semibold text-white">{previewModal.item.employmentType || 'Full-time'}</span>
+              </div>
+              <div className="flex justify-between py-1.5">
+                <span className="text-slate-400">Visa Requirement:</span>
+                <span className="font-semibold text-white">{previewModal.item.visa || 'Open'}</span>
+              </div>
             </div>
+          )}
 
-            <div className="space-y-2">
-              <span className="text-xs font-bold text-slate-300 uppercase tracking-wider block">Required Skills</span>
+          {previewModal.activeTab === 'skills' && (
+            <div className="p-4 rounded-xl bg-white/5 border border-white/10 space-y-3">
+              <span className="text-xs font-bold text-slate-300 uppercase tracking-wider block">Parsed Skills</span>
               <div className="flex flex-wrap gap-2">
-                {viewingJob.skills && viewingJob.skills.length > 0 ? (
-                  viewingJob.skills.map((s) => (
-                    <span key={s} className="px-2.5 py-1 rounded-lg bg-emerald-500/10 border border-emerald-500/30 text-emerald-300 text-xs font-semibold">
+                {previewModal.item.skills && previewModal.item.skills.length > 0 ? (
+                  previewModal.item.skills.map((s) => (
+                    <span key={s} className="px-3 py-1.5 rounded-xl bg-emerald-500/15 border border-emerald-500/40 text-emerald-300 text-xs font-semibold">
                       {s}
                     </span>
                   ))
                 ) : (
-                  <span className="text-xs text-slate-400 italic">No specific skills parsed</span>
+                  <span className="text-xs text-slate-400 italic">No skills listed</span>
                 )}
               </div>
             </div>
+          )}
 
-            <div className="pt-3 border-t border-white/10 flex items-center justify-end gap-3">
-              <button
-                onClick={() => setViewingJob(null)}
-                className="px-4 py-2 rounded-xl bg-white/5 hover:bg-white/10 text-slate-300 text-xs font-semibold transition cursor-pointer"
-              >
-                Close
-              </button>
-              <button
-                onClick={() => {
-                  const jobId = viewingJob.id;
-                  setViewingJob(null);
-                  onGoToMatch('job', jobId);
-                }}
-                className="px-4 py-2 rounded-xl bg-purple-600 hover:bg-purple-500 text-white text-xs font-bold flex items-center gap-1.5 shadow-lg shadow-purple-900/50 transition cursor-pointer hover:scale-105 active:scale-95"
-              >
-                <Target className="w-4 h-4" />
-                <span>Go to Match</span>
-              </button>
+          {previewModal.activeTab === 'raw' && (
+            <div className="p-4 rounded-xl bg-black/40 border border-white/10 max-h-60 overflow-y-auto font-mono text-xs text-slate-300 whitespace-pre-wrap leading-relaxed">
+              {previewModal.item.description || 'No raw content available.'}
             </div>
-          </div>
-        </div>
-      )}
+          )}
 
-      {/* ASTRA MODAL 1: FETCH JDs FROM EMAIL (IMAP) */}
-      {isEmailModalOpen && (
-        <div className="fixed inset-0 z-50 bg-black/75 backdrop-blur-sm flex items-center justify-center p-4">
-          <div className="bg-[#150f27] border border-purple-500/30 rounded-2xl p-6 max-w-md w-full space-y-5 shadow-2xl relative animate-in fade-in zoom-in-95">
+          {/* Footer */}
+          <div className="pt-3 border-t border-white/10 flex items-center justify-between gap-3">
+            {previewModal.item.sourceUrl ? (
+              <a
+                href={previewModal.item.sourceUrl}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="px-3.5 py-1.5 rounded-xl bg-purple-600/20 hover:bg-purple-600/40 text-purple-200 border border-purple-500/40 text-xs font-bold flex items-center gap-1.5 transition"
+              >
+                <ExternalLink className="w-3.5 h-3.5" />
+                <span>View Original Job</span>
+              </a>
+            ) : <div />}
+
             <button
-              onClick={() => setIsEmailModalOpen(false)}
-              className="absolute top-4 right-4 text-slate-400 hover:text-white p-1 rounded-lg hover:bg-white/10 transition cursor-pointer"
-            >
-              <X className="w-5 h-5" />
-            </button>
-
-            <div className="flex items-center gap-3">
-              <div className="w-10 h-10 rounded-xl bg-purple-600/20 border border-purple-500/30 flex items-center justify-center text-purple-300 shrink-0">
-                <Mail className="w-5 h-5" />
-              </div>
-              <div>
-                <h3 className="text-lg font-extrabold text-white">Fetch JDs from Email</h3>
-                <p className="text-xs text-slate-400">Poll configured IMAP inbox for incoming JD requirements</p>
-              </div>
-            </div>
-
-            <div className="space-y-3 p-4 rounded-xl bg-white/5 border border-white/10 text-xs">
-              <div>
-                <label className="text-[10px] font-bold text-purple-300 uppercase tracking-wider block mb-1">
-                  Email Account
-                </label>
-                <div className="p-2.5 rounded-lg bg-[#1a142c] border border-[#2b2144] text-slate-200 font-mono text-xs">
-                  {emailAccount}
-                </div>
-              </div>
-              <div className="grid grid-cols-2 gap-3">
-                <div>
-                  <label className="text-[10px] font-bold text-purple-300 uppercase tracking-wider block mb-1">
-                    Folder
-                  </label>
-                  <div className="p-2.5 rounded-lg bg-[#1a142c] border border-[#2b2144] text-slate-200 text-xs">
-                    INBOX
-                  </div>
-                </div>
-                <div>
-                  <label className="text-[10px] font-bold text-purple-300 uppercase tracking-wider block mb-1">
-                    Status
-                  </label>
-                  <div className="p-2.5 rounded-lg bg-[#1a142c] border border-[#2b2144] text-emerald-400 font-semibold text-xs flex items-center gap-1.5">
-                    <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
-                    <span>Connected</span>
-                  </div>
-                </div>
-              </div>
-            </div>
-
-            {emailFetchError && (
-              <div className="p-3 rounded-xl bg-red-500/15 border border-red-500/30 text-red-300 text-xs font-semibold flex items-center gap-2">
-                <AlertTriangle className="w-4 h-4 shrink-0" />
-                <span>{emailFetchError}</span>
-              </div>
-            )}
-
-            <div className="pt-3 border-t border-white/10 flex items-center justify-end gap-3">
-              <button
-                type="button"
-                onClick={() => setIsEmailModalOpen(false)}
-                className="px-4 py-2 rounded-xl bg-white/5 hover:bg-white/10 text-slate-300 text-xs font-semibold transition cursor-pointer"
-              >
-                Cancel
-              </button>
-              <button
-                type="button"
-                onClick={handleFetchEmails}
-                disabled={isPollingEmail}
-                className="px-5 py-2 rounded-xl bg-purple-600 hover:bg-purple-500 text-white text-xs font-bold flex items-center gap-2 shadow-lg shadow-purple-900/50 transition cursor-pointer disabled:opacity-50 hover:scale-105 active:scale-95"
-              >
-                {isPollingEmail ? (
-                  <>
-                    <Loader2 className="w-4 h-4 animate-spin" />
-                    <span>Polling Inbox...</span>
-                  </>
-                ) : (
-                  <>
-                    <RefreshCw className="w-4 h-4" />
-                    <span>Fetch Emails</span>
-                  </>
-                )}
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* ASTRA MODAL 2: FETCH FROM JOB BOARD */}
-      {isJobBoardModalOpen && (
-        <div className="fixed inset-0 z-50 bg-black/75 backdrop-blur-sm flex items-center justify-center p-4">
-          <div className="bg-[#150f27] border border-purple-500/30 rounded-2xl p-6 max-w-md w-full space-y-5 shadow-2xl relative animate-in fade-in zoom-in-95">
-            <button
-              onClick={() => setIsJobBoardModalOpen(false)}
-              className="absolute top-4 right-4 text-slate-400 hover:text-white p-1 rounded-lg hover:bg-white/10 transition cursor-pointer"
-            >
-              <X className="w-5 h-5" />
-            </button>
-
-            <div className="flex items-center gap-3">
-              <div className="w-10 h-10 rounded-xl bg-purple-600/20 border border-purple-500/30 flex items-center justify-center text-purple-300 shrink-0">
-                <Globe className="w-5 h-5" />
-              </div>
-              <div>
-                <h3 className="text-lg font-extrabold text-white">Fetch JDs — {selectedJobBoard}</h3>
-                <p className="text-xs text-slate-400">Search and intake live job board listings</p>
-              </div>
-            </div>
-
-            <div className="space-y-4 text-xs">
-              <div>
-                <label className="font-bold text-purple-300 uppercase tracking-wider text-[10px] block mb-1.5">
-                  Source
-                </label>
-                <div className="grid grid-cols-3 gap-2">
-                  {(['Adzuna', 'Jooble', 'Indeed', 'JobPipe', 'Monster'] as const).map((source) => (
-                    <button
-                      key={source}
-                      type="button"
-                      onClick={() => setSelectedJobBoard(source)}
-                      className={`py-2 px-3 rounded-xl border text-xs font-semibold transition cursor-pointer text-center ${
-                        selectedJobBoard === source
-                          ? 'bg-purple-600 text-white border-purple-400 shadow-md shadow-purple-900/30'
-                          : 'bg-[#1a142c] text-slate-300 border-[#2b2144] hover:border-purple-500/50'
-                      }`}
-                    >
-                      {source}
-                    </button>
-                  ))}
-                </div>
-              </div>
-
-              <div>
-                <label className="font-bold text-purple-300 uppercase tracking-wider text-[10px] block mb-1.5">
-                  Role / Keyword <span className="text-red-400">*</span>
-                </label>
-                <input
-                  type="text"
-                  value={jobBoardKeyword}
-                  onChange={(e) => setJobBoardKeyword(e.target.value)}
-                  placeholder="e.g. Python Developer, React Engineer"
-                  className="w-full px-3.5 py-2.5 rounded-xl bg-[#1a142c] border border-[#2b2144] text-white placeholder-slate-500 text-xs focus:border-purple-400 focus:outline-none transition"
-                />
-              </div>
-
-              <div>
-                <label className="font-bold text-purple-300 uppercase tracking-wider text-[10px] block mb-1.5">
-                  Location (Optional)
-                </label>
-                <input
-                  type="text"
-                  value={jobBoardLocation}
-                  onChange={(e) => setJobBoardLocation(e.target.value)}
-                  placeholder="e.g. Dallas, TX, Remote, Austin"
-                  className="w-full px-3.5 py-2.5 rounded-xl bg-[#1a142c] border border-[#2b2144] text-white placeholder-slate-500 text-xs focus:border-purple-400 focus:outline-none transition"
-                />
-              </div>
-
-              <p className="text-[11px] text-slate-400 italic">
-                This will search and fetch latest JDs from {selectedJobBoard}.
-              </p>
-            </div>
-
-            {jobBoardError && (
-              <div className="p-3 rounded-xl bg-red-500/15 border border-red-500/30 text-red-300 text-xs font-semibold flex items-center gap-2">
-                <AlertTriangle className="w-4 h-4 shrink-0" />
-                <span>{jobBoardError}</span>
-              </div>
-            )}
-
-            <div className="pt-3 border-t border-white/10 flex items-center justify-end gap-3">
-              <button
-                type="button"
-                onClick={() => setIsJobBoardModalOpen(false)}
-                className="px-4 py-2 rounded-xl bg-white/5 hover:bg-white/10 text-slate-300 text-xs font-semibold transition cursor-pointer"
-              >
-                Cancel
-              </button>
-              <button
-                type="button"
-                onClick={handleFetchJobBoard}
-                disabled={isFetchingJobBoard}
-                className="px-5 py-2 rounded-xl bg-purple-600 hover:bg-purple-500 text-white text-xs font-bold flex items-center gap-2 shadow-lg shadow-purple-900/50 transition cursor-pointer disabled:opacity-50 hover:scale-105 active:scale-95"
-              >
-                {isFetchingJobBoard ? (
-                  <>
-                    <Loader2 className="w-4 h-4 animate-spin" />
-                    <span>Searching {selectedJobBoard}...</span>
-                  </>
-                ) : (
-                  <>
-                    <Sparkles className="w-4 h-4" />
-                    <span>Fetch JDs</span>
-                  </>
-                )}
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* ASTRA MODAL 3: FETCHED JOB DESCRIPTIONS RESULTS */}
-      {fetchedResultsModal.isOpen && (
-        <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-center justify-center p-4">
-          <div className="bg-[#120c24] border border-purple-500/30 rounded-2xl p-6 max-w-4xl w-full space-y-4 shadow-2xl relative max-h-[90vh] flex flex-col animate-in fade-in zoom-in-95">
-            <button
-              onClick={() => setFetchedResultsModal({ isOpen: false, source: '', items: [] })}
-              className="absolute top-4 right-4 text-slate-400 hover:text-white p-1 rounded-lg hover:bg-white/10 transition cursor-pointer"
-            >
-              <X className="w-5 h-5" />
-            </button>
-
-            <div>
-              <div className="flex items-center gap-3">
-                <h3 className="text-xl font-extrabold text-white">Fetched Job Descriptions</h3>
-                <span className="px-2.5 py-0.5 rounded-full bg-purple-500/20 border border-purple-500/30 text-purple-300 text-xs font-bold">
-                  {fetchedResultsModal.items.length} Results
-                </span>
-              </div>
-              <p className="text-xs text-slate-400 mt-1">
-                Source: <span className="text-purple-300 font-semibold">{fetchedResultsModal.source}</span> • Review and select JDs to save into your workspace.
-              </p>
-            </div>
-
-            {/* Filter Tabs */}
-            <div className="flex items-center gap-2 border-b border-purple-500/20 pb-2">
-              <button
-                type="button"
-                onClick={() => setFetchedResultsFilter('all')}
-                className={`px-3 py-1.5 rounded-lg text-xs font-bold transition cursor-pointer ${
-                  fetchedResultsFilter === 'all'
-                    ? 'bg-purple-600 text-white'
-                    : 'bg-white/5 text-slate-400 hover:text-white'
-                }`}
-              >
-                All Results ({fetchedResultsModal.items.length})
-              </button>
-              <button
-                type="button"
-                onClick={() => setFetchedResultsFilter('new')}
-                className={`px-3 py-1.5 rounded-lg text-xs font-bold transition cursor-pointer ${
-                  fetchedResultsFilter === 'new'
-                    ? 'bg-emerald-600 text-white'
-                    : 'bg-white/5 text-slate-400 hover:text-emerald-300'
-                }`}
-              >
-                New ({countNew})
-              </button>
-              <button
-                type="button"
-                onClick={() => setFetchedResultsFilter('duplicate')}
-                className={`px-3 py-1.5 rounded-lg text-xs font-bold transition cursor-pointer ${
-                  fetchedResultsFilter === 'duplicate'
-                    ? 'bg-amber-600 text-white'
-                    : 'bg-white/5 text-slate-400 hover:text-amber-300'
-                }`}
-              >
-                Duplicates ({countDup})
-              </button>
-              {countFailed > 0 && (
-                <button
-                  type="button"
-                  onClick={() => setFetchedResultsFilter('failed')}
-                  className={`px-3 py-1.5 rounded-lg text-xs font-bold transition cursor-pointer ${
-                    fetchedResultsFilter === 'failed'
-                      ? 'bg-red-600 text-white'
-                      : 'bg-white/5 text-slate-400 hover:text-red-300'
-                  }`}
-                >
-                  Failed ({countFailed})
-                </button>
-              )}
-            </div>
-
-            {/* Results Table */}
-            <div className="overflow-y-auto flex-1 border border-[#261e38] rounded-xl bg-[#0c0916]/60">
-              <table className="w-full text-left border-collapse text-xs">
-                <thead>
-                  <tr className="border-b border-[#261e38] bg-[#17102b] text-slate-400 font-semibold sticky top-0 z-10">
-                    <th className="py-3 px-3 w-8 text-center">
-                      <input
-                        type="checkbox"
-                        checked={
-                          filteredFetchedItems.length > 0 &&
-                          filteredFetchedItems.every((_, idx) =>
-                            selectedFetchedIndexes.has(
-                              fetchedResultsModal.items.indexOf(filteredFetchedItems[idx])
-                            )
-                          )
-                        }
-                        onChange={() => {
-                          const allSelected = filteredFetchedItems.every((_, idx) =>
-                            selectedFetchedIndexes.has(
-                              fetchedResultsModal.items.indexOf(filteredFetchedItems[idx])
-                            )
-                          );
-                          const next = new Set(selectedFetchedIndexes);
-                          filteredFetchedItems.forEach((_, idx) => {
-                            const realIdx = fetchedResultsModal.items.indexOf(filteredFetchedItems[idx]);
-                            if (allSelected) {
-                              next.delete(realIdx);
-                            } else {
-                              next.add(realIdx);
-                            }
-                          });
-                          setSelectedFetchedIndexes(next);
-                        }}
-                        className="w-4 h-4 rounded border-slate-700 bg-slate-900 text-purple-600 accent-purple-600 cursor-pointer"
-                      />
-                    </th>
-                    <th className="py-3 px-4">TITLE</th>
-                    <th className="py-3 px-4">COMPANY</th>
-                    <th className="py-3 px-4">LOCATION</th>
-                    <th className="py-3 px-4">SOURCE</th>
-                    <th className="py-3 px-4">POSTED</th>
-                    <th className="py-3 px-4">STATUS</th>
-                    <th className="py-3 px-4 text-right">ACTION</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-[#261e38]/60 text-slate-300">
-                  {filteredFetchedItems.length === 0 ? (
-                    <tr>
-                      <td colSpan={8} className="py-8 text-center text-slate-500">
-                        No job descriptions found in this category.
-                      </td>
-                    </tr>
-                  ) : (
-                    filteredFetchedItems.map((item) => {
-                      const realIndex = fetchedResultsModal.items.indexOf(item);
-                      const isSelected = selectedFetchedIndexes.has(realIndex);
-
-                      return (
-                        <tr
-                          key={realIndex}
-                          className={`hover:bg-purple-900/10 transition-colors ${
-                            isSelected ? 'bg-purple-900/20' : ''
-                          }`}
-                        >
-                          <td className="py-3 px-3 text-center">
-                            <input
-                              type="checkbox"
-                              checked={isSelected}
-                              onChange={() => {
-                                setSelectedFetchedIndexes((prev) => {
-                                  const next = new Set(prev);
-                                  if (next.has(realIndex)) next.delete(realIndex);
-                                  else next.add(realIndex);
-                                  return next;
-                                });
-                              }}
-                              className="w-4 h-4 rounded border-slate-700 bg-slate-900 text-purple-600 accent-purple-600 cursor-pointer"
-                            />
-                          </td>
-                          <td className="py-3 px-4 font-semibold text-white max-w-[200px] truncate" title={item.title}>
-                            {item.title}
-                          </td>
-                          <td className="py-3 px-4 text-slate-300 max-w-[150px] truncate" title={item.company}>
-                            {item.company}
-                          </td>
-                          <td className="py-3 px-4 text-slate-400">{item.location}</td>
-                          <td className="py-3 px-4">{renderSourceBadge(item.source)}</td>
-                          <td className="py-3 px-4 text-slate-400">
-                            {new Date(item.postedAt || Date.now()).toLocaleDateString('en-US', {
-                              month: 'short',
-                              day: 'numeric',
-                            })}
-                          </td>
-                          <td className="py-3 px-4">
-                            {item.status === 'New' && (
-                              <span className="px-2 py-0.5 rounded-md bg-emerald-500/20 border border-emerald-500/40 text-emerald-300 text-[11px] font-bold">
-                                New
-                              </span>
-                            )}
-                            {item.status === 'Duplicate' && (
-                              <span className="px-2 py-0.5 rounded-md bg-amber-500/20 border border-amber-500/40 text-amber-300 text-[11px] font-bold">
-                                Duplicate
-                              </span>
-                            )}
-                            {item.status === 'Failed' && (
-                              <span className="px-2 py-0.5 rounded-md bg-red-500/20 border border-red-500/40 text-red-300 text-[11px] font-bold">
-                                Failed
-                              </span>
-                            )}
-                          </td>
-                          <td className="py-3 px-4 text-right">
-                            <button
-                              type="button"
-                              onClick={() =>
-                                setPreviewModal({
-                                  isOpen: true,
-                                  item,
-                                  activeTab: 'overview',
-                                })
-                              }
-                              className="px-2.5 py-1 rounded-lg bg-white/5 hover:bg-white/10 text-slate-300 hover:text-white border border-white/10 text-xs font-semibold flex items-center gap-1.5 ml-auto transition cursor-pointer"
-                            >
-                              <Eye className="w-3.5 h-3.5 text-purple-400" />
-                              <span>Preview</span>
-                            </button>
-                          </td>
-                        </tr>
-                      );
-                    })
-                  )}
-                </tbody>
-              </table>
-            </div>
-
-            {/* Footer Actions */}
-            <div className="pt-3 border-t border-purple-500/20 flex items-center justify-between gap-4">
-              <span className="text-xs text-slate-400">
-                <strong className="text-white">{selectedFetchedIndexes.size}</strong> of {fetchedResultsModal.items.length} selected
-              </span>
-
-              <div className="flex items-center gap-3">
-                <button
-                  type="button"
-                  onClick={() => setFetchedResultsModal({ isOpen: false, source: '', items: [] })}
-                  className="px-4 py-2 rounded-xl bg-white/5 hover:bg-white/10 text-slate-300 text-xs font-semibold transition cursor-pointer"
-                >
-                  Cancel
-                </button>
-                <button
-                  type="button"
-                  onClick={handleSaveSelectedFetched}
-                  disabled={selectedFetchedIndexes.size === 0}
-                  className="px-5 py-2 rounded-xl bg-purple-600 hover:bg-purple-500 text-white text-xs font-bold flex items-center gap-2 shadow-lg shadow-purple-900/50 transition cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed hover:scale-105 active:scale-95"
-                >
-                  <Check className="w-4 h-4" />
-                  <span>Save Selected ({selectedFetchedIndexes.size})</span>
-                </button>
-              </div>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* ASTRA MODAL 4: JD PREVIEW MODAL */}
-      {previewModal.isOpen && previewModal.item && (
-        <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-center justify-center p-4">
-          <div className="bg-[#120c24] border border-purple-500/30 rounded-2xl p-6 max-w-2xl w-full space-y-4 shadow-2xl relative max-h-[90vh] overflow-y-auto animate-in fade-in zoom-in-95">
-            <button
+              type="button"
               onClick={() => setPreviewModal({ isOpen: false, item: null, activeTab: 'overview' })}
-              className="absolute top-4 right-4 text-slate-400 hover:text-white p-1 rounded-lg hover:bg-white/10 transition cursor-pointer"
+              className="px-5 py-2 rounded-xl bg-purple-600 hover:bg-purple-500 text-white text-xs font-bold transition cursor-pointer"
             >
-              <X className="w-5 h-5" />
+              Close Preview
             </button>
-
-            {/* Header */}
-            <div>
-              <div className="flex items-center gap-2 flex-wrap mb-1">
-                <span className="text-xs font-bold text-purple-400 uppercase tracking-wider">JD Preview</span>
-                {previewModal.item.status === 'New' && (
-                  <span className="px-2 py-0.5 rounded-md bg-emerald-500/20 border border-emerald-500/40 text-emerald-300 text-[10px] font-bold">
-                    New
-                  </span>
-                )}
-                {previewModal.item.status === 'Duplicate' && (
-                  <span className="px-2 py-0.5 rounded-md bg-amber-500/20 border border-amber-500/40 text-amber-300 text-[10px] font-bold">
-                    Duplicate
-                  </span>
-                )}
-              </div>
-              <h3 className="text-xl font-extrabold text-white">{previewModal.item.title}</h3>
-              <p className="text-xs text-slate-400 mt-0.5">
-                {previewModal.item.company} • {previewModal.item.location} • Source: <strong className="text-purple-300">{previewModal.item.source}</strong>
-              </p>
-            </div>
-
-            {/* Tabs */}
-            <div className="flex items-center gap-2 border-b border-purple-500/20 pb-2">
-              {(['overview', 'details', 'skills', 'raw'] as const).map((tab) => (
-                <button
-                  key={tab}
-                  type="button"
-                  onClick={() => setPreviewModal((prev) => ({ ...prev, activeTab: tab }))}
-                  className={`px-3 py-1.5 rounded-lg text-xs font-bold capitalize transition cursor-pointer ${
-                    previewModal.activeTab === tab
-                      ? 'bg-purple-600 text-white'
-                      : 'bg-white/5 text-slate-400 hover:text-white'
-                  }`}
-                >
-                  {tab === 'raw' ? 'Raw Content' : tab}
-                </button>
-              ))}
-            </div>
-
-            {/* Tab Content */}
-            {previewModal.activeTab === 'overview' && (
-              <div className="space-y-4">
-                <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 p-3.5 rounded-xl bg-white/5 border border-white/10 text-xs text-slate-300">
-                  <div>
-                    <span className="text-[10px] text-slate-400 uppercase font-bold block">Source</span>
-                    <span className="font-semibold text-purple-300">{previewModal.item.source}</span>
-                  </div>
-                  <div>
-                    <span className="text-[10px] text-slate-400 uppercase font-bold block">Location</span>
-                    <span className="font-semibold text-slate-100">{previewModal.item.location}</span>
-                  </div>
-                  <div>
-                    <span className="text-[10px] text-slate-400 uppercase font-bold block">Experience</span>
-                    <span className="font-semibold text-slate-100">{previewModal.item.experience || '3+ Years'}</span>
-                  </div>
-                  <div>
-                    <span className="text-[10px] text-slate-400 uppercase font-bold block">Employment Type</span>
-                    <span className="font-semibold text-slate-100">{previewModal.item.employmentType || 'Full-time'}</span>
-                  </div>
-                  <div>
-                    <span className="text-[10px] text-slate-400 uppercase font-bold block">Visa Requirement</span>
-                    <span className="font-semibold text-slate-100">{previewModal.item.visa || 'Open'}</span>
-                  </div>
-                  <div>
-                    <span className="text-[10px] text-slate-400 uppercase font-bold block">Remote Policy</span>
-                    <span className="font-semibold text-slate-100">{previewModal.item.workMode || 'Remote'}</span>
-                  </div>
-                  <div>
-                    <span className="text-[10px] text-slate-400 uppercase font-bold block">Posted On</span>
-                    <span className="font-semibold text-slate-100">
-                      {new Date(previewModal.item.postedAt || Date.now()).toLocaleDateString('en-US', {
-                        month: 'short',
-                        day: 'numeric',
-                        year: 'numeric',
-                      })}
-                    </span>
-                  </div>
-                  {previewModal.item.sourceUrl && (
-                    <div>
-                      <span className="text-[10px] text-slate-400 uppercase font-bold block">Original URL</span>
-                      <a
-                        href={previewModal.item.sourceUrl}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        className="text-purple-400 hover:text-purple-300 font-semibold underline flex items-center gap-1 mt-0.5"
-                      >
-                        <span>View Link</span>
-                        <ExternalLink className="w-3 h-3" />
-                      </a>
-                    </div>
-                  )}
-                </div>
-
-                <div className="space-y-1.5">
-                  <span className="text-xs font-bold text-slate-300 uppercase tracking-wider block">Job Summary</span>
-                  <p className="text-xs text-slate-300 leading-relaxed bg-white/5 p-3.5 rounded-xl border border-white/5 whitespace-pre-wrap">
-                    {previewModal.item.description || 'No description provided.'}
-                  </p>
-                </div>
-
-                {previewModal.item.skills && previewModal.item.skills.length > 0 && (
-                  <div className="space-y-1.5">
-                    <span className="text-xs font-bold text-slate-300 uppercase tracking-wider block">Key Skills</span>
-                    <div className="flex flex-wrap gap-2">
-                      {previewModal.item.skills.map((s) => (
-                        <span key={s} className="px-2.5 py-1 rounded-lg bg-emerald-500/10 border border-emerald-500/30 text-emerald-300 text-xs font-semibold">
-                          {s}
-                        </span>
-                      ))}
-                    </div>
-                  </div>
-                )}
-              </div>
-            )}
-
-            {previewModal.activeTab === 'details' && (
-              <div className="space-y-3 p-4 rounded-xl bg-white/5 border border-white/10 text-xs text-slate-300">
-                <div className="flex justify-between py-1.5 border-b border-white/5">
-                  <span className="text-slate-400">Job Title:</span>
-                  <span className="font-semibold text-white">{previewModal.item.title}</span>
-                </div>
-                <div className="flex justify-between py-1.5 border-b border-white/5">
-                  <span className="text-slate-400">Company:</span>
-                  <span className="font-semibold text-white">{previewModal.item.company}</span>
-                </div>
-                <div className="flex justify-between py-1.5 border-b border-white/5">
-                  <span className="text-slate-400">Location:</span>
-                  <span className="font-semibold text-white">{previewModal.item.location}</span>
-                </div>
-                <div className="flex justify-between py-1.5 border-b border-white/5">
-                  <span className="text-slate-400">Source Platform:</span>
-                  <span className="font-semibold text-purple-300">{previewModal.item.source}</span>
-                </div>
-                <div className="flex justify-between py-1.5 border-b border-white/5">
-                  <span className="text-slate-400">Work Mode:</span>
-                  <span className="font-semibold text-white">{previewModal.item.workMode || 'Remote'}</span>
-                </div>
-                <div className="flex justify-between py-1.5 border-b border-white/5">
-                  <span className="text-slate-400">Employment Type:</span>
-                  <span className="font-semibold text-white">{previewModal.item.employmentType || 'Full-time'}</span>
-                </div>
-                <div className="flex justify-between py-1.5">
-                  <span className="text-slate-400">Visa Requirement:</span>
-                  <span className="font-semibold text-white">{previewModal.item.visa || 'Open'}</span>
-                </div>
-              </div>
-            )}
-
-            {previewModal.activeTab === 'skills' && (
-              <div className="p-4 rounded-xl bg-white/5 border border-white/10 space-y-3">
-                <span className="text-xs font-bold text-slate-300 uppercase tracking-wider block">Parsed Skills</span>
-                <div className="flex flex-wrap gap-2">
-                  {previewModal.item.skills && previewModal.item.skills.length > 0 ? (
-                    previewModal.item.skills.map((s) => (
-                      <span key={s} className="px-3 py-1.5 rounded-xl bg-emerald-500/15 border border-emerald-500/40 text-emerald-300 text-xs font-semibold">
-                        {s}
-                      </span>
-                    ))
-                  ) : (
-                    <span className="text-xs text-slate-400 italic">No skills listed</span>
-                  )}
-                </div>
-              </div>
-            )}
-
-            {previewModal.activeTab === 'raw' && (
-              <div className="p-4 rounded-xl bg-black/40 border border-white/10 max-h-60 overflow-y-auto font-mono text-xs text-slate-300 whitespace-pre-wrap leading-relaxed">
-                {previewModal.item.description || 'No raw content available.'}
-              </div>
-            )}
-
-            {/* Footer */}
-            <div className="pt-3 border-t border-white/10 flex items-center justify-between gap-3">
-              {previewModal.item.sourceUrl ? (
-                <a
-                  href={previewModal.item.sourceUrl}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="px-3.5 py-1.5 rounded-xl bg-purple-600/20 hover:bg-purple-600/40 text-purple-200 border border-purple-500/40 text-xs font-bold flex items-center gap-1.5 transition"
-                >
-                  <ExternalLink className="w-3.5 h-3.5" />
-                  <span>View Original Job</span>
-                </a>
-              ) : <div />}
-
-              <button
-                type="button"
-                onClick={() => setPreviewModal({ isOpen: false, item: null, activeTab: 'overview' })}
-                className="px-5 py-2 rounded-xl bg-purple-600 hover:bg-purple-500 text-white text-xs font-bold transition cursor-pointer"
-              >
-                Close Preview
-              </button>
-            </div>
           </div>
         </div>
-      )}
+      </div>
+    )
+  }
 
-      {/* ASTRA MODAL 5: SAVE SUCCESS CONFIRMATION MODAL */}
-      {saveSuccessModal.isOpen && (
-        <div className="fixed inset-0 z-50 bg-black/75 backdrop-blur-sm flex items-center justify-center p-4">
-          <div className="bg-[#150f27] border border-purple-500/30 rounded-2xl p-6 max-w-md w-full text-center space-y-4 shadow-2xl relative animate-in fade-in zoom-in-95">
-            <div className="w-12 h-12 rounded-2xl bg-emerald-500/20 border border-emerald-500/40 flex items-center justify-center text-emerald-400 mx-auto">
-              <CheckCircle2 className="w-6 h-6" />
-            </div>
+  {/* ASTRA MODAL 5: SAVE SUCCESS CONFIRMATION MODAL */ }
+  {
+    saveSuccessModal.isOpen && (
+      <div className="fixed inset-0 z-50 bg-black/75 backdrop-blur-sm flex items-center justify-center p-4">
+        <div className="bg-[#150f27] border border-purple-500/30 rounded-2xl p-6 max-w-md w-full text-center space-y-4 shadow-2xl relative animate-in fade-in zoom-in-95">
+          <div className="w-12 h-12 rounded-2xl bg-emerald-500/20 border border-emerald-500/40 flex items-center justify-center text-emerald-400 mx-auto">
+            <CheckCircle2 className="w-6 h-6" />
+          </div>
 
-            <div>
-              <h3 className="text-xl font-extrabold text-white">Job Descriptions Saved</h3>
-              <p className="text-xs text-slate-300 mt-2 leading-relaxed">
-                {saveSuccessModal.count > 0
-                  ? `✓ ${saveSuccessModal.count} job description(s) were successfully saved and added to your active workspace.`
-                  : 'The job descriptions were processed and your active workspace has been updated.'}
-              </p>
-            </div>
+          <div>
+            <h3 className="text-xl font-extrabold text-white">Job Descriptions Saved</h3>
+            <p className="text-xs text-slate-300 mt-2 leading-relaxed">
+              {saveSuccessModal.count > 0
+                ? `✓ ${saveSuccessModal.count} job description(s) were successfully saved and added to your active workspace.`
+                : 'The job descriptions were processed and your active workspace has been updated.'}
+            </p>
+          </div>
 
-            <div className="pt-2">
-              <button
-                type="button"
-                onClick={() => {
-                  setSaveSuccessModal({ isOpen: false, count: 0 });
-                  if (onRefresh) onRefresh();
-                }}
-                className="w-full py-2.5 rounded-xl bg-purple-600 hover:bg-purple-500 text-white text-xs font-bold shadow-lg shadow-purple-900/50 transition cursor-pointer hover:scale-[1.02] active:scale-[0.98]"
-              >
-                OK
-              </button>
-            </div>
+          <div className="pt-2">
+            <button
+              type="button"
+              onClick={() => {
+                setSaveSuccessModal({ isOpen: false, count: 0 });
+                if (onRefresh) onRefresh();
+              }}
+              className="w-full py-2.5 rounded-xl bg-purple-600 hover:bg-purple-500 text-white text-xs font-bold shadow-lg shadow-purple-900/50 transition cursor-pointer hover:scale-[1.02] active:scale-[0.98]"
+            >
+              OK
+            </button>
           </div>
         </div>
-      )}
+      </div>
+    )
+  }
+
+      {/* AGENTIC JOB DISCOVERY MODAL */}
+      <JobDiscoveryModal
+        isOpen={isDiscoveryModalOpen}
+        onClose={() => setIsDiscoveryModalOpen(false)}
+        onRefresh={onRefresh}
+        onGoToMatch={onGoToMatch}
+      />
     </div>
   );
 };

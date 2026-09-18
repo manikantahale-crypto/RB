@@ -67,9 +67,39 @@ async function seedEventSchemas() {
  * Inserts a platform event into the public.event_outbox table.
  * Uses the supplied transaction client if available to ensure atomic outbox writes.
  */
+/**
+ * Whose organisation an event belongs to: the aggregate's. A requirement,
+ * person, resume, match or placement each carry org_id; the event about one
+ * of them carries the same. Looked up here so no caller has to know, and so
+ * none reaches for the env default — which on 2026-09-18 was an id that is
+ * not an organisation on this project, and every SYNTRA match-request event
+ * failed its foreign key, silently, "log and continue".
+ */
+const ORG_OF = {
+  requirement: "SELECT org_id FROM core.requirements WHERE id = $1",
+  job:         "SELECT org_id FROM core.requirements WHERE id = $1",
+  resume:      "SELECT org_id FROM core.resumes WHERE id = $1",
+  candidate:   "SELECT org_id FROM core.people WHERE id = $1",
+  person:      "SELECT org_id FROM core.people WHERE id = $1",
+  match:       "SELECT org_id FROM core.matches WHERE id = $1",
+  placement:   "SELECT org_id FROM orbit.placements WHERE id = $1",
+  duplicate_review: "SELECT org_id FROM core.people WHERE id = $1",
+};
+
+async function organizationOf(dbClient, aggregateType, aggregateId) {
+  const sql = ORG_OF[aggregateType];
+  if (!sql || !aggregateId) return null;
+  try {
+    const { rows } = await dbClient.query(sql, [aggregateId]);
+    return rows[0]?.org_id ?? null;
+  } catch {
+    return null;
+  }
+}
+
 async function insertEvent(client, {
   eventType,
-  organizationId = env.ORCH_ORGANIZATION_ID || "00000000-0000-0000-0000-000000000001",
+  organizationId = null,
   aggregateType = "requirement",
   aggregateId,
   correlationId,
@@ -80,6 +110,11 @@ async function insertEvent(client, {
   const dbClient = client || pool;
   const eventId = crypto.randomUUID();
   const corrId = correlationId || crypto.randomUUID();
+  organizationId =
+    organizationId ||
+    (await organizationOf(dbClient, aggregateType, aggregateId)) ||
+    env.ORCH_ORGANIZATION_ID ||
+    "00000000-0000-0000-0000-000000000001";
 
   const sql = `
     INSERT INTO orch.event_outbox (

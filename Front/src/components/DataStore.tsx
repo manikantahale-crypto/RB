@@ -13,6 +13,7 @@ interface DataStoreProps {
   onUploadClick?: (type: 'jd' | 'resume') => void;
   onRefresh?: () => void;
   onThresholdChange?: (jobId: string, newThreshold: number) => void;
+  selectedCandidateId?: string | null;
 }
 
 export const DataStore: React.FC<DataStoreProps> = ({
@@ -24,6 +25,7 @@ export const DataStore: React.FC<DataStoreProps> = ({
   onUploadClick,
   onRefresh,
   onThresholdChange,
+  selectedCandidateId,
 }) => {
   const [activeTab, setActiveTab] = useState<'jobs' | 'resumes'>(initialTab);
 
@@ -41,6 +43,7 @@ export const DataStore: React.FC<DataStoreProps> = ({
         onGoToMatch={onGoToMatch}
         onUploadClick={() => (onUploadClick ? onUploadClick('resume') : onNavigate('upload'))}
         onRefresh={onRefresh}
+        selectedCandidateId={selectedCandidateId}
       />
     );
   }

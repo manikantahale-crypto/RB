@@ -26,6 +26,7 @@ import { execFileSync } from "node:child_process";
 const PORTS = [
   { port: 4000, what: "SYNTRA api", script: "dev:syntra-api" },
   { port: 3005, what: "RELAY smart inbox", script: "dev:relay" },
+  { port: 3000, what: "SYNTRA front", script: "dev:syntra-ui" },
   { port: 4100, what: "orchestrator ingress", script: "dev:orch-api" },
   { port: 4200, what: "authoring api", script: "dev:admin-api" },
   { port: 5173, what: "authoring ui", script: "dev:admin-ui" },

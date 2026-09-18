@@ -9,7 +9,7 @@ const log = require("../../../utils/logger");
  *
  * Responsibilities:
  * 1. Validate payload has jobId.
- * 2. Load the persisted requirement from syntra.jobs.
+ * 2. Load the persisted requirement from core.requirements.
  * 3. Enforce idempotency: skip execution if job is already processed.
  * 4. Mark job processing status in database.
  * 5. Run unified ASTRA Requirement Intelligence Enrichment (parsing, normalization, quality scoring, summarization).

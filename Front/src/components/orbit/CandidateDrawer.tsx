@@ -8,6 +8,7 @@ import {
   User,
   Sparkles,
   Briefcase,
+  DollarSign,
   FileText,
   StickyNote,
   Activity as ActivityIcon,
@@ -16,12 +17,15 @@ import { CandidateProfile, OrbitLifecycleState } from '../../types';
 import { apiFetch } from '../../services/api';
 import { StatusBadge } from './StatusBadge';
 import { TransitionModal } from './TransitionModal';
+import { UpdateCandidateModal } from './UpdateCandidateModal';
 import { OverviewTab } from './tabs/OverviewTab';
 import { SkillsTab } from './tabs/SkillsTab';
 import { ExperienceTab } from './tabs/ExperienceTab';
+import { PlacementTab } from './tabs/PlacementTab';
 import { DocumentsTab } from './tabs/DocumentsTab';
 import { NotesTab } from './tabs/NotesTab';
 import { ActivityTab } from './tabs/ActivityTab';
+import { CandidateWorkflow } from '../CandidateWorkflow';
 
 interface CandidateDrawerProps {
   candidate: CandidateProfile | null;
@@ -30,7 +34,7 @@ interface CandidateDrawerProps {
   onCandidateUpdate?: (updated: CandidateProfile) => void;
 }
 
-type TabKey = 'overview' | 'skills' | 'experience' | 'documents' | 'notes' | 'activity';
+type TabKey = 'overview' | 'experience' | 'skills' | 'placement' | 'documents' | 'notes' | 'activity';
 
 export const CandidateDrawer: React.FC<CandidateDrawerProps> = ({
   candidate,
@@ -40,6 +44,8 @@ export const CandidateDrawer: React.FC<CandidateDrawerProps> = ({
 }) => {
   const [activeTab, setActiveTab] = useState<TabKey>('overview');
   const [showTransitionModal, setShowTransitionModal] = useState(false);
+  const [showUpdateProfileModal, setShowUpdateProfileModal] = useState(false);
+  const [showWorkflowModal, setShowWorkflowModal] = useState(false);
   const [currentState, setCurrentState] = useState<OrbitLifecycleState | string>(
     candidate?.orbit_lifecycle_state || 'AVAILABLE'
   );
@@ -69,13 +75,13 @@ export const CandidateDrawer: React.FC<CandidateDrawerProps> = ({
   // Handle escape key
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
-      if (e.key === 'Escape' && !showTransitionModal) {
+      if (e.key === 'Escape' && !showTransitionModal && !showUpdateProfileModal) {
         onClose();
       }
     };
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [onClose, showTransitionModal]);
+  }, [onClose, showTransitionModal, showUpdateProfileModal]);
 
   if (!candidate) return null;
 
@@ -91,13 +97,14 @@ export const CandidateDrawer: React.FC<CandidateDrawerProps> = ({
 
   const tabs: { key: TabKey; label: string; icon: React.ReactNode; count?: number }[] = [
     { key: 'overview', label: 'Overview', icon: <User className="w-3.5 h-3.5" /> },
+    { key: 'experience', label: 'Experience', icon: <Briefcase className="w-3.5 h-3.5" /> },
     {
       key: 'skills',
       label: 'Skills',
       icon: <Sparkles className="w-3.5 h-3.5" />,
       count: candidate.matchedSkills?.length,
     },
-    { key: 'experience', label: 'Experience', icon: <Briefcase className="w-3.5 h-3.5" /> },
+    { key: 'placement', label: 'Placement', icon: <DollarSign className="w-3.5 h-3.5" /> },
     { key: 'documents', label: 'Resume', icon: <FileText className="w-3.5 h-3.5" /> },
     { key: 'notes', label: 'Notes', icon: <StickyNote className="w-3.5 h-3.5" /> },
     { key: 'activity', label: 'Timeline', icon: <ActivityIcon className="w-3.5 h-3.5" /> },
@@ -133,6 +140,15 @@ export const CandidateDrawer: React.FC<CandidateDrawerProps> = ({
                       onClick={() => setShowTransitionModal(true)}
                       interactive
                     />
+                    {candidate.is_watching && (
+                      <span
+                        className="px-2 py-0.5 text-[10px] font-bold rounded-full bg-purple-500/20 text-purple-300 border border-purple-500/35 tracking-tight flex items-center gap-1 shrink-0"
+                        title="ASTRA Watch State: Active job discovery searching for matching opportunities"
+                      >
+                        <span className="w-1.5 h-1.5 rounded-full bg-purple-400 animate-pulse" />
+                        Watching
+                      </span>
+                    )}
                   </div>
                   <p className="text-xs text-slate-400 truncate mt-0.5">{candidate.title}</p>
                 </div>
@@ -213,8 +229,16 @@ export const CandidateDrawer: React.FC<CandidateDrawerProps> = ({
                 onOpenTransition={() => setShowTransitionModal(true)}
               />
             )}
-            {activeTab === 'skills' && <SkillsTab candidate={candidate} />}
             {activeTab === 'experience' && <ExperienceTab candidate={candidate} />}
+            {activeTab === 'skills' && <SkillsTab candidate={candidate} />}
+            {activeTab === 'placement' && (
+              <PlacementTab
+                candidate={{ ...candidate, orbit_lifecycle_state: currentState }}
+                onRefreshCandidate={() => {
+                  if (onCandidateUpdate && candidate) onCandidateUpdate(candidate);
+                }}
+              />
+            )}
             {activeTab === 'documents' && <DocumentsTab candidate={candidate} />}
             {activeTab === 'notes' && <NotesTab candidate={candidate} />}
             {activeTab === 'activity' && <ActivityTab candidate={candidate} />}
@@ -222,13 +246,23 @@ export const CandidateDrawer: React.FC<CandidateDrawerProps> = ({
 
           {/* Bottom Drawer Footer */}
           <div className="p-4 border-t border-[#261e38] bg-[#120c24] flex items-center justify-between gap-3">
-            <button
-              onClick={() => setShowTransitionModal(true)}
-              className="px-3.5 py-2 rounded-xl bg-white/5 hover:bg-white/10 text-slate-300 text-xs font-semibold border border-white/10 transition cursor-pointer flex items-center gap-1.5"
-            >
-              <span>Change Status</span>
-              <ChevronRight className="w-3.5 h-3.5 text-slate-400" />
-            </button>
+            <div className="flex items-center gap-2">
+              <button
+                onClick={() => setShowTransitionModal(true)}
+                className="px-3.5 py-2 rounded-xl bg-white/5 hover:bg-white/10 text-slate-300 text-xs font-semibold border border-white/10 transition cursor-pointer flex items-center gap-1.5"
+              >
+                <span>Change Status</span>
+                <ChevronRight className="w-3.5 h-3.5 text-slate-400" />
+              </button>
+
+              <button
+                onClick={() => setShowUpdateProfileModal(true)}
+                className="px-3.5 py-2 rounded-xl bg-white/5 hover:bg-white/10 text-slate-300 text-xs font-semibold border border-white/10 transition cursor-pointer flex items-center gap-1.5"
+              >
+                <Sparkles className="w-3.5 h-3.5 text-purple-400" />
+                <span>Edit Profile</span>
+              </button>
+            </div>
 
             <div className="flex items-center gap-2">
               <button
@@ -263,6 +297,26 @@ export const CandidateDrawer: React.FC<CandidateDrawerProps> = ({
           currentState={currentState}
           onClose={() => setShowTransitionModal(false)}
           onSuccess={handleStateUpdated}
+        />
+      )}
+
+      {/* Edit Profile Modal */}
+      {showUpdateProfileModal && (
+        <UpdateCandidateModal
+          candidate={candidate}
+          isOpen={showUpdateProfileModal}
+          onClose={() => setShowUpdateProfileModal(false)}
+          onSuccess={(updated) => {
+            setShowUpdateProfileModal(false);
+            if (onCandidateUpdate) onCandidateUpdate(updated);
+          }}
+        />
+      )}
+      {/* Candidate Workflow Redesign Modal */}
+      {showWorkflowModal && (
+        <CandidateWorkflow
+          candidate={candidate}
+          onClose={() => setShowWorkflowModal(false)}
         />
       )}
     </>

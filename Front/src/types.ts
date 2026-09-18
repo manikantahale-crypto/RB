@@ -1,4 +1,46 @@
-export type NavigationScreen = 'dashboard' | 'upload' | 'matching' | 'jobs' | 'resumes';
+export type NavigationScreen =
+  | 'dashboard'
+  | 'upload'
+  | 'matching'
+  | 'inbox'
+  | 'jobs'
+  | 'resumes'
+  | 'vendors'
+  | 'prism'
+  | 'interview'
+  | 'settings';
+
+/** Optional context when navigating from dashboard quick actions. */
+export interface NavigationContext {
+  candidateId?: string;
+  jobId?: string;
+  /** Submission & RTR tab filter, e.g. "Ready for Submission" */
+  prismTab?: string;
+  /** Open submission detail modal on arrival */
+  openSubmission?: boolean;
+  submissionId?: string;
+}
+
+export type VendorStatus = 'PENDING' | 'ACTIVE' | 'REJECTED' | 'INACTIVE';
+export type VendorType = 'DIRECT_CLIENT' | 'PRIME_VENDOR' | 'TIER_1' | 'TIER_2' | 'STAFFING_AGENCY';
+
+export interface Vendor {
+  id: string;
+  name: string;
+  vendor_type: VendorType;
+  status: VendorStatus;
+  website?: string;
+  email?: string;
+  phone?: string;
+  linkedin?: string;
+  location?: string;
+  timezone?: string;
+  payment_terms?: string;
+  preferred_technologies?: string;
+  preferred_immigration_types?: string;
+  created_at: string;
+  updated_at: string;
+}
 
 export interface User {
   id: string;
@@ -52,8 +94,10 @@ export interface JobRequirement {
   skills: string[];
   matchCount: number;
   avgMatchScore: number;
-  /** Pipeline status from API: uploaded | processed | failed */
+  /** Pipeline status from API: uploaded | processing | processed | failed */
   processingStatus?: string;
+  processingError?: string | null;
+  uploadedAt?: string;
   responsibilities?: string[];
   education?: string;
   description?: string;
@@ -160,6 +204,8 @@ export interface CandidateProfile {
   breakdown: CandidateBreakdown;
   resumeEvidence: string[];
   aiRecommendationReason: string;
+  aiRecommendationLabel?: string;
+  aiRecommendationAction?: string;
   matchingHistory: MatchingHistoryItem[];
   recruiterStatus?: 'none' | 'reject' | 'hold' | 'shortlisted' | 'submitted';
   fileName?: string;
@@ -172,6 +218,7 @@ export interface CandidateProfile {
   poolStatus?: 'Active' | 'Passive';
   // ORBIT Extensions
   orbit_lifecycle_state?: OrbitLifecycleState | string;
+  is_watching?: boolean;
   action_needed?: boolean;
   missing_fields?: string[];
   missing_keys?: string[];
@@ -185,3 +232,149 @@ export interface CandidateProfile {
   minRate?: string;
   experienceDetail?: any;
 }
+
+// ==========================================
+// RELAY Smart Inbox Types
+// ==========================================
+
+export type RelayCategory =
+  | 'All'
+  | 'Vendor Reply'
+  | 'Non-Vendor Reply'
+  | 'Candidate Response'
+  | 'Interview Response'
+  | 'Bounce'
+  | 'Follow-up'
+  | 'Portal Notifications'
+  | 'Sent';
+
+export interface RelayAttachment {
+  id: string;
+  name: string;
+  size: string;
+  type: string;
+}
+
+export interface RelayThreadMessage {
+  id: string;
+  senderName: string;
+  senderEmail: string;
+  toEmail?: string;
+  isSelf: boolean;
+  avatar?: string;
+  body: string;
+  bodyHtml?: string | null;
+  timestamp: string;
+  attachments?: RelayAttachment[];
+}
+
+export interface RelayContact {
+  name: string;
+  email: string;
+  phone: string;
+  company: string;
+  title?: string;
+  avatar?: string;
+}
+
+export interface RelayEmailDetails {
+  source: string;
+  receivedAt: string;
+  to: string;
+  cc?: string;
+  bcc?: string;
+  messageId: string;
+  threadId: string;
+}
+
+export interface RelayLinkedRequirement {
+  jdCode: string;
+  role: string;
+  positions: number;
+  experience: string;
+  location: string;
+  skills?: string[];
+  vendor?: string;
+  jobId?: string;
+}
+
+export interface RelayTopMatch {
+  matchId?: string;
+  candidateId: string;
+  candidateName: string;
+  email?: string;
+  score: number;
+  tier?: string;
+}
+
+export interface RelayActionRequired {
+  status: 'Action Required' | 'No Action Required' | 'Waiting for Vendor' | 'Follow-up Required';
+  recommendation: string;
+  variant?: 'orange' | 'green' | 'blue' | 'purple';
+}
+
+export interface RelayRelatedCandidate {
+  name: string;
+  role: string;
+  experience: string;
+  availability?: string;
+  interviewStage?: string;
+  status?: string;
+  skills?: string[];
+}
+
+export interface RelayAiSummary {
+  summary: string;
+  keyPoints: string[];
+}
+
+export interface RelayFollowUpSla {
+  text: string;
+  isOverdue?: boolean;
+}
+
+export interface RelayEmail {
+  id: string;
+  category: RelayCategory;
+  senderName: string;
+  senderEmail: string;
+  senderRole?: string;
+  senderCompany?: string;
+  avatar?: string;
+  subject: string;
+  preview: string;
+  body: string;
+  bodyHtml?: string | null;
+  timestamp: string;
+  receivedDate: string;
+  isUnread: boolean;
+  isPriority: boolean;
+  hasAttachments: boolean;
+  attachments?: RelayAttachment[];
+  tags: string[];
+  messageCount?: number;
+  threadGroupCount?: number;
+  isSentOnly?: boolean;
+  hasInbound?: boolean;
+  sentToRecipient?: string;
+  relatedInbound?: RelayThreadMessage;
+  contact: RelayContact;
+  emailDetails: RelayEmailDetails;
+  thread: RelayThreadMessage[];
+  activity: {
+    openCount: number;
+    lastOpenedAt: string;
+  };
+  linkedRequirement?: RelayLinkedRequirement;
+  topMatches?: RelayTopMatch[];
+  shortlistJobId?: string;
+  shortlistStatus?: string;
+  actionRequired?: RelayActionRequired;
+  relatedCandidate?: RelayRelatedCandidate;
+  replyIntent?: string;
+  requiresFollowup?: boolean;
+  aiSummary?: RelayAiSummary;
+  followUpSla?: RelayFollowUpSla;
+  suggestedReply?: string;
+}
+

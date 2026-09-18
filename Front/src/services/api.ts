@@ -41,6 +41,21 @@ export async function apiFetch(
   });
 }
 
+/** Long-running requests (e.g. Run Match with sync Tier 3 scoring). */
+export async function apiFetchWithTimeout(
+  input: string,
+  init?: RequestInit,
+  timeoutMs = 120000,
+): Promise<Response> {
+  const ctrl = new AbortController();
+  const timer = window.setTimeout(() => ctrl.abort(), timeoutMs);
+  try {
+    return await apiFetch(input, { ...init, signal: ctrl.signal });
+  } finally {
+    window.clearTimeout(timer);
+  }
+}
+
 /** Retry transient API failures (e.g. Supabase pool exhausted under dev load). */
 export async function apiFetchWithRetry(
   input: string | URL | Request,

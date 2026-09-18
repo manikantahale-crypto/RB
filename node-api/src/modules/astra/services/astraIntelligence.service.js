@@ -285,7 +285,7 @@ function evaluateRequirementQuality({ title, rawText, requiredSkills, minExperie
  * 5. Computes quality score and completeness assessment.
  * 6. Returns structured data package ready for repository persistence.
  *
- * @param {Object} requirement Canonical requirement from syntra.jobs
+ * @param {Object} requirement Canonical requirement from core.requirements (CORE_REQUIREMENTS shape)
  * @returns {Promise<Object>} Enriched requirement attributes
  */
 async function enrichRequirement(requirement = {}) {

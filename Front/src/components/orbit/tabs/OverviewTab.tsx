@@ -91,32 +91,32 @@ export const OverviewTab: React.FC<OverviewTabProps> = ({ candidate, onOpenTrans
           </div>
           <div>
             <span className="text-[10px] text-slate-500 uppercase font-bold block">Email</span>
-            <span className="font-medium text-slate-300 truncate block" title={candidate.email || 'meera.nair@email.com'}>
-              {candidate.email || `${candidate.name.toLowerCase().replace(/\s+/g, '.')}@email.com`}
+            <span className="font-medium text-slate-300 truncate block" title={candidate.email || 'Not specified'}>
+              {candidate.email || '—'}
             </span>
           </div>
           <div>
             <span className="text-[10px] text-slate-500 uppercase font-bold block">Phone</span>
             <span className="font-medium text-slate-300">
-              {candidate.phone || '+1 (404) 555-0137'}
+              {candidate.phone || '—'}
             </span>
           </div>
           <div>
             <span className="text-[10px] text-slate-500 uppercase font-bold block">Location</span>
             <span className="font-medium text-slate-300">
-              {candidate.location && candidate.location !== 'N/A' ? candidate.location : 'Atlanta, GA, USA'}
+              {candidate.location && candidate.location !== 'N/A' ? candidate.location : '—'}
             </span>
           </div>
           <div>
             <span className="text-[10px] text-slate-500 uppercase font-bold block">Experience</span>
             <span className="font-medium text-slate-300">
-              {candidate.experience && candidate.experience !== 'Not specified' ? candidate.experience : candidate.expYears ? `${candidate.expYears} years` : '5 years'}
+              {candidate.experience && candidate.experience !== 'Not specified' ? candidate.experience : candidate.expYears ? `${candidate.expYears} years` : '—'}
             </span>
           </div>
           <div>
             <span className="text-[10px] text-slate-500 uppercase font-bold block">Work Authorization</span>
             <span className="font-semibold text-purple-300">
-              {candidate.visa && candidate.visa !== 'N/A' ? candidate.visa : 'OPT'}
+              {candidate.visa && candidate.visa !== 'N/A' ? candidate.visa : '—'}
             </span>
           </div>
           <div>
@@ -129,7 +129,7 @@ export const OverviewTab: React.FC<OverviewTabProps> = ({ candidate, onOpenTrans
           </div>
           <div>
             <span className="text-[10px] text-slate-500 uppercase font-bold block">Assigned To</span>
-            <span className="font-medium text-slate-300">Recruiter #0010</span>
+            <span className="font-medium text-slate-300">Recruiter</span>
           </div>
         </div>
       </div>
@@ -140,8 +140,7 @@ export const OverviewTab: React.FC<OverviewTabProps> = ({ candidate, onOpenTrans
           Professional Summary
         </span>
         <p className="text-xs text-slate-300 leading-relaxed font-normal whitespace-pre-wrap">
-          {candidate.summary ||
-            `${candidate.name} is a seasoned ${candidate.title || 'Professional'} specializing in stakeholder storytelling, modern application architecture, scalable cloud systems, and complex reporting.`}
+          {candidate.summary || 'No professional summary available.'}
         </p>
       </div>
     </div>

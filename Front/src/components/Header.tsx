@@ -1,11 +1,12 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
-import { Bell, LogOut, User as UserIcon, Shield, ChevronDown, AlertTriangle } from 'lucide-react';
+import { Bell, LogOut, Shield, ChevronDown, AlertTriangle, Sparkles, ExternalLink } from 'lucide-react';
 import { NavigationScreen } from '../types';
 import { useAuth } from '../context/AuthContext';
 import { apiFetch } from '../services/api';
 
 interface HeaderProps {
   activeScreen: NavigationScreen;
+  onGoToMatch?: (mode: 'job' | 'resume', id: string) => void;
 }
 
 interface ReviewItem {
@@ -13,9 +14,19 @@ interface ReviewItem {
   title: string;
   message: string;
   actionType: string;
+  payload?: {
+    candidateId?: string;
+    candidateName?: string;
+    jobId?: string;
+    jobTitle?: string;
+    matchScore?: number;
+    matchTier?: string;
+    [key: string]: unknown;
+  };
+  createdAt?: string;
 }
 
-export const Header: React.FC<HeaderProps> = ({ activeScreen }) => {
+export const Header: React.FC<HeaderProps> = ({ activeScreen, onGoToMatch }) => {
   const { user, logout } = useAuth();
   const [menuOpen, setMenuOpen] = useState(false);
   const [notifOpen, setNotifOpen] = useState(false);
@@ -27,8 +38,12 @@ export const Header: React.FC<HeaderProps> = ({ activeScreen }) => {
     dashboard: 'Dashboard',
     upload: 'Upload & Analyze',
     matching: 'AI Matching Workspace',
+    inbox: 'Smart Inbox',
     jobs: 'Job Descriptions',
     resumes: 'Resumes',
+    vendors: 'Vendors',
+    prism: 'Submission & RTR',
+    settings: 'Settings',
   };
 
   const fetchReviews = useCallback(async () => {
@@ -79,8 +94,52 @@ export const Header: React.FC<HeaderProps> = ({ activeScreen }) => {
 
   const pendingCount = reviewItems.length;
 
+  const watchItems = reviewItems.filter((i) => i.actionType === 'watch_match');
+  const standardItems = reviewItems.filter((i) => i.actionType !== 'watch_match');
+
+  // Group watch match items by candidateId to cleanly present multiple matching JDs
+  const groupedWatchMap = new Map<string, {
+    candidateId: string;
+    candidateName: string;
+    itemIds: string[];
+    jobs: Array<{
+      jobId?: string;
+      jobTitle: string;
+      company?: string;
+      matchScore?: number;
+      matchTier?: string;
+    }>;
+  }>();
+
+  for (const item of watchItems) {
+    const p = item.payload || {};
+    const cId = (p.candidateId || p.candidate_id || item.id) as string;
+    const cName = (p.candidateName || p.candidate_name || 'Watched Candidate') as string;
+    const rawTitle = (p.jobTitle || p.job_title || item.title.replace(/^🎯\s*New\s*Watch\s*Match:\s*/i, '') || 'Job Opening') as string;
+    const matchScore = typeof p.matchScore === 'number' ? p.matchScore : (typeof p.match_score === 'number' ? p.match_score : undefined);
+    const matchTier = (p.matchTier || p.match_tier || '') as string;
+    const company = (p.company || '') as string;
+
+    if (!groupedWatchMap.has(cId)) {
+      groupedWatchMap.set(cId, {
+        candidateId: cId,
+        candidateName: cName,
+        itemIds: [item.id],
+        jobs: [{ jobId: p.jobId as string, jobTitle: rawTitle, company, matchScore, matchTier }],
+      });
+    } else {
+      const existing = groupedWatchMap.get(cId)!;
+      existing.itemIds.push(item.id);
+      if (!existing.jobs.some((j) => (j.jobId && j.jobId === p.jobId) || j.jobTitle === rawTitle)) {
+        existing.jobs.push({ jobId: p.jobId as string, jobTitle: rawTitle, company, matchScore, matchTier });
+      }
+    }
+  }
+
+  const groupedWatchMatches = Array.from(groupedWatchMap.values());
+
   return (
-    <header className="h-16 px-8 border-b border-[#261e38] bg-[#0b0813]/80 backdrop-blur-md flex items-center justify-between sticky top-0 z-20">
+    <header className="h-16 shrink-0 px-8 border-b border-[#261e38] bg-[#0b0813]/80 backdrop-blur-md flex items-center justify-between z-20">
       <h1 className="text-xl font-bold text-slate-100 tracking-tight">
         {titles[activeScreen] || 'Dashboard'}
       </h1>
@@ -104,34 +163,105 @@ export const Header: React.FC<HeaderProps> = ({ activeScreen }) => {
           </button>
 
           {notifOpen && (
-            <div className="absolute right-0 mt-2 w-80 glass-card rounded-2xl border border-amber-500/30 shadow-2xl p-3 z-50">
-              <p className="text-xs font-bold text-slate-200 mb-2 px-1">Recruiter actions</p>
+            <div className="absolute right-0 mt-2 w-92 glass-card rounded-2xl border border-purple-500/30 shadow-2xl p-3 z-50">
+              <p className="text-xs font-bold text-slate-200 mb-2 px-1">Recruiter Notifications & Reviews</p>
               {pendingCount === 0 ? (
-                <p className="text-xs text-slate-400 px-1 py-2">No reviews pending.</p>
+                <p className="text-xs text-slate-400 px-1 py-2">No reviews or notifications pending.</p>
               ) : (
-                <ul className="space-y-2 max-h-64 overflow-y-auto">
-                  {reviewItems.map((item) => (
+                <ul className="space-y-2 max-h-80 overflow-y-auto pr-0.5">
+                  {/* 1. Grouped Watch Match Notifications */}
+                  {groupedWatchMatches.map((group) => {
+                    const isMulti = group.jobs.length > 1;
+                    return (
+                      <li
+                        key={group.candidateId}
+                        className="rounded-xl border border-purple-500/30 bg-purple-500/10 hover:bg-purple-500/15 p-2.5 transition-all"
+                      >
+                        <div className="flex items-start gap-2">
+                          <Sparkles className="w-4 h-4 text-purple-400 shrink-0 mt-0.5" />
+                          <div className="min-w-0 flex-1">
+                            <div className="flex items-center justify-between gap-1">
+                              <p className="text-xs font-semibold text-purple-100">
+                                Watch Match Found — {group.candidateName}
+                              </p>
+                              {!isMulti && group.jobs[0]?.matchScore !== undefined && (
+                                <span className="text-[9px] font-bold px-1.5 py-0.5 rounded bg-purple-500/25 text-purple-200 border border-purple-500/40 shrink-0">
+                                  {group.jobs[0].matchScore}%
+                                </span>
+                              )}
+                            </div>
+
+                            {isMulti ? (
+                              <div className="mt-1">
+                                <p className="text-[10px] text-purple-300/90 font-medium">
+                                  {group.jobs.length} matching jobs found
+                                </p>
+                                <ul className="space-y-1 mt-1 border-l-2 border-purple-500/30 pl-2">
+                                  {group.jobs.map((j, idx) => (
+                                    <li key={idx} className="text-[10px] text-slate-300 truncate">
+                                      • {j.jobTitle}{j.matchScore !== undefined ? ` — ${j.matchScore}%` : ''}
+                                    </li>
+                                  ))}
+                                </ul>
+                              </div>
+                            ) : (
+                              <p className="text-[10px] text-slate-300 mt-0.5 leading-relaxed">
+                                • {group.jobs[0]?.jobTitle || 'Job Opening'}{group.jobs[0]?.matchScore !== undefined ? ` — ${group.jobs[0].matchScore}% match` : ''}
+                              </p>
+                            )}
+
+                            <div className="flex items-center gap-1.5 mt-2.5">
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  onGoToMatch?.('resume', group.candidateId);
+                                  setNotifOpen(false);
+                                  group.itemIds.forEach((id) => void decide(id, true));
+                                }}
+                                className="text-[10px] px-2.5 py-1 rounded-md bg-purple-600 hover:bg-purple-500 text-white font-semibold flex items-center gap-1 cursor-pointer transition shadow-sm shadow-purple-900/40"
+                              >
+                                <ExternalLink className="w-3 h-3" />
+                                {isMulti ? 'View Matches' : 'View Match'}
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  group.itemIds.forEach((id) => void decide(id, false));
+                                }}
+                                className="text-[10px] px-2 py-1 rounded-md bg-white/5 hover:bg-white/10 text-slate-400 hover:text-slate-200 font-semibold border border-white/10 cursor-pointer transition"
+                              >
+                                Dismiss
+                              </button>
+                            </div>
+                          </div>
+                        </div>
+                      </li>
+                    );
+                  })}
+
+                  {/* 2. Standard Review / Approval Items */}
+                  {standardItems.map((item) => (
                     <li
                       key={item.id}
-                      className="rounded-xl border border-amber-500/20 bg-amber-500/5 p-2.5"
+                      className="rounded-xl border border-amber-500/20 bg-amber-500/5 hover:bg-amber-500/10 p-2.5 transition-all"
                     >
                       <div className="flex items-start gap-2">
                         <AlertTriangle className="w-3.5 h-3.5 text-amber-400 shrink-0 mt-0.5" />
                         <div className="min-w-0 flex-1">
                           <p className="text-xs font-semibold text-amber-100">{item.title}</p>
-                          <p className="text-[10px] text-slate-400 mt-0.5 line-clamp-2">{item.message}</p>
+                          <p className="text-[10px] text-slate-300 mt-0.5 leading-relaxed">{item.message}</p>
                           <div className="flex gap-1.5 mt-2">
                             <button
                               type="button"
                               onClick={() => void decide(item.id, true)}
-                              className="text-[10px] px-2 py-0.5 rounded bg-emerald-600/80 text-white font-semibold"
+                              className="text-[10px] px-2.5 py-1 rounded-md bg-emerald-600/80 hover:bg-emerald-500 text-white font-semibold cursor-pointer transition"
                             >
                               Approve
                             </button>
                             <button
                               type="button"
                               onClick={() => void decide(item.id, false)}
-                              className="text-[10px] px-2 py-0.5 rounded bg-red-600/40 text-red-100 font-semibold border border-red-500/30"
+                              className="text-[10px] px-2 py-1 rounded-md bg-red-600/40 hover:bg-red-600/60 text-red-100 font-semibold border border-red-500/30 cursor-pointer transition"
                             >
                               Reject
                             </button>

@@ -244,6 +244,58 @@ function buildMatchFilters({ status, minScore }, alias = "m", startIndex = 1) {
   return { clauses, params };
 }
 
+/**
+ * Ranked shortlist for consent — score or skill_match_score, candidate must
+ * have an email. Ported from the old project for the shortlist/notify handler
+ * (ref/SYNTRA_Onboarding.md stage 4); the email match uses a real-address
+ * ordering like the old one did.
+ */
+async function listMatchesForShortlist(jobId, { minEffectiveScore = 0, limit = 5 } = {}) {
+  const safeLimit = Math.min(Math.max(Number(limit) || 5, 1), 40);
+  const minScore = Math.max(Number(minEffectiveScore) || 0, 0);
+  const { rows } = await pool.query(
+    `SELECT m.id AS match_id,
+            m.candidate_id,
+            c.full_name,
+            c.email::text AS email,
+            m.resume_id,
+            m.score,
+            m.skill_match_score,
+            m.tier,
+            m.match_status,
+            COALESCE(m.score, m.skill_match_score, 0) AS effective_score
+       FROM ${CORE_MATCHES} m
+       JOIN ${CORE_PEOPLE} c ON c.id = m.candidate_id
+       JOIN ${CORE_REQUIREMENTS} j ON j.id = m.job_id
+      WHERE m.job_id = $1
+        AND (j.created_by IS NULL OR c.created_by IS NULL OR c.created_by = j.created_by)
+        AND c.email IS NOT NULL
+        AND TRIM(c.email::text) <> ''
+        AND COALESCE(m.score, m.skill_match_score, 0) >= $2
+        AND (m.tier IS NULL OR m.tier <> 'reject')
+      ORDER BY COALESCE(m.score, m.skill_match_score, 0) DESC NULLS LAST,
+               m.created_at DESC
+      LIMIT $3`,
+    [jobId, minScore, safeLimit]
+  );
+  return rows;
+}
+
+/** Same recruiter owns the person and the requirement (or either is unowned). */
+async function candidateBelongsToJobOwner(candidateId, jobId) {
+  const { rows } = await pool.query(
+    `SELECT EXISTS (
+       SELECT 1
+         FROM core.people c
+         JOIN core.requirements j ON j.id = $2
+        WHERE c.id = $1
+          AND (j.created_by IS NULL OR c.created_by IS NULL OR c.created_by = j.created_by)
+     ) AS ok`,
+    [candidateId, jobId],
+  );
+  return Boolean(rows[0]?.ok);
+}
+
 async function listMatchesForJob(jobId, { status, minScore } = {}) {
   // $1 = jobId; filters start at $2 so status never collides with the uuid param.
   const { clauses, params: filterParams } = buildMatchFilters(
@@ -582,6 +634,8 @@ module.exports = {
   insertShortlistRow,
   findMatchIdByJobResume,
   listMatchesForJob,
+  listMatchesForShortlist,
+  candidateBelongsToJobOwner,
   listMatchesForCandidate,
   listTopMatches,
   getMatchById,

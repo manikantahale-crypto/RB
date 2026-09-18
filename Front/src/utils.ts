@@ -31,7 +31,12 @@ export const calculateSeniority = (title: string = '', experienceStr: string = '
 export const cleanFileName = (fileName: string): string => {
   if (!fileName) return "";
   // Decode URL encoding if any
-  let cleaned = decodeURIComponent(fileName);
+  let cleaned = fileName;
+  try {
+    cleaned = decodeURIComponent(fileName);
+  } catch {
+    cleaned = fileName;
+  }
   // Strip Markdown bold markers
   cleaned = cleaned.replace(/\*\*/g, "");
   // Strip prefixes like "job_title:", "Job Title:" (case-insensitive, optionally with spaces or underscores)

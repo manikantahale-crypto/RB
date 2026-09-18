@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Briefcase, Users, CheckCircle2, AlertCircle, Zap, Plus, ArrowRight, Upload, FileText, FolderOpen, Loader2 } from 'lucide-react';
+import { Briefcase, Users, CheckCircle2, AlertCircle, Zap, Plus, ArrowRight, Upload, FileText, FolderOpen, Loader2, UserCheck, Mail } from 'lucide-react';
 import { cleanJobTitle } from '../utils';
 
 import { NavigationScreen } from '../types';
@@ -21,6 +21,8 @@ export const Dashboard: React.FC<DashboardProps> = ({ onNavigate }) => {
   const [attentionCount, setAttentionCount] = useState<number | string>('-');
   const [topSkills, setTopSkills] = useState<any[]>([]);
   const [recentActivities, setRecentActivities] = useState<any[]>([]);
+  const [quickActions, setQuickActions] = useState<any[]>([]);
+  const [approvingJobId, setApprovingJobId] = useState<string | null>(null);
   const [trends, setTrends] = useState<any[]>([]);
   const [loading, setLoading] = useState<boolean>(false);
   const [error, setError] = useState<string | null>(null);
@@ -55,8 +57,8 @@ export const Dashboard: React.FC<DashboardProps> = ({ onNavigate }) => {
       const rawTrends = data.days || [];
 
       // KPI Counts
-      setJobsCount(rawJobs.length);
-      setCandidatesCount(rawCandidates.length);
+      setJobsCount(data.totalJobs ?? rawJobs.length);
+      setCandidatesCount(data.totalCandidates ?? rawCandidates.length);
 
       // Ready to Submit (Highly Recommended match entries or match score >= 80)
       const readyMatches = rawMatches.filter((m: any) => m.score >= 80 || m.tier === 'highly_recommended' || m.tier === 'Highly Recommended');
@@ -88,6 +90,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ onNavigate }) => {
         timeAgo: "Recent"
       }));
       setRecentActivities(mappedActivities);
+      setQuickActions(data.quickActions || []);
       setTrends(rawTrends);
 
     } catch (err: any) {
@@ -104,6 +107,22 @@ export const Dashboard: React.FC<DashboardProps> = ({ onNavigate }) => {
 
   const handleActionClick = (actionName: string) => {
     alert(`${actionName} action triggered (local mock interface).`);
+  };
+
+  const handleApproveShortlist = async (jobId: string) => {
+    setApprovingJobId(jobId);
+    try {
+      const res = await apiFetchWithRetry(`/jobs/${jobId}/shortlist/approve`, { method: 'POST' });
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({}));
+        throw new Error(body.error || `Approve failed (${res.status})`);
+      }
+      setQuickActions((prev) => prev.filter((a) => a.jobId !== jobId));
+    } catch (err: any) {
+      alert(err.message || 'Failed to send consent emails.');
+    } finally {
+      setApprovingJobId(null);
+    }
   };
 
   const showLoader = loading && jobsCount === '-' && candidatesCount === '-';
@@ -280,6 +299,64 @@ export const Dashboard: React.FC<DashboardProps> = ({ onNavigate }) => {
               </div>
             </div>
           </div>
+
+          {/* Vendor JD Quick Actions — top matches awaiting recruiter approval */}
+          {quickActions.length > 0 && (
+            <div className="glass-card p-6 rounded-2xl space-y-4 border border-emerald-500/25">
+              <div className="flex items-center gap-2">
+                <div className="p-1.5 rounded-lg bg-emerald-500/20 text-emerald-300">
+                  <Zap className="w-5 h-5" />
+                </div>
+                <div>
+                  <h3 className="text-base font-bold text-slate-100">Quick Actions</h3>
+                  <p className="text-xs text-slate-400">Vendor JDs matched — approve to send candidate consent</p>
+                </div>
+              </div>
+
+              <div className="space-y-3">
+                {quickActions.map((action) => (
+                  <div
+                    key={action.jobId}
+                    className="rounded-xl border border-white/10 bg-white/[0.03] p-4 space-y-3"
+                  >
+                    <div className="flex flex-col md:flex-row md:items-start justify-between gap-3">
+                      <div className="min-w-0">
+                        <p className="text-sm font-bold text-slate-100">{cleanJobTitle(action.jobTitle)}</p>
+                        <p className="text-xs text-slate-400 mt-0.5 flex items-center gap-1.5">
+                          <Mail className="w-3.5 h-3.5" />
+                          {action.threadSubject || action.vendorEmail || 'Vendor email'}
+                        </p>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => handleApproveShortlist(action.jobId)}
+                        disabled={approvingJobId === action.jobId}
+                        className="shrink-0 px-4 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-bold disabled:opacity-50"
+                      >
+                        {approvingJobId === action.jobId ? 'Sending consent…' : 'Approve & Send Consent'}
+                      </button>
+                    </div>
+
+                    <div className="space-y-2">
+                      <p className="text-[10px] font-bold uppercase tracking-wide text-slate-500">Top matches</p>
+                      {(action.topMatches || []).map((m: any) => (
+                        <div
+                          key={m.candidateId}
+                          className="flex items-center justify-between gap-3 py-1.5 px-2 rounded-lg bg-black/20"
+                        >
+                          <div className="flex items-center gap-2 min-w-0">
+                            <UserCheck className="w-3.5 h-3.5 text-teal-400 shrink-0" />
+                            <span className="text-xs font-semibold text-slate-200 truncate">{m.candidateName}</span>
+                          </div>
+                          <span className="text-xs font-bold text-emerald-400 shrink-0">{Math.round(m.score)}%</span>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
 
           {/* Quick Match Highlight Card */}
           <div className="glass-card p-6 rounded-2xl border border-purple-500/30 bg-gradient-to-r from-purple-950/40 via-violet-950/20 to-slate-900/50 flex flex-col md:flex-row items-start md:items-center justify-between gap-6 relative overflow-hidden">
