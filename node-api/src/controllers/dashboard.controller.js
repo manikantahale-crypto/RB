@@ -1,6 +1,6 @@
 const jobRepo = require("../repositories/job.repository");
 const candidateRepo = require("../repositories/candidate.repository");
-const lifecycleRepo = require("../repositories/lifecycle.repository");
+const lifecycleRepo = require("../modules/orbit/repositories/lifecycle.repository");
 const skillRepo = require("../repositories/skill.repository");
 const matchRepo = require("../repositories/match.repository");
 const { mapJobListItem } = require("./job.controller");

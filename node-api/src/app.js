@@ -64,7 +64,7 @@ const { requireAuth } = require("./middleware/auth");
 
 app.use("/auth", require("./routes/auth.routes"));
 app.use(require("./modules/syntra/routes/internal.syntra.routes"));
-app.use(require("./routes/internal.orbit.routes"));
+app.use(require("./modules/orbit/routes/internal.orbit.routes"));
 app.use(require("./modules/astra/routes/internal.astra.routes"));
 app.use(require("./modules/prism/routes/internal.prism.routes"));
 app.use("/api/astra", require("./modules/astra/routes/astra.routes"));
@@ -73,7 +73,7 @@ app.use("/api/job-boards", require("./modules/astra/routes/jobBoards.routes"));
 app.use("/jobs", requireAuth, require("./routes/job.routes"));
 app.use("/resumes", requireAuth, require("./routes/resume.routes"));
 app.use("/candidates", requireAuth, require("./routes/candidate.routes"));
-app.use("/placements", requireAuth, require("./routes/placement.routes"));
+app.use("/placements", requireAuth, require("./modules/orbit/routes/placement.routes"));
 app.use("/vendors", requireAuth, require("./modules/prism/routes/vendor.routes"));
 app.use("/submissions", requireAuth, require("./modules/prism/routes/prism.routes"));
 app.use("/skills", requireAuth, require("./routes/skill.routes"));

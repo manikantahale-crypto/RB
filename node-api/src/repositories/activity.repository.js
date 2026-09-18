@@ -1,4 +1,19 @@
+/**
+ * core.activities — what happened to a person, in order.
+ *
+ * Shared, so it lives at the root: on the old project this was
+ * public.orbit_activities and ORBIT wrote 2% of it — SYNTRA's match
+ * completions, ASTRA's discovery, PRISM's consent steps and profile updates
+ * wrote the rest (ref/ORBIT_Onboarding.md §2.2, decision D2). Every module
+ * appends to it; the candidate drawer reads it.
+ *
+ * The column is person_id (core.people); callers still say candidateId and
+ * get candidate_id back, the same aliasing core-views.js uses for SYNTRA.
+ * org_id is derived from the person by trigger (V20260909.66).
+ */
 const { pool } = require("../config/db");
+
+const COLS = `id, person_id AS candidate_id, activity_type, actor_type, actor_id, summary, payload, occurred_at, created_at`;
 
 /**
  * Fetch chronological activity history for a candidate.
@@ -14,9 +29,9 @@ async function getActivitiesForCandidate(candidateId, { limit = 50, before = nul
   }
 
   const sql = `
-    SELECT id, candidate_id, activity_type, actor_type, actor_id, summary, payload, occurred_at, created_at
-      FROM public.orbit_activities
-     WHERE candidate_id = $1
+    SELECT ${COLS}
+      FROM core.activities
+     WHERE person_id = $1
      ${beforeClause}
      ORDER BY occurred_at DESC
      LIMIT $2;
@@ -38,10 +53,10 @@ async function createActivity({
 }, client = null) {
   const dbClient = client || pool;
   const sql = `
-    INSERT INTO public.orbit_activities (
-      candidate_id, activity_type, actor_type, actor_id, summary, payload, occurred_at
+    INSERT INTO core.activities (
+      person_id, activity_type, actor_type, actor_id, summary, payload, occurred_at
     ) VALUES ($1, $2, $3, $4, $5, $6, now())
-    RETURNING id, candidate_id, activity_type, actor_type, actor_id, summary, payload, occurred_at, created_at;
+    RETURNING ${COLS};
   `;
   const values = [
     candidateId,

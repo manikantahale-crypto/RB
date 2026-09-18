@@ -1,7 +1,7 @@
-const env = require("../../config/env");
-const log = require("../../utils/logger");
-const { withTransaction } = require("../../config/db");
-const lifecycleRepo = require("../../repositories/lifecycle.repository");
+const env = require("../../../config/env");
+const log = require("../../../utils/logger");
+const { withTransaction } = require("../../../config/db");
+const lifecycleRepo = require("../repositories/lifecycle.repository");
 const {
   emitAndMaybePublish,
   publishToOrchFailOpen,
@@ -14,13 +14,21 @@ function shouldDelegateOrbit() {
   return Boolean(env.PLATFORM_EVENTS_ENABLED && env.ORCH_DELEGATE_ORBIT);
 }
 
+/**
+ * Whose organisation an ORBIT action is for: the signed-in user's, which the
+ * JWT carries (middleware/auth.js puts it on req.orgId). The old order put
+ * the env default FIRST, so every organisation's actions were stamped with
+ * the deployment's — wrong on a project with more than one. The env value is
+ * the last resort for unauthenticated internal calls only.
+ */
 function resolveOrgId(req, body = {}) {
   return (
-    env.ORCH_ORGANIZATION_ID ||
-    body.organization_id ||
+    req.orgId ||
+    req.user?.orgId ||
     req.user?.organizationId ||
+    body.organization_id ||
     req.headers["x-organization-id"] ||
-    req.userId ||
+    env.ORCH_ORGANIZATION_ID ||
     undefined
   );
 }

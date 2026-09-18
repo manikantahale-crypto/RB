@@ -1,13 +1,13 @@
-const outboxRepo = require("../../repositories/outbox.repository");
-const env = require("../../config/env");
-const log = require("../../utils/logger");
+const outboxRepo = require("../../../repositories/outbox.repository");
+const env = require("../../../config/env");
+const log = require("../../../utils/logger");
 
 function eventsEnabled() {
   return env.PLATFORM_EVENTS_ENABLED !== false && env.PLATFORM_EVENTS_ENABLED !== "0";
 }
 
 /**
- * Insert an ORBIT platform event into public.event_outbox (transactional when client provided).
+ * Insert an ORBIT platform event into orch.event_outbox (transactional when client provided).
  */
 async function emitOrbitEvent(client, {
   eventType,

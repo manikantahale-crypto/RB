@@ -1,15 +1,15 @@
 const lifecycleRepo = require("../repositories/lifecycle.repository");
-const { withTransaction } = require("../config/db");
+const { withTransaction } = require("../../../config/db");
 const {
   shouldDelegateOrbit,
   resolveOrgId,
   queueLifecycleTransitionRequested,
-} = require("../services/orbit/orbitDelegate.service");
-const { executeLifecycleTransition } = require("../services/orbit/orbitExecute.service");
+} = require("../services/orbitDelegate.service");
+const { executeLifecycleTransition } = require("../services/orbitExecute.service");
 const {
   emitAndMaybePublish,
   publishToOrchFailOpen,
-} = require("../services/orbit/orbitOutbox");
+} = require("../services/orbitOutbox");
 
 async function getLifecycle(req, res, next) {
   try {

@@ -9,11 +9,11 @@ const {
 const {
   getLifecycle,
   transitionLifecycle,
-} = require("../controllers/lifecycle.controller");
+} = require("../modules/orbit/controllers/lifecycle.controller");
 const {
   getActivities,
   createNote,
-} = require("../controllers/activity.controller");
+} = require("../modules/orbit/controllers/activity.controller");
 
 const router = express.Router();
 

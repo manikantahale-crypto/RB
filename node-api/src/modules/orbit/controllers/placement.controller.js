@@ -1,20 +1,20 @@
 const placementRepo = require("../repositories/placement.repository");
 const { calculateTotalProfitTillToday } = require("../utils/profitability");
-const { withTransaction } = require("../config/db");
+const { withTransaction } = require("../../../config/db");
 const {
   shouldDelegateOrbit,
   resolveOrgId,
   queuePlacementConfirmRequested,
   queueRevenueArrangeRequested,
-} = require("../services/orbit/orbitDelegate.service");
+} = require("../services/orbitDelegate.service");
 const {
   executeCreatePlacement,
   executeRevenueArrangement,
-} = require("../services/orbit/orbitExecute.service");
+} = require("../services/orbitExecute.service");
 const {
   emitAndMaybePublish,
   publishToOrchFailOpen,
-} = require("../services/orbit/orbitOutbox");
+} = require("../services/orbitOutbox");
 
 async function createPlacement(req, res, next) {
   try {

@@ -1,13 +1,22 @@
-const { pool } = require("../config/db");
-const env = require("../config/env");
+/**
+ * orbit.placements and orbit.revenue_arrangements — where a consultant is
+ * placed and what it earns. Moved from repositories/placement.repository.js
+ * on 2026-09-18 and repointed from public.orbit_* (V20260909.67): person_id
+ * and org_id in the tables, candidate_id / organization_id to callers;
+ * vendor_id → core.vendors (was vendor_party_id → parties, never set);
+ * org_id derived by trigger.
+ */
+const { pool } = require("../../../config/db");
 
 /**
  * Insert a confirmed candidate placement.
  */
 async function createPlacement({
   candidateId,
-  organizationId = env.ORCH_ORGANIZATION_ID || "00000000-0000-0000-0000-000000000000",
+  // Derived from the person by trigger when not given (V20260909.67).
+  organizationId = null,
   requirementId = null,
+  vendorId = null,
   clientName,
   startDate,
   endDate = null,
@@ -21,17 +30,18 @@ async function createPlacement({
 }, client = null) {
   const dbClient = client || pool;
   const sql = `
-    INSERT INTO public.orbit_placements (
-      organization_id, candidate_id, requirement_id, client_name, start_date, end_date,
+    INSERT INTO orbit.placements (
+      org_id, person_id, requirement_id, vendor_id, client_name, start_date, end_date,
       confirmed_bill_rate, confirmed_pay_rate, employment_model, work_mode,
       location, status, notes, created_by
-    ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, 'ACTIVE', $12, $13)
-    RETURNING *;
+    ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, 'ACTIVE', $13, $14)
+    RETURNING *, org_id AS organization_id, person_id AS candidate_id;
   `;
   const values = [
     organizationId,
     candidateId,
     requirementId,
+    vendorId,
     clientName,
     startDate,
     endDate,
@@ -52,17 +62,17 @@ async function createPlacement({
  */
 async function getPlacementsForCandidate(candidateId) {
   const sql = `
-    SELECT p.*,
+    SELECT p.*, p.org_id AS organization_id, p.person_id AS candidate_id,
            ra.id AS arrangement_id,
            ra.arrangement_type,
            ra.value AS arrangement_value,
            ra.calculated_hourly_amount,
            ra.calculated_monthly_amount,
            ra.calculation_note
-      FROM public.orbit_placements p
-      LEFT JOIN public.orbit_revenue_arrangements ra
+      FROM orbit.placements p
+      LEFT JOIN orbit.revenue_arrangements ra
         ON ra.placement_id = p.id AND ra.is_current = true
-     WHERE p.candidate_id = $1
+     WHERE p.person_id = $1
      ORDER BY p.created_at DESC;
   `;
   const { rows } = await pool.query(sql, [candidateId]);
@@ -74,7 +84,7 @@ async function getPlacementsForCandidate(candidateId) {
  */
 async function getPlacementById(placementId) {
   const sql = `
-    SELECT * FROM public.orbit_placements WHERE id = $1;
+    SELECT *, org_id AS organization_id, person_id AS candidate_id FROM orbit.placements WHERE id = $1;
   `;
   const { rows } = await pool.query(sql, [placementId]);
   return rows[0] || null;
@@ -104,10 +114,10 @@ async function updatePlacement(placementId, { status, endDate, notes } = {}) {
   updates.push(`updated_at = now()`);
 
   const sql = `
-    UPDATE public.orbit_placements
+    UPDATE orbit.placements
        SET ${updates.join(", ")}
      WHERE id = $1
-     RETURNING *;
+     RETURNING *, org_id AS organization_id, person_id AS candidate_id;
   `;
   const { rows } = await pool.query(sql, values);
   return rows[0] || null;
@@ -119,7 +129,8 @@ async function updatePlacement(placementId, { status, endDate, notes } = {}) {
  */
 async function createRevenueArrangement({
   placementId,
-  organizationId = env.ORCH_ORGANIZATION_ID || "00000000-0000-0000-0000-000000000000",
+  // Derived from the placement by trigger when not given (V20260909.67).
+  organizationId = null,
   arrangementType,
   value,
   calculatedHourlyAmount = null,
@@ -133,17 +144,17 @@ async function createRevenueArrangement({
 
   // Mark prior arrangements not current
   await dbClient.query(
-    `UPDATE public.orbit_revenue_arrangements SET is_current = false WHERE placement_id = $1`,
+    `UPDATE orbit.revenue_arrangements SET is_current = false WHERE placement_id = $1`,
     [placementId]
   );
 
   const sql = `
-    INSERT INTO public.orbit_revenue_arrangements (
-      organization_id, placement_id, arrangement_type, value, calculated_hourly_amount,
+    INSERT INTO orbit.revenue_arrangements (
+      org_id, placement_id, arrangement_type, value, calculated_hourly_amount,
       calculated_monthly_amount, calculation_note, notes, custom_formula,
       is_current, created_by
     ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, true, $10)
-    RETURNING *;
+    RETURNING *, org_id AS organization_id;
   `;
   const values = [
     organizationId,
@@ -167,7 +178,7 @@ async function createRevenueArrangement({
 async function getRevenueHistory(placementId) {
   const sql = `
     SELECT *
-      FROM public.orbit_revenue_arrangements
+      FROM orbit.revenue_arrangements
      WHERE placement_id = $1
      ORDER BY created_at DESC;
   `;

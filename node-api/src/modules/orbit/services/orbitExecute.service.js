@@ -1,8 +1,8 @@
-const lifecycleRepo = require("../../repositories/lifecycle.repository");
-const activityRepo = require("../../repositories/activity.repository");
-const placementRepo = require("../../repositories/placement.repository");
-const { calculateTotalProfitTillToday } = require("../../utils/profitability");
-const log = require("../../utils/logger");
+const lifecycleRepo = require("../repositories/lifecycle.repository");
+const activityRepo = require("../../../repositories/activity.repository");
+const placementRepo = require("../repositories/placement.repository");
+const { calculateTotalProfitTillToday } = require("../utils/profitability");
+const log = require("../../../utils/logger");
 
 /** Apply lifecycle transition — DB only (outcomes emitted by orchestrator graph). */
 async function executeLifecycleTransition(

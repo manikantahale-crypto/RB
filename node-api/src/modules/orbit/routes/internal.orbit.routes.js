@@ -1,13 +1,13 @@
 const express = require("express");
-const { withTransaction } = require("../config/db");
-const log = require("../utils/logger");
+const { withTransaction } = require("../../../config/db");
+const log = require("../../../utils/logger");
 const lifecycleRepo = require("../repositories/lifecycle.repository");
 const {
   executeLifecycleTransition,
   executeActivityNote,
   executeCreatePlacement,
   executeRevenueArrangement,
-} = require("../services/orbit/orbitExecute.service");
+} = require("../services/orbitExecute.service");
 
 const router = express.Router();
 

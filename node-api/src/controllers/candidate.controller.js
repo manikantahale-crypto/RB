@@ -1,5 +1,5 @@
 const candidateRepo = require("../repositories/candidate.repository");
-const lifecycleRepo = require("../repositories/lifecycle.repository");
+const lifecycleRepo = require("../modules/orbit/repositories/lifecycle.repository");
 const { computeCandidateActionNeeded } = require("../utils/actionNeeded");
 
 function mapCandidateListItem(row, stateMap = new Map()) {

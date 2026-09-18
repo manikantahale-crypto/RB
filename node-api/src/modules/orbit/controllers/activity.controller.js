@@ -1,15 +1,15 @@
-const activityRepo = require("../repositories/activity.repository");
-const { withTransaction } = require("../config/db");
+const activityRepo = require("../../../repositories/activity.repository");
+const { withTransaction } = require("../../../config/db");
 const {
   shouldDelegateOrbit,
   resolveOrgId,
   queueActivityNoteRequested,
-} = require("../services/orbit/orbitDelegate.service");
-const { executeActivityNote } = require("../services/orbit/orbitExecute.service");
+} = require("../services/orbitDelegate.service");
+const { executeActivityNote } = require("../services/orbitExecute.service");
 const {
   emitAndMaybePublish,
   publishToOrchFailOpen,
-} = require("../services/orbit/orbitOutbox");
+} = require("../services/orbitOutbox");
 
 async function getActivities(req, res, next) {
   try {
