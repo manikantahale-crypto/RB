@@ -67,3 +67,5 @@ packages/db/scripts/
 # Real tests belong in git.
 /packages/orchestrator/src/nodes/test-*.ts
 /node-api/test-*.js
+ref/
+old_db_repo/
