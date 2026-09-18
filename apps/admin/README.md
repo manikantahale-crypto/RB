@@ -1,20 +1,8 @@
 # Admin — Agent Authoring
 
-**Source of truth:** [`agent-authoring-admin-design-final.md`](./agent-authoring-admin-design-final.md)
-
-| Doc | Purpose |
-|-----|---------|
-| [`agent-authoring-admin-design-final.md`](./agent-authoring-admin-design-final.md) | Final design (canonical) |
-| [`STAGE_1.md`](./STAGE_1.md) | Stage 1: Agent List → Policy Editor → Generate → `generated` |
-| [`STAGE_1_AUDIT.md`](./STAGE_1_AUDIT.md) | Full Stage 1 audit |
-| [`STAGE_2.md`](./STAGE_2.md) | Stage 2: Compile → `compiled` |
-| [`STAGE_2_AUDIT.md`](./STAGE_2_AUDIT.md) | Full Stage 2 audit |
-| [`COMPILE_DESIGN.md`](./COMPILE_DESIGN.md) | Compile internals / API contract |
-| [`STAGE_3.md`](./STAGE_3.md) | Stage 3: Publish → activate → `active` |
-| [`STAGE_3_AUDIT.md`](./STAGE_3_AUDIT.md) | Full Stage 3 audit |
-| [`PUBLISH_DESIGN.md`](./PUBLISH_DESIGN.md) | Publish / activate scoping + API |
-| [`RUNTIME.md`](./RUNTIME.md) | Companion: already-built orchestrator (§10 / §12.2) |
-| [`STATUS.md`](./STATUS.md) | Implementation checklist |
+The authoring UI (screens 1–13 of the platform). The design and stage documents that
+used to sit beside this file were removed on 2026-09-18; the screen guide and decisions
+live with the platform documentation, not in the repo.
 
 **API package:** `../admin-api` — code only; docs stay here.
 
