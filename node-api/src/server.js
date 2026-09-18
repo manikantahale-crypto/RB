@@ -16,10 +16,10 @@ const {
 } = require("./modules/syntra/workers/matchRequested.worker");
 const {
   registerAstraRequirementReceivedWorker,
-} = require("./workers/astraRequirementReceived.worker");
+} = require("./modules/astra/workers/astraRequirementReceived.worker");
 const {
   registerAstraEmailPollerWorker,
-} = require("./workers/astraEmailPoller.worker");
+} = require("./modules/astra/workers/astraEmailPoller.worker");
 const {
   registerConsentAutoResendWorker,
 } = require("./modules/prism/workers/consentAutoResend.worker");

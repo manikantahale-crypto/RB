@@ -32,13 +32,16 @@
  */
 async function setProcessing(
   client,
-  { subjectType, subjectId, stage = "extract", status, startedAt, finishedAt, failedAt, error },
+  { subjectType, subjectId, stage = "extract", status, startedAt, finishedAt, failedAt, error,
+    // Which module did the work. SYNTRA's parse and ASTRA's enrichment are
+    // different stages of the same subject; the column has no CHECK (gap G5).
+    application = "syntra" },
 ) {
   await client.query(
     `INSERT INTO core.processing_jobs (
        org_id, application, subject_type, subject_id, stage, status, attempt,
        started_at, finished_at, failed_at, error, created_at)
-     SELECT e.org_id, 'syntra', $1, $2, $3, $4, 1, $5, $6, $7, $8, now()
+     SELECT e.org_id, $9, $1, $2, $3, $4, 1, $5, $6, $7, $8, now()
        FROM (
          SELECT org_id FROM core.requirements WHERE id = $2 AND $1 = 'requirement'
          UNION ALL
@@ -55,7 +58,7 @@ async function setProcessing(
                           ELSE core.processing_jobs.failed_at END,
        error       = EXCLUDED.error`,
     [subjectType, subjectId, stage, status ?? null, startedAt ?? null,
-     finishedAt ?? null, failedAt ?? null, error ?? null],
+     finishedAt ?? null, failedAt ?? null, error ?? null, application],
   );
 }
 
@@ -112,7 +115,10 @@ async function addSourceFile(
   client,
   { subjectType, subjectId, originalFileName, filePath, mimeType, rawText, hash },
 ) {
-  if (!filePath) return;
+  // A document is a file OR text. An email requirement has no file_path and
+  // its body IS the document; dropping it dropped the text ASTRA parses and
+  // the content hash it dedups on (V20260909.70).
+  if (!filePath && !rawText) return;
   await client.query(
     `INSERT INTO core.source_files (
        org_id, subject_type, subject_id, original_file_name, file_path,
@@ -126,7 +132,7 @@ async function addSourceFile(
       WHERE NOT EXISTS (
         SELECT 1 FROM core.source_files f
          WHERE f.subject_type = $1 AND f.subject_id = $2)`,
-    [subjectType, subjectId, originalFileName ?? null, filePath,
+    [subjectType, subjectId, originalFileName ?? null, filePath ?? null,
      mimeType ?? null, rawText ?? null, hash ?? null],
   );
 }

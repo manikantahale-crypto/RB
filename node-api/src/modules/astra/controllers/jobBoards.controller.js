@@ -1,4 +1,4 @@
-const { fetchAndIngest } = require("../services/astra/adapters/jobBoard.adapter");
+const { fetchAndIngest } = require("../services/adapters/jobBoard.adapter");
 
 async function fetchRequirements(req, res, next) {
   try {

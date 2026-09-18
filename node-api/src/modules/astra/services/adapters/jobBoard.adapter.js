@@ -3,9 +3,12 @@ const { fetchAdzunaJobs } = require("./clients/adzuna.service");
 const { fetchJobpipeJobs } = require("./clients/jobpipe.service");
 const { fetchIndeedJobs } = require("./clients/indeed.service");
 const { fetchMonsterJobs } = require("./clients/monster.service");
+const { fetchCareerjetJobs } = require("./clients/careerjet.service");
+const { fetchUsajobsJobs } = require("./clients/usajobs.service");
+const { fetchJSearchJobs } = require("./clients/jsearch.service");
 const astraService = require("../astra.service");
 
-async function fetchAndIngest(source, keyword, location, userId = null) {
+async function fetchAndIngest(source, keyword, location, userId = null, context = {}) {
   const src = (source || "all").trim().toLowerCase();
 
   const stats = {
@@ -13,17 +16,22 @@ async function fetchAndIngest(source, keyword, location, userId = null) {
     adzuna: { fetched: 0, created: 0, duplicates: 0, failed: 0 },
     jobpipe: { fetched: 0, created: 0, duplicates: 0, failed: 0 },
     indeed: { fetched: 0, created: 0, duplicates: 0, failed: 0 },
-    monster: { fetched: 0, created: 0, duplicates: 0, failed: 0 }
+    monster: { fetched: 0, created: 0, duplicates: 0, failed: 0 },
+    careerjet: { fetched: 0, created: 0, duplicates: 0, failed: 0 },
+    usajobs: { fetched: 0, created: 0, duplicates: 0, failed: 0 },
+    web_search: { fetched: 0, created: 0, duplicates: 0, failed: 0 }
   };
 
-  const safeFetch = async (fn, name, key) => {
+const log = require("../../../../utils/logger");
+
+  const safeFetch = async (fn, name, key, extraArgs = []) => {
     try {
-      const results = await fn(keyword, location);
-      console.log(`[Job Board] Fetched ${results.length} jobs from ${name}`);
+      const results = await fn(keyword, location, ...extraArgs);
+      log.info(`fetched ${results.length} jobs from ${name}`);
       stats[key].fetched = results.length;
       return results;
     } catch (err) {
-      console.error(`[Job Board] Failed to fetch from ${name}:`, err.message);
+      log.error(`[ASTRA] Failed to fetch from ${name}: ${err.message}`);
       stats[key].failed = 1;
       throw err;
     }
@@ -69,6 +77,27 @@ async function fetchAndIngest(source, keyword, location, userId = null) {
     } catch (e) {
       errors.push("Monster: " + e.message);
     }
+  } else if (src === "careerjet") {
+    try {
+      const r = await safeFetch(fetchCareerjetJobs, "Careerjet", "careerjet", [context]);
+      jobs = jobs.concat(r);
+    } catch (e) {
+      errors.push("Careerjet: " + e.message);
+    }
+  } else if (src === "usajobs") {
+    try {
+      const r = await safeFetch(fetchUsajobsJobs, "USAJOBS", "usajobs");
+      jobs = jobs.concat(r);
+    } catch (e) {
+      errors.push("USAJOBS: " + e.message);
+    }
+  } else if (src === "web_search" || src === "jsearch") {
+    try {
+      const r = await safeFetch(fetchJSearchJobs, "Web Search", "web_search");
+      jobs = jobs.concat(r);
+    } catch (e) {
+      errors.push("Web Search: " + e.message);
+    }
   } else {
     // "all"
     const promises = [
@@ -76,7 +105,10 @@ async function fetchAndIngest(source, keyword, location, userId = null) {
       safeFetch(fetchAdzunaJobs, "Adzuna", "adzuna").catch(e => { errors.push("Adzuna: " + e.message); return []; }),
       safeFetch(fetchJobpipeJobs, "JobPipe", "jobpipe").catch(e => { errors.push("JobPipe: " + e.message); return []; }),
       safeFetch(fetchIndeedJobs, "Indeed", "indeed").catch(e => { errors.push("Indeed: " + e.message); return []; }),
-      safeFetch(fetchMonsterJobs, "Monster", "monster").catch(e => { errors.push("Monster: " + e.message); return []; })
+      safeFetch(fetchMonsterJobs, "Monster", "monster").catch(e => { errors.push("Monster: " + e.message); return []; }),
+      safeFetch(fetchCareerjetJobs, "Careerjet", "careerjet", [context]).catch(e => { errors.push("Careerjet: " + e.message); return []; }),
+      safeFetch(fetchUsajobsJobs, "USAJOBS", "usajobs").catch(e => { errors.push("USAJOBS: " + e.message); return []; }),
+      safeFetch(fetchJSearchJobs, "Web Search", "web_search").catch(e => { errors.push("Web Search: " + e.message); return []; })
     ];
     const resultsArray = await Promise.all(promises);
     jobs = resultsArray.flat();
@@ -91,11 +123,14 @@ async function fetchAndIngest(source, keyword, location, userId = null) {
   const fetchedItems = [];
 
   for (const job of jobs) {
-    const jobKey = job.source.toLowerCase();
+    const jobKey = job.source ? job.source.toLowerCase().replace(/[^a-z0-9_]/g, "_") : "job_board";
     let itemStatus = "Failed";
     let jobId = null;
     try {
-      const stableMessageId = job.sourceId ? `${jobKey}:${job.sourceId}` : null;
+      const isJSearch = (src === "web_search" || src === "jsearch" || (job.sourceId && String(job.sourceId).length > 20));
+      const stableMessageId = job.sourceId
+        ? (isJSearch ? `jsearch:${jobKey}:${job.sourceId}` : `${jobKey}:${job.sourceId}`)
+        : null;
 
       const canonicalPayload = {
         title: job.title || "Job Requirement",
@@ -120,17 +155,20 @@ async function fetchAndIngest(source, keyword, location, userId = null) {
       if (res.duplicate) {
         totalDuplicates++;
         if (stats[jobKey]) stats[jobKey].duplicates++;
+        else if (stats[src]) stats[src].duplicates++;
         itemStatus = "Duplicate";
         jobId = res.job?.id || null;
       } else {
         totalCreated++;
         if (stats[jobKey]) stats[jobKey].created++;
+        else if (stats[src]) stats[src].created++;
         itemStatus = "New";
         jobId = res.jobId || res.job?.id || null;
       }
     } catch (ingestErr) {
-      console.error(`[Job Board] Ingestion failed for job "${job.title}":`, ingestErr.message);
+      log.error(`[ASTRA] Ingestion failed for job "${job.title}": ${ingestErr.message}`);
       if (stats[jobKey]) stats[jobKey].failed++;
+      else if (stats[src]) stats[src].failed++;
       itemStatus = "Failed";
     }
 

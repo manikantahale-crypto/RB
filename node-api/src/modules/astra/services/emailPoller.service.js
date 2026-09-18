@@ -2,10 +2,10 @@ const imaps = require("imap-simple");
 const { simpleParser } = require("mailparser");
 const pdfParse = require("pdf-parse");
 const mammoth = require("mammoth");
-const env = require("../../config/env");
+const env = require("../../../config/env");
 const emailAdapter = require("./adapters/email.adapter");
-const userRepo = require("../../repositories/user.repository");
-const log = require("../../utils/logger");
+const userRepo = require("../../../repositories/user.repository");
+const log = require("../../../utils/logger");
 
 let isPolling = false;
 

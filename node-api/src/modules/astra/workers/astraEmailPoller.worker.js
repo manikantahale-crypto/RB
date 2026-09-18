@@ -1,5 +1,5 @@
-const emailPollerService = require("../services/astra/emailPoller.service");
-const log = require("../utils/logger");
+const emailPollerService = require("../services/emailPoller.service");
+const log = require("../../../utils/logger");
 
 /**
  * Core handler for the 'astra.email.poll' scheduled job.

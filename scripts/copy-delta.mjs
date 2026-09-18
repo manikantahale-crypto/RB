@@ -451,9 +451,11 @@ async function sideTables(subjectType, rows) {
   }));
   const p = await upsert({ table: "core.processing_jobs", cols: ["org_id", "application", "subject_type", "subject_id", "stage", "status", "attempt", "started_at", "finished_at", "error", "created_at"], rows: pj,
     conflict: ["subject_type", "subject_id", "stage", "attempt"], update: ["status", "started_at", "finished_at", "error"] });
-  // source_files has no natural unique key; mirror_source_file inserts only when none exists for the subject.
+  // source_files has no natural unique key; one row per subject, inserted only when none exists.
+  // A row is written when there is a file OR text: an email requirement has a body and no path,
+  // and that body is the requirement (V20260909.70). The old mirror rule skipped those — 3,362 of them.
   const have = new Set((await tgt.query("SELECT subject_id FROM core.source_files WHERE subject_type = $1", [subjectType])).rows.map((r) => r.subject_id));
-  const sf = rows.filter((r) => r.file_path != null && !have.has(r.id)).map((r) => ({
+  const sf = rows.filter((r) => (r.file_path != null || (r.raw_text != null && r.raw_text !== "")) && !have.has(r.id)).map((r) => ({
     org_id: r.org_id, subject_type: subjectType, subject_id: r.id, original_file_name: r.original_file_name, file_path: r.file_path, mime_type: r.mime_type,
     raw_text: r.raw_text, content_hash: r.summary_hash, uploaded_at: r.uploaded_at ?? new Date(),
   }));

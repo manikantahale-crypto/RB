@@ -4,16 +4,16 @@
  */
 const express = require("express");
 const crypto = require("crypto");
-const { pool } = require("../config/db");
+const { pool, withTransaction } = require("../../../config/db");
 const astraRepo = require("../repositories/astra.repository");
-const astraService = require("../services/astra/astra.service");
+const astraService = require("../services/astra.service");
 const {
   evaluateRequirementQuality,
   enrichRequirement,
-} = require("../services/astra/astraIntelligence.service");
-const emailAdapter = require("../services/astra/adapters/email.adapter");
+} = require("../services/astraIntelligence.service");
+const emailAdapter = require("../services/adapters/email.adapter");
 const jobBoardsController = require("../controllers/jobBoards.controller");
-const log = require("../utils/logger");
+const log = require("../../../utils/logger");
 
 const router = express.Router();
 
@@ -91,17 +91,25 @@ router.post("/internal/astra/requirements/ingest", async (req, res, next) => {
       .update(rawText || body.title || "")
       .digest("hex");
 
-    const job = await astraRepo.insertRequirement(null, {
+    const sourceEmail = body.source_email || body.sourceEmail || null;
+    const createdBy = body.createdBy || body.created_by || null;
+    // The vendor, if the sender's domain matches one of this recruiter's vendors.
+    const vendorId = await astraRepo.findVendorIdForSender(createdBy, sourceEmail);
+
+    // One transaction: the requirement and its document land together or not at all.
+    const job = await withTransaction((client) => astraRepo.insertRequirement(client, {
       title: body.title || "Untitled Role",
       rawText,
       summaryHash,
       sourceUrl: body.source_url || body.sourceUrl || null,
-      sourceEmail: body.source_email || body.sourceEmail || null,
+      sourceEmail,
       messageId: body.message_id || body.messageId || null,
+      sourceType: body.source_type || body.sourceType || null,
+      relayThreadId: body.relay_thread_id || body.relayThreadId || body.thread_id || null,
+      vendorId,
       location: body.location || null,
-      processingStatus: "uploaded",
-      createdBy: body.createdBy || body.created_by || null,
-    });
+      createdBy,
+    }));
 
     log.info(`[internal/astra] ingest jobId=${job.id}`);
     res.status(201).json({

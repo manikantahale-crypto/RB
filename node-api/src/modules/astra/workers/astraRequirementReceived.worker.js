@@ -1,9 +1,8 @@
-const jobRepo = require("../repositories/job.repository");
 const astraRepo = require("../repositories/astra.repository");
-const astraIntelligenceService = require("../services/astra/astraIntelligence.service");
-const { getBoss } = require("../config/queue");
-const { withTransaction } = require("../config/db");
-const log = require("../utils/logger");
+const astraIntelligenceService = require("../services/astraIntelligence.service");
+const { getBoss } = require("../../../config/queue");
+const { withTransaction } = require("../../../config/db");
+const log = require("../../../utils/logger");
 
 /**
  * Core handler for the 'astra.requirement.received' event.
@@ -55,12 +54,12 @@ async function handleAstraRequirementReceived(job) {
 
   const rawText = (requirement.raw_text || "").trim();
   if (!rawText) {
-    await jobRepo.markFailed(jobId, "Requirement raw_text is empty — intake failed to provide content");
+    await astraRepo.markFailed(jobId, "Requirement raw_text is empty — intake failed to provide content");
     throw new Error(`[astra.requirement.received] Job ${jobId} has empty raw_text`);
   }
 
   // 3. Mark processing started
-  await jobRepo.markProcessing(jobId);
+  await astraRepo.markProcessing(jobId);
 
   try {
     // 4. Run unified ASTRA Requirement Intelligence Enrichment
@@ -70,9 +69,10 @@ async function handleAstraRequirementReceived(job) {
     const { platformEventId } = await withTransaction(async (client) => {
       await astraRepo.updateEnrichedRequirement(jobId, enriched, client);
 
-      const outboxRepo = require("../repositories/outbox.repository");
+      const outboxRepo = require("../../../repositories/outbox.repository");
       const outboxResult = await outboxRepo.insertEvent(client, {
         eventType: "astra.requirement.normalized",
+        organizationId: requirement.org_id,
         aggregateType: "requirement",
         aggregateId: jobId,
         correlationId: correlationId,
@@ -106,7 +106,7 @@ async function handleAstraRequirementReceived(job) {
       platformEventId
     };
   } catch (err) {
-    await jobRepo.markFailed(jobId, err.message);
+    await astraRepo.markFailed(jobId, err.message);
     log.error(`[astra.requirement.received] Processing failed for job ${jobId}: ${err.message}`);
     throw err;
   }

@@ -1,5 +1,5 @@
-const emailAdapter = require("../services/astra/adapters/email.adapter");
-const log = require("../utils/logger");
+const emailAdapter = require("../services/adapters/email.adapter");
+const log = require("../../../utils/logger");
 
 /**
  * Controller for email-based requirement intake.
@@ -44,7 +44,7 @@ async function ingestEmail(req, res, next) {
       try {
         const token = req.headers.authorization.substring(7).trim();
         const jwt = require("jsonwebtoken");
-        const env = require("../config/env");
+        const env = require("../../../config/env");
         const payload = jwt.verify(token, env.AUTH_JWT_SECRET);
         authUserId = payload?.userId || null;
       } catch (_) {
@@ -94,7 +94,7 @@ async function ingestEmail(req, res, next) {
 
 async function getEmailStatus(req, res, next) {
   try {
-    const env = require("../config/env");
+    const env = require("../../../config/env");
     return res.json({
       status: "success",
       configured: Boolean(env.IMAP_USERNAME && env.IMAP_PASSWORD),
@@ -110,7 +110,7 @@ async function getEmailStatus(req, res, next) {
 
 async function pollEmails(req, res, next) {
   try {
-    const emailPollerService = require("../services/astra/emailPoller.service");
+    const emailPollerService = require("../services/emailPoller.service");
     const stats = await emailPollerService.pollEmails();
     return res.json({
       status: "success",

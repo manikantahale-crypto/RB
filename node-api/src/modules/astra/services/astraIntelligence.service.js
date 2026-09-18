@@ -1,6 +1,6 @@
-const { complete } = require("../../core/aiClient");
+const { complete } = require("../../../core/aiClient");
 const astraService = require("./astra.service");
-const log = require("../../utils/logger");
+const log = require("../../../utils/logger");
 
 const ALLOWED_ROLES = new Set([
   "data-analyst",

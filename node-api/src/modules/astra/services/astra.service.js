@@ -1,8 +1,8 @@
 const crypto = require("crypto");
-const astraRepo = require("../../repositories/astra.repository");
-const { withTransaction, pool } = require("../../config/db");
-const { getBoss } = require("../../config/queue");
-const log = require("../../utils/logger");
+const astraRepo = require("../repositories/astra.repository");
+const { withTransaction, pool } = require("../../../config/db");
+const { getBoss } = require("../../../config/queue");
+const log = require("../../../utils/logger");
 
 /**
  * Normalizes text: converts to lowercase, collapses consecutive whitespace, and trims.
@@ -85,8 +85,8 @@ function normalizeVisaRequirement(visa) {
   if (vLower === "h1b" || vLower === "h-1b" || vLower === "h 1b") return "H1B";
   if (vLower === "gc" || vLower === "green card" || vLower === "greencard") return "GC";
   if (vLower === "usc" || vLower === "us citizen" || vLower === "us citizenship") return "USC";
-  if (vLower === "opt") return "OPT";
-  if (vLower === "cpt") return "CPT";
+  if (vLower === "opt" || vLower === "opt ead" || vLower === "optead") return "OPT";
+  if (vLower === "cpt" || vLower === "cpt ead" || vLower === "cptead") return "CPT";
   return v;
 }
 
@@ -250,33 +250,30 @@ async function ingestRequirement(payload = {}) {
   const rawMessageId = payload.messageId || payload.message_id || "";
   const sourceUrl = normalizeSourceUrl(payload.sourceUrl || payload.source_url || "");
 
-  // 1. Tier 1 Deduplication: Message-ID Check (Early exit before DB insert)
+  const incomingCreatedBy = payload.createdBy || payload.created_by || payload.userId || null;
+  const relayThreadId =
+    payload.relayThreadId || payload.relay_thread_id || payload.thread_id || payload.threadId || null;
+
+  // A duplicate found for an existing row: fill in what the new arrival knows
+  // and the row does not. Never overwrites.
+  const backfill = async (jobId, column, value) => {
+    if (!value) return;
+    try {
+      await pool.query(`UPDATE core.requirements SET ${column} = $2 WHERE id = $1 AND ${column} IS NULL`, [jobId, value]);
+    } catch (err) {
+      log.warn(`[ASTRA] Failed to backfill ${column} for job ${jobId}: ${err.message}`);
+    }
+  };
+
+  // 1. Tier 1 Deduplication: Message-ID Check (Early exit before DB insert, scoped per recruiter)
   const messageId = normalizeMessageId(rawMessageId);
   if (messageId) {
-    const existingByMessageId = await astraRepo.findRequirementByMessageId(messageId);
+    const existingByMessageId = await astraRepo.findRequirementByMessageId(messageId, incomingCreatedBy);
     if (existingByMessageId) {
-      log.info(`[ASTRA] Duplicate requirement detected via Message-ID: '${messageId}' (job ID: ${existingByMessageId.id})`);
-      if (sourceUrl) {
-        try {
-          await pool.query(
-            "UPDATE core.requirements SET source_url = $2 WHERE id = $1 AND source_url IS NULL",
-            [existingByMessageId.id, sourceUrl]
-          );
-        } catch (err) {
-          log.warn(`[ASTRA] Failed to backfill source_url for job ${existingByMessageId.id}: ${err.message}`);
-        }
-      }
-      const incomingCreatedBy = payload.createdBy || payload.created_by || payload.userId || null;
-      if (incomingCreatedBy) {
-        try {
-          await pool.query(
-            "UPDATE core.requirements SET created_by = $2 WHERE id = $1 AND created_by IS NULL",
-            [existingByMessageId.id, incomingCreatedBy]
-          );
-        } catch (err) {
-          log.warn(`[ASTRA] Failed to backfill created_by for job ${existingByMessageId.id}: ${err.message}`);
-        }
-      }
+      log.info(`[ASTRA] Duplicate requirement detected via Message-ID: '${messageId}' for user ${incomingCreatedBy || "legacy"} (job ID: ${existingByMessageId.id})`);
+      await backfill(existingByMessageId.id, "source_url", sourceUrl);
+      await backfill(existingByMessageId.id, "created_by", incomingCreatedBy);
+      await backfill(existingByMessageId.id, "relay_thread_id", relayThreadId);
       return {
         created: false,
         duplicate: true,
@@ -295,31 +292,13 @@ async function ingestRequirement(payload = {}) {
     sourceSubject: rawSubject,
   });
 
-  // 3. Tier 2 Deduplication: Content Hash Check
-  const existingByHash = await astraRepo.findRequirementBySummaryHash(summaryHash);
+  // 3. Tier 2 Deduplication: Content Hash Check (scoped per recruiter)
+  const existingByHash = await astraRepo.findRequirementBySummaryHash(summaryHash, incomingCreatedBy);
   if (existingByHash) {
-    log.info(`[ASTRA] Duplicate requirement detected via content hash: '${summaryHash}' (job ID: ${existingByHash.id})`);
-    if (sourceUrl) {
-      try {
-        await pool.query(
-          "UPDATE core.requirements SET source_url = $2 WHERE id = $1 AND source_url IS NULL",
-          [existingByHash.id, sourceUrl]
-        );
-      } catch (err) {
-        log.warn(`[ASTRA] Failed to backfill source_url for job ${existingByHash.id}: ${err.message}`);
-      }
-    }
-    const incomingCreatedBy = payload.createdBy || payload.created_by || payload.userId || null;
-    if (incomingCreatedBy) {
-      try {
-        await pool.query(
-          "UPDATE core.requirements SET created_by = $2 WHERE id = $1 AND created_by IS NULL",
-          [existingByHash.id, incomingCreatedBy]
-        );
-      } catch (err) {
-        log.warn(`[ASTRA] Failed to backfill created_by for job ${existingByHash.id}: ${err.message}`);
-      }
-    }
+    log.info(`[ASTRA] Duplicate requirement detected via content hash: '${summaryHash}' for user ${incomingCreatedBy || "legacy"} (job ID: ${existingByHash.id})`);
+    await backfill(existingByHash.id, "source_url", sourceUrl);
+    await backfill(existingByHash.id, "created_by", incomingCreatedBy);
+    await backfill(existingByHash.id, "relay_thread_id", relayThreadId);
     return {
       created: false,
       duplicate: true,
@@ -368,8 +347,11 @@ async function ingestRequirement(payload = {}) {
     remotePolicy: remotePolicy,
     summaryHash: summaryHash,
     status: payload.status || "Active",
-    processingStatus: payload.processingStatus || "uploaded",
-    createdBy: payload.createdBy || payload.created_by || payload.userId || null,
+    createdBy: incomingCreatedBy,
+    vendorId: payload.vendorId || payload.vendor_id || null,
+    relayThreadId,
+    sourceType: payload.sourceType || payload.source_type || null,
+    sourceName: payload.sourceName || payload.source_name || null,
   };
 
   // 5. Persist in core.requirements via astra.repository.js and write the platform event to event_outbox
@@ -377,7 +359,7 @@ async function ingestRequirement(payload = {}) {
     const job = await astraRepo.insertRequirement(client, requirementData);
 
     // Write platform event 'astra.requirement.received' to outbox transactionally
-    const outboxRepo = require("../../repositories/outbox.repository");
+    const outboxRepo = require("../../../repositories/outbox.repository");
 
     let channelType = "API";
     if (requirementData.sourceEmail || payload.sourceType === "email" || payload.source_type === "email") {
@@ -388,6 +370,8 @@ async function ingestRequirement(payload = {}) {
 
     const outboxResult = await outboxRepo.insertEvent(client, {
       eventType: "astra.requirement.received",
+      // The event belongs to the requirement's organisation — never an env default.
+      organizationId: job.org_id,
       aggregateType: "requirement",
       aggregateId: job.id,
       producer: "astra-intake",

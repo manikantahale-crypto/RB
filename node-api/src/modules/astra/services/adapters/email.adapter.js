@@ -226,6 +226,12 @@ function adaptEmailToRequirement(payload = {}) {
     sourceEmail: sourceEmail || null,
     sourceSubject: rawSubject ? String(rawSubject).trim() : null,
     messageId: messageId || null,
+    relayThreadId:
+      payload.relay_thread_id ||
+      payload.relayThreadId ||
+      payload.thread_id ||
+      payload.threadId ||
+      null,
 
     minExperience: Number.isFinite(minExperience) ? minExperience : null,
     maxExperience: Number.isFinite(maxExperience) ? maxExperience : null,
