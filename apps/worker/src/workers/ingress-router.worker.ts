@@ -15,6 +15,7 @@ import {
   formatEventLine,
   orchStory,
 } from '@tekisho/orchestrator/src/observability/story-log.js';
+import { recordUnroutableOnce } from '@tekisho/orchestrator/src/workflow/failed-workflows.js';
 
 export type RoutedEnvelope = EventEnvelope & {
   __graphKey: string;
@@ -159,6 +160,17 @@ export async function startIngressRouter(args: {
 
           if (decision.kind === 'ack') {
             orchStory('ROUTE', `${decision.label}  ${decision.note}`);
+            /**
+             * A workflow-bound event with nothing bound is a lost business
+             * event, and a log line is not a record. Written to
+             * orch.run_failures the way the old project did it (584 rows
+             * say `unroutable` on this queue), so it is on the failures
+             * screen and can be replayed once a binding exists. Once per
+             * event: a redelivery does not double the record.
+             */
+            if (decision.label === 'UNROUTABLE') {
+              await recordUnroutableOnce(pool, envelope);
+            }
             continue;
           }
 

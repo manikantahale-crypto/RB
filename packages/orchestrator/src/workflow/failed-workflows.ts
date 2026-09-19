@@ -97,3 +97,43 @@ export async function markFailedWorkflowReplayed(
     [failedId],
   );
 }
+
+/**
+ * A workflow-bound event that nothing is bound to answer.
+ *
+ * Recorded the way the old project recorded it — `error_class = 'unroutable'`
+ * on the ingress queue, the whole envelope pinned — so a later binding can
+ * replay it. At most once per event: ingress is at-least-once and a second
+ * delivery must not become a second row.
+ */
+export async function recordUnroutableOnce(
+  pool: Pool,
+  envelope: {
+    event_id: string;
+    event_type: string;
+    organization_id: string;
+  },
+): Promise<string | null> {
+  await ensureFailedWorkflowsTable(pool);
+  const id = uuidv4();
+  const { rowCount } = await pool.query(
+    `INSERT INTO orch.run_failures (
+       id, organization_id, event_id, thread_id, graph_key, graph_version,
+       queue, error_class, error_message, pinned_payload
+     )
+     SELECT $1, $2, $3, $4, '_unroutable', NULL,
+            'orchestration.ingress', 'unroutable', $5, $6::jsonb
+      WHERE NOT EXISTS (
+        SELECT 1 FROM orch.run_failures
+         WHERE event_id = $3 AND graph_key = '_unroutable' AND replayed_at IS NULL)`,
+    [
+      id,
+      envelope.organization_id,
+      envelope.event_id,
+      `${envelope.organization_id}:${envelope.event_id}`,
+      `${envelope.event_type}: no active binding answers this event`,
+      JSON.stringify(envelope),
+    ],
+  );
+  return (rowCount ?? 0) > 0 ? id : null;
+}
