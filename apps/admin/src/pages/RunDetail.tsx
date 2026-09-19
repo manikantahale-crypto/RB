@@ -30,7 +30,9 @@ import {
 import "@xyflow/react/dist/style.css";
 import dagre from "dagre";
 import {
+  getFlowForRun,
   getRunDetail,
+  type Flow,
   type RunDetail,
   type RunPathNode,
   type RunStep,
@@ -46,12 +48,12 @@ function statusKind(status: string): "ok" | "failed" | "waiting" | "other" {
   const s = status.toUpperCase();
   if (s === "OK" || s === "COMPLETED") return "ok";
   if (s === "FAILED") return "failed";
-  if (s === "WAITING_APPROVAL") return "waiting";
+  if (s === "PARKED" || s === "WAITING_APPROVAL") return "waiting";
   return "other";
 }
 
 function statusLabel(status: string): string {
-  if (status === "WAITING_APPROVAL") return "Waiting on a person";
+  if (status === "PARKED" || status === "WAITING_APPROVAL") return "Waiting on a person";
   if (status === "OK") return "OK";
   return status.charAt(0) + status.slice(1).toLowerCase().replace(/_/g, " ");
 }
@@ -139,7 +141,7 @@ function layout(nodes: Node[], edges: Edge[]): Node[] {
 
 /* ───────────────────────────── the screen ────────────────────────────── */
 
-type TabKey = "timeline" | "logs" | "outcome";
+type TabKey = "timeline" | "logs" | "outcome" | "flow";
 
 export function RunDetailPage() {
   const { runId = "" } = useParams();
@@ -152,6 +154,19 @@ export function RunDetailPage() {
   const [fetching, setFetching] = useState(false);
   const [selected, setSelected] = useState<string | null>(null);
   const [tab, setTab] = useState<TabKey>("timeline");
+  /**
+   * The chain this run is part of, fetched when the tab is opened: it is a
+   * second read across the whole correlation, and most visits never need it.
+   */
+  const [flow, setFlow] = useState<Flow | null>(null);
+  const [flowError, setFlowError] = useState<string | null>(null);
+  useEffect(() => {
+    if (tab !== "flow" || flow || !runId) return;
+    void getFlowForRun(runId).then((res) => {
+      if (res.ok) setFlow(res.data);
+      else setFlowError(res.body.message ?? res.body.error ?? "Could not load the flow");
+    });
+  }, [tab, flow, runId]);
 
   const load = useCallback(async () => {
     if (!runId) return;
@@ -520,6 +535,7 @@ export function RunDetailPage() {
                 ["timeline", `Timeline (${data.steps.length})`],
                 ["logs", "Logs"],
                 ["outcome", `Outcome (${emitted.length})`],
+                ["flow", flow ? `Flow (${flow.runs.length} runs)` : "Flow"],
               ] as Array<[TabKey, string]>
             ).map(([key, label]) => (
               <button
@@ -605,6 +621,10 @@ export function RunDetailPage() {
             </pre>
           ) : null}
 
+          {tab === "flow" ? (
+            <FlowTab flow={flow} error={flowError} thisRun={runId} />
+          ) : null}
+
           {tab === "outcome" ? (
             emitted.length === 0 ? (
               <p className="wf-empty">This run announced no events.</p>
@@ -636,6 +656,116 @@ export function RunDetailPage() {
             )
           ) : null}
         </>
+      ) : null}
+    </div>
+  );
+}
+
+/* ────────────────────────────── the flow tab ─────────────────────────── */
+
+/**
+ * The chain, event by event: what arrived, which run it started, what that
+ * run announced, and so on down the correlation. This run is marked. A run
+ * still parked reads "waiting on a person"; an event not yet published
+ * reads "in the outbox" — both are the system working, not failing.
+ */
+function FlowTab({
+  flow,
+  error,
+  thisRun,
+}: {
+  flow: Flow | null;
+  error: string | null;
+  thisRun: string;
+}) {
+  if (error) return <p className="wf-empty">{error}</p>;
+  if (!flow) return <p className="wf-empty">Loading the flow…</p>;
+  if (flow.events.length === 0 && flow.runs.length === 0) {
+    return <p className="wf-empty">Nothing else in this correlation.</p>;
+  }
+  const runsById = new Map(flow.runs.map((r) => [r.id, r]));
+  const eventsById = new Map(flow.events.map((e) => [e.eventId, e]));
+
+  return (
+    <div className="rd-flow">
+      <p className="wf-muted">
+        correlation <span className="run-id">{flow.correlationId}</span>
+        {flow.truncated ? " · only the first events are shown" : null}
+      </p>
+      <div className="wf-table-wrap">
+        <table className="wf-table">
+          <thead>
+            <tr>
+              <th scope="col">Event</th>
+              <th scope="col">At</th>
+              <th scope="col">From</th>
+              <th scope="col">Started</th>
+            </tr>
+          </thead>
+          <tbody>
+            {flow.events.map((e) => {
+              const by = e.announcedByRun ? runsById.get(e.announcedByRun) : null;
+              return (
+                <tr key={e.eventId} className="wf-row">
+                  <td>
+                    <span className="wf-trigger">{e.eventType}</span>
+                    {!e.published ? <span className="wf-muted"> · in the outbox</span> : null}
+                  </td>
+                  <td className="wf-muted">{clock(e.occurredAt)}</td>
+                  <td>
+                    {by ? (
+                      <Link to={`/runs/${encodeURIComponent(by.id)}`} className="run-id">
+                        {by.graphKey}
+                      </Link>
+                    ) : (
+                      <span className="wf-muted">{e.producer ?? "—"}</span>
+                    )}
+                  </td>
+                  <td>
+                    {e.startedRuns.length === 0 ? (
+                      <span className="wf-muted">nothing</span>
+                    ) : (
+                      e.startedRuns.map((id) => {
+                        const r = runsById.get(id)!;
+                        return (
+                          <div key={id}>
+                            <Link to={`/runs/${encodeURIComponent(id)}`} className="run-id">
+                              {r.graphKey}
+                              {r.graphVersion != null ? `@${r.graphVersion}` : ""}
+                            </Link>{" "}
+                            <span className={r.status === "FAILED" ? "wf-danger" : "wf-muted"}>
+                              {r.parked ? "waiting on a person" : r.status.toLowerCase()}
+                            </span>
+                            {id === thisRun ? <span className="wf-muted"> · this run</span> : null}
+                          </div>
+                        );
+                      })
+                    )}
+                  </td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      </div>
+      {flow.runs
+        .filter((r) => r.triggerEventId && !eventsById.has(r.triggerEventId))
+        .map((r) => (
+          <p key={r.id} className="wf-muted">
+            <Link to={`/runs/${encodeURIComponent(r.id)}`} className="run-id">
+              {r.graphKey}
+            </Link>{" "}
+            was started by an event outside the shown window.
+          </p>
+        ))}
+      {flow.warnings.length > 0 ? (
+        <ul className="rd-flow-warnings">
+          {flow.warnings.map((w) => (
+            <li key={w} className="wf-muted">
+              {w}
+            </li>
+          ))}
+        </ul>
       ) : null}
     </div>
   );

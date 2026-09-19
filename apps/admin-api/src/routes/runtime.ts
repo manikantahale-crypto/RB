@@ -5,6 +5,16 @@
 import type { Pool } from "pg";
 
 import { GRAPH_DEFINITIONS, GRAPH_EVENT_BINDINGS } from "../lib/authoring-views.js";
+/**
+ * Imported from the engine deliberately: trace.ts pulls in run-status.ts
+ * and nothing else, so none of the engine's known-debt type errors
+ * (routing/table.ts, domain/platform-event.ts) reach this typecheck. See the
+ * note on `planKindOf` in lib/platform-facts.ts for why that matters.
+ */
+import {
+  correlationOfRun,
+  loadFlowByCorrelation,
+} from "@tekisho/orchestrator/src/workflow/trace.js";
 type FastifyLike = {
   get: (path: string, handler: any) => void;
   post: (path: string, handler: any) => void;
@@ -67,6 +77,47 @@ async function loadTrace(pool: Pool, eventId: string) {
 }
 
 export function registerRuntimeRoutes(app: FastifyLike, pool: Pool): void {
+  /**
+   * The whole flow by correlation: every event, the runs each started, the
+   * events each run announced — linked, in order, secrets blanked. The
+   * per-event trace below shows one hop; this shows the chain.
+   */
+  app.get("/runtime/flow/:correlationId", async (req: any, reply: any) => {
+    const correlationId = String(req.params.correlationId ?? "");
+    if (!correlationId) {
+      return reply.code(400).send({ error: "correlationId required" });
+    }
+    try {
+      return reply.send(await loadFlowByCorrelation(pool, correlationId));
+    } catch (err: any) {
+      return reply.code(500).send({
+        error: "flow_failed",
+        message: err?.message ?? String(err),
+      });
+    }
+  });
+
+  /** The same, found from a run — what the run detail screen links to. */
+  app.get("/runtime/flow/by-run/:runId", async (req: any, reply: any) => {
+    const runId = String(req.params.runId ?? "");
+    if (!runId) return reply.code(400).send({ error: "runId required" });
+    try {
+      const correlationId = await correlationOfRun(pool, runId);
+      if (!correlationId) {
+        return reply.code(404).send({
+          error: "no_correlation",
+          message: "This run's trigger is not in the outbox and its record carries no correlation.",
+        });
+      }
+      return reply.send(await loadFlowByCorrelation(pool, correlationId));
+    } catch (err: any) {
+      return reply.code(500).send({
+        error: "flow_failed",
+        message: err?.message ?? String(err),
+      });
+    }
+  });
+
   app.get("/runtime/trace/:eventId", async (req: any, reply: any) => {
     const eventId = String(req.params.eventId ?? "");
     if (!eventId) {
@@ -502,13 +553,10 @@ export function registerRuntimeRoutes(app: FastifyLike, pool: Pool): void {
           const inputEvent =
             events.find((e) => e.role === "input") ?? events[0] ?? null;
           const outputEvents = events.filter((e) => e.role === "output");
-          const needsHuman =
-            String(r.status).includes("INTERRUPT") ||
-            String(r.status) === "PAUSED" ||
-            String(r.status) === "WAITING_APPROVAL" ||
-            (Boolean(r.langgraph_thread_id) &&
-              !String(r.status).toUpperCase().includes("COMPLET") &&
-              !String(r.status).toUpperCase().includes("FAIL"));
+          // One word for a run waiting on a person (V20260909.72). This
+          // used to guess from four spellings and the presence of a thread,
+          // which called every RUNNING run with a thread "needs a human".
+          const needsHuman = String(r.status) === "PARKED";
 
           const mappedSteps = runSteps.map((s) => {
             const out =

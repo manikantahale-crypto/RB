@@ -149,6 +149,59 @@ export function getRuntimeTrace(eventId: string) {
   }>(`/runtime/trace/${encodeURIComponent(eventId)}`);
 }
 
+export type FlowEvent = {
+  eventId: string;
+  eventType: string;
+  occurredAt: string | null;
+  publishedAt: string | null;
+  published: boolean;
+  producer: string | null;
+  aggregate: { type: string | null; id: string | null };
+  causationId: string | null;
+  payload: unknown;
+  startedRuns: string[];
+  announcedByRun: string | null;
+};
+
+export type FlowRun = {
+  id: string;
+  graphKey: string;
+  graphVersion: number | null;
+  status: string;
+  parked: boolean;
+  triggerEventId: string | null;
+  threadId: string | null;
+  startedAt: string | null;
+  completedAt: string | null;
+  heartbeatAt: string | null;
+  error: unknown;
+  announced: string[];
+  steps: Array<{
+    seq: number;
+    node: string;
+    tool: string | null;
+    status: string;
+    latencyMs: number | null;
+    at: string | null;
+    emitted: string[];
+    output: unknown;
+  }>;
+};
+
+export type Flow = {
+  correlationId: string;
+  events: FlowEvent[];
+  runs: FlowRun[];
+  rootEventId: string | null;
+  warnings: string[];
+  truncated: boolean;
+};
+
+/** The whole chain a run belongs to — every event and run in its correlation. */
+export function getFlowForRun(runId: string) {
+  return request<Flow>(`/runtime/flow/by-run/${encodeURIComponent(runId)}`);
+}
+
 export function listRuntimeRuns(limit = 40) {
   return request<{ runs: Array<Record<string, unknown>> }>(
     `/runtime/runs?limit=${limit}`,

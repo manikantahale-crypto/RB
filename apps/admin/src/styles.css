@@ -4883,3 +4883,10 @@ code {
   color: var(--text-default);
   font-size: var(--font-size-sm);
 }
+
+/* ── run detail · the Flow tab ─────────────────────────────────────────
+   The chain a run belongs to. Reuses the runs table; only the two things
+   it says that nothing else does get a class of their own. */
+.rd-flow { display: flex; flex-direction: column; gap: var(--space-3); }
+.rd-flow-warnings { margin: 0; padding-left: var(--space-5); font-size: var(--font-size-sm); }
+.wf-danger { color: var(--status-danger-fg); }
