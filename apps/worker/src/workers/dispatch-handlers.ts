@@ -8,6 +8,7 @@ import {
   MODULE_SEND_OPTIONS,
 } from '@tekisho/orchestrator/src/routing/table.js';
 import { recordFailedWorkflow } from '@tekisho/orchestrator/src/workflow/failed-workflows.js';
+import { resolveParkedRun } from '@tekisho/orchestrator/src/workflow/parked-runs.js';
 import { recordTerminalEvent } from '@tekisho/orchestrator/src/observability/metrics.js';
 import type { ResumeThreadJob } from './resume-thread.worker.js';
 
@@ -40,27 +41,46 @@ export async function handlePlatformDispatchEvent(args: {
   }
 
   if (plan.kind === 'resume') {
-    const threadId = String(
-      payload.thread_id ?? payload.threadId ?? '',
-    );
-    const graphKey = String(
-      payload.graph_key ?? payload.graphKey ?? '',
-    );
+    let threadId = String(payload.thread_id ?? payload.threadId ?? '');
+    let graphKey = String(payload.graph_key ?? payload.graphKey ?? '');
+    let graphVersion: number | undefined =
+      typeof payload.graph_version === 'number'
+        ? payload.graph_version
+        : typeof payload.graphVersion === 'number'
+          ? payload.graphVersion
+          : undefined;
+
+    /**
+     * A decision from outside the platform — a candidate's reply through
+     * RELAY, a recruiter's click — knows which conversation it is about, not
+     * which LangGraph thread. The run's own record holds the correlation, so
+     * look the parked run up by it. Used to be acked and dropped.
+     */
     if (!threadId || !graphKey) {
+      const parked = await resolveParkedRun(pool, {
+        organizationId: envelope.organization_id,
+        correlationId: envelope.correlation_id,
+        graphKey: graphKey || null,
+      });
+      if (!parked) {
+        console.log(
+          `[Dispatcher] ${envelope.event_type} names no thread and no run is parked ` +
+            `for correlation=${envelope.correlation_id} — ack (${plan.note})`,
+        );
+        return 'acked';
+      }
+      threadId = parked.langgraph_thread_id;
+      graphKey = parked.graph_key;
+      graphVersion = graphVersion ?? parked.graph_version ?? undefined;
       console.log(
-        `[Dispatcher] approval.decided missing thread_id/graph_key — ack (${plan.note})`,
+        `[Dispatcher] ${envelope.event_type} → parked run ${parked.id} by correlation ` +
+          `(${graphKey} thread=${threadId})`,
       );
-      return 'acked';
     }
     const job: ResumeThreadJob = {
       thread_id: threadId,
       graph_key: graphKey,
-      graph_version:
-        typeof payload.graph_version === 'number'
-          ? payload.graph_version
-          : typeof payload.graphVersion === 'number'
-            ? payload.graphVersion
-            : undefined,
+      graph_version: graphVersion,
       organization_id: envelope.organization_id,
       decision: payload.decision ?? payload,
     };

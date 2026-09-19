@@ -188,7 +188,7 @@ export function registerWorkflowRoutes(app: FastifyLike, pool: Pool): void {
               -- human gate for days is working as designed. Counted without a
               -- time window because that is the point — it is still waiting.
               SELECT count(*) FROM orch.runs r
-              WHERE r.graph_key = d.graph_key AND r.status = 'WAITING_APPROVAL'
+              WHERE r.graph_key = d.graph_key AND r.status = 'PARKED'
             ) AS waiting,
             (
               SELECT max(r.created_at) FROM orch.runs r

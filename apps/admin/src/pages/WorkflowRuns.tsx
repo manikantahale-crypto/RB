@@ -29,9 +29,12 @@ const STATUS_ORDER = [
   "COMPLETED",
   "FAILED",
   "RUNNING",
-  "WAITING_APPROVAL",
+  "PARKED",
   "CANCELLED",
 ];
+
+/** PARKED is the word; WAITING_APPROVAL is what runs said before V20260909.72. */
+const isParked = (status: string) => status === "PARKED" || status === "WAITING_APPROVAL";
 
 function statusClass(status: string): string {
   switch (status) {
@@ -39,6 +42,7 @@ function statusClass(status: string): string {
       return "run-status run-status--ok";
     case "FAILED":
       return "run-status run-status--failed";
+    case "PARKED":
     case "WAITING_APPROVAL":
       return "run-status run-status--waiting";
     case "CANCELLED":
@@ -49,7 +53,7 @@ function statusClass(status: string): string {
 }
 
 function statusLabel(status: string): string {
-  if (status === "WAITING_APPROVAL") return "Waiting on a person";
+  if (isParked(status)) return "Waiting on a person";
   return status.charAt(0) + status.slice(1).toLowerCase().replace(/_/g, " ");
 }
 

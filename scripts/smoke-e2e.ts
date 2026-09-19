@@ -118,7 +118,7 @@ async function waitTrace(
         (r: any) =>
           r.status === 'COMPLETED' ||
           r.status === 'FAILED' ||
-          r.status === 'WAITING_APPROVAL',
+          r.status === 'PARKED',
       );
     const hasFollowOn =
       Array.isArray(last.outbox) &&

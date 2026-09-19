@@ -7,7 +7,9 @@ import { validateEntryInput } from '../contracts/payloads.js';
 import { classifyError, ClassifiedError } from './errors.js';
 import { recordWorkflowMetric } from '../observability/metrics.js';
 import { orchStory, orchStoryDetail } from '../observability/story-log.js';
-import { finishAgentRun, startAgentRun } from './agent-runs.js';
+import { claimRun, finishAgentRun } from './agent-runs.js';
+import { claimParkedRun } from './parked-runs.js';
+import { PARKED } from './run-status.js';
 
 /**
  * Executes a workflow by graph_key: compiler loads topology from DB,
@@ -39,7 +41,7 @@ export class WorkflowRunner {
       const trigger: EventInput = { ...event, payload };
 
       if (this.pool) {
-        agentRunId = await startAgentRun({
+        const claim = await claimRun({
           pool: this.pool,
           organizationId: event.organization_id,
           agentName: def.agentName ?? 'intake-agent',
@@ -59,6 +61,26 @@ export class WorkflowRunner {
             correlation_id: event.correlation_id,
           },
         });
+        /**
+         * THIS DELIVERY IS A DUPLICATE. The run for this event and workflow
+         * already finished, or is parked at a gate waiting for a person.
+         * Running the graph again would redo pure steps — a gate would ask
+         * for approval again — so it is declined here, and said so.
+         */
+        if (claim.kind === 'settled') {
+          orchStory(
+            'SKIP',
+            `${workflow_name}  event=${event.event_id}  run ${claim.runId} is ${claim.status} — duplicate delivery declined`,
+          );
+          return {
+            status: 'SKIPPED',
+            events: [],
+            finalState: { thread_id: threadId, status: claim.status },
+            threadId,
+            runId: claim.runId,
+          };
+        }
+        agentRunId = claim.kind === 'unrecorded' ? null : claim.runId;
       }
 
       const graph = await this.compiler.get(
@@ -106,7 +128,7 @@ export class WorkflowRunner {
             pool: this.pool,
             organizationId: event.organization_id,
             runId: agentRunId,
-            status: 'WAITING_APPROVAL',
+            status: PARKED,
           });
         }
         recordWorkflowMetric({
@@ -162,6 +184,8 @@ export class WorkflowRunner {
         finalState: {},
         error: classified.message,
         errorClass: classified.errorClass,
+        runId: agentRunId,
+        failedNode: classified.nodeId ?? null,
       };
     }
   }
@@ -179,11 +203,46 @@ export class WorkflowRunner {
   }): Promise<WorkflowResult> {
     const { graphKey, organizationId, threadId, decision, graphVersion } = args;
     const started = Date.now();
+
+    /**
+     * TAKE THE RUN BACK BEFORE CONTINUING IT.
+     *
+     * PARKED → RUNNING, atomically, or nothing. A decision delivered twice
+     * finds nothing the second time and is declined here rather than handed
+     * to LangGraph as a second resume. A run that has no record (a manual
+     * thread, a run from before the audit tables) is resumed as before —
+     * the claim is a guard, not a gate.
+     */
+    let claimed: Awaited<ReturnType<typeof claimParkedRun>> = null;
+    if (this.pool) {
+      claimed = await claimParkedRun(this.pool, { threadId, graphKey });
+      if (!claimed) {
+        const { rows } = await this.pool.query<{ status: string }>(
+          `SELECT status FROM orch.runs WHERE langgraph_thread_id = $1 AND graph_key = $2 LIMIT 1`,
+          [threadId, graphKey],
+        );
+        if (rows[0]) {
+          orchStory(
+            'RESUME',
+            `SKIPPED  graph=${graphKey}  thread=${threadId}  run is ${rows[0].status}, not PARKED — decision ignored`,
+          );
+          return {
+            status: 'SKIPPED',
+            events: [],
+            finalState: { thread_id: threadId, status: rows[0].status },
+            threadId,
+          };
+        }
+      }
+    }
+    const runId = claimed?.id ?? null;
+    const pinned = graphVersion ?? claimed?.graph_version ?? undefined;
+
     try {
       const graph = await this.compiler.get(
         graphKey,
         organizationId,
-        graphVersion,
+        pinned,
       );
       const config = {
         configurable: { thread_id: threadId },
@@ -208,12 +267,23 @@ export class WorkflowRunner {
         finalState,
         threadId,
         started,
-        typeof finalState?.agent_run_id === 'string'
-          ? finalState.agent_run_id
-          : null,
+        runId ??
+          (typeof finalState?.agent_run_id === 'string'
+            ? finalState.agent_run_id
+            : null),
       );
     } catch (error: unknown) {
       if (isGraphInterrupt(error)) {
+        // Parked again — remind, wait, remind. The record says so this time;
+        // before the claim it kept the status of its first park by luck.
+        if (this.pool && runId) {
+          await finishAgentRun({
+            pool: this.pool,
+            organizationId,
+            runId,
+            status: PARKED,
+          });
+        }
         recordWorkflowMetric({
           graphKey,
           status: 'interrupted',
@@ -228,6 +298,17 @@ export class WorkflowRunner {
         };
       }
       const msg = error instanceof Error ? error.message : String(error);
+      if (this.pool && runId) {
+        // A failed resume used to leave the run at its parked status for
+        // ever; now it is a FAILED run with the reason on it.
+        await finishAgentRun({
+          pool: this.pool,
+          organizationId,
+          runId,
+          status: 'FAILED',
+          error: { message: msg, errorClass: classifyError(error) },
+        });
+      }
       recordWorkflowMetric({
         graphKey,
         status: 'failed',
@@ -250,14 +331,23 @@ export class WorkflowRunner {
     events: EventInput[],
   ): Promise<void> {
     if (!this.pool || events.length === 0) return;
+    /**
+     * An event id is derived from run + step + type + position
+     * (workflow/deterministic-id.ts), so a step that is run again emits the
+     * SAME event. UNIQUE (event_id) on the outbox refuses the copy; DO
+     * NOTHING turns that refusal from a failed run into a line in the log.
+     * Before this, a duplicate was simply a second row.
+     */
+    const alreadyThere: string[] = [];
     await withOrgConnection(this.pool, event.organization_id, async (client) => {
       for (const generatedEvent of events) {
-        await client.query(
+        const { rowCount } = await client.query(
           `INSERT INTO orch.event_outbox (
             event_id, event_type, schema_version, organization_id,
             aggregate_type, aggregate_id, correlation_id, causation_id,
             producer, payload_ref
-          ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`,
+          ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+          ON CONFLICT (event_id) DO NOTHING`,
           [
             generatedEvent.event_id,
             generatedEvent.event_type,
@@ -271,6 +361,7 @@ export class WorkflowRunner {
             generatedEvent.payload,
           ],
         );
+        if (rowCount === 0) alreadyThere.push(generatedEvent.event_id);
       }
     });
     orchStory(
@@ -284,8 +375,13 @@ export class WorkflowRunner {
       );
     }
     orchStoryDetail(
-      `wrote ${events.length} follow-on event(s) → event_outbox: [${events.map((e) => e.event_type).join(', ')}]`,
+      `wrote ${events.length - alreadyThere.length} follow-on event(s) → event_outbox: [${events.map((e) => e.event_type).join(', ')}]`,
     );
+    if (alreadyThere.length > 0) {
+      orchStoryDetail(
+        `${alreadyThere.length} already in the outbox from an earlier attempt — not duplicated: ${alreadyThere.join(', ')}`,
+      );
+    }
   }
 
   private async finishOk(
@@ -308,7 +404,7 @@ export class WorkflowRunner {
           pool: this.pool,
           organizationId: event.organization_id,
           runId,
-          status: 'WAITING_APPROVAL',
+          status: PARKED,
         });
       }
       recordWorkflowMetric({
@@ -322,6 +418,7 @@ export class WorkflowRunner {
         events: [],
         finalState: { ...finalState, thread_id: threadId },
         threadId,
+        runId,
       };
     }
 

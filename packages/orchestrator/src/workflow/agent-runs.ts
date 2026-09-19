@@ -6,14 +6,10 @@
 import { randomUUID } from 'node:crypto';
 import type { Pool } from 'pg';
 
-export type AgentRunStatus =
-  | 'QUEUED'
-  | 'RUNNING'
-  | 'WAITING_APPROVAL'
-  | 'COMPLETED'
-  | 'FAILED'
-  | 'CANCELLED'
-  | 'EXPIRED';
+import type { RunStatus } from './run-status.js';
+
+/** See run-status.ts — PARKED is the one word for a run waiting on a person. */
+export type AgentRunStatus = RunStatus;
 
 export type AgentStepStatus = 'OK' | 'RETRIED' | 'FAILED' | 'SKIPPED';
 
@@ -83,9 +79,35 @@ export async function resolveAgentDefinitionId(
 }
 
 /**
- * Start an audit run. Returns orchestration_runs.id (used for steps + state.agent_run_id).
+ * What a claim on (event, workflow) came to.
+ *
+ *   started    no run existed; this delivery owns the new one
+ *   restarted  a FAILED / RUNNING / QUEUED attempt existed; this delivery
+ *              takes it over (pg-boss retry, or a worker that died mid-run)
+ *   settled    the run already COMPLETED, PARKED, CANCELLED or EXPIRED — this
+ *              delivery is a duplicate and must NOT run the graph
+ *   unrecorded the audit write failed; run anyway, as before (fail-open)
  */
-export async function startAgentRun(args: {
+export type RunClaim =
+  | { kind: 'started'; runId: string }
+  | { kind: 'restarted'; runId: string }
+  | { kind: 'settled'; runId: string; status: string }
+  | { kind: 'unrecorded' };
+
+/**
+ * Claim the run for this event and workflow — one statement, one answer.
+ *
+ * This used to be a SELECT and then an INSERT or an UPDATE: two workers
+ * given the same event could both read "no run" and both insert, and a run
+ * that had COMPLETED was restarted on redelivery as if it had not. The
+ * unique index from V20260909.73 makes (trigger_event_id, graph_key) a
+ * fact, and ON CONFLICT ... WHERE turns the fact into a decision: take over
+ * an attempt that failed or is running, decline one that is done.
+ *
+ * The other branch keeps a separate `processed_events` table for this. The
+ * run row already is that record; it only had to be unique.
+ */
+export async function claimRun(args: {
   pool: Pool;
   organizationId: string;
   agentName: string;
@@ -95,7 +117,7 @@ export async function startAgentRun(args: {
   graphVersion?: number | null;
   langgraphThreadId: string;
   inputRef?: Record<string, unknown>;
-}): Promise<string | null> {
+}): Promise<RunClaim> {
   const defId = await resolveAgentDefinitionId(args.pool, args.agentName);
   const inputJson = JSON.stringify({
     graph_key: args.graphKey,
@@ -104,100 +126,86 @@ export async function startAgentRun(args: {
     ...(args.inputRef ?? {}),
   });
 
-  let runId: string | null = null;
-
   try {
     await ensureOrchAuditTables(args.pool);
-    const existing = await args.pool.query<{ id: string }>(
-      `SELECT id::text AS id FROM orch.runs
-       WHERE trigger_event_id = $1 AND graph_key = $2
-       LIMIT 1`,
-      [args.triggerEventId, args.graphKey],
-    );
-    if (existing.rows[0]?.id) {
-      runId = existing.rows[0].id;
-      /**
-       * A re-delivered event restarts the existing run.
-       *
-       * `completed_at` and `error` are CLEARED here, and that is a fix rather
-       * than a detail. Previously this set status back to RUNNING and left
-       * both in place, so a finished run came back to life carrying the
-       * timestamp of the finish it had already had — a state the rest of the
-       * system cannot produce and no screen can explain. Three such rows are
-       * sitting in the database now, showing as RUNNING for six days with a
-       * completion time attached.
-       *
-       * A run that is running has not completed. Keeping the old values made
-       * that sentence false.
-       */
-      await args.pool.query(
-        `UPDATE orch.runs
+    const { rows } = await args.pool.query<{ id: string; inserted: boolean }>(
+      `INSERT INTO orch.runs (
+         id, organization_id, agent_name, agent_definition_id, trigger_event_id,
+         graph_key, graph_version, status, langgraph_thread_id, input_ref,
+         started_at, heartbeat_at
+       ) VALUES ($1,$2,$3,$4,$5,$6,$7,'RUNNING',$8,$9::jsonb, now(), now())
+       ON CONFLICT (trigger_event_id, graph_key) WHERE trigger_event_id IS NOT NULL
+       DO UPDATE
          SET status = 'RUNNING',
-             started_at = COALESCE(started_at, now()),
+             started_at = COALESCE(orch.runs.started_at, now()),
+             heartbeat_at = now(),
+             /**
+              * A run that is running has not completed: both cleared, as
+              * the old restart path did, for the reason it gave — a finished
+              * run brought back to life carrying its old completion time is
+              * a state nothing can explain.
+              */
              completed_at = NULL,
              error = NULL,
-             graph_version = COALESCE($2, graph_version)
-         WHERE id = $1`,
-        [runId, args.graphVersion ?? null],
-      );
+             graph_version = COALESCE(EXCLUDED.graph_version, orch.runs.graph_version)
+       WHERE orch.runs.status IN ('QUEUED', 'RUNNING', 'FAILED')
+       RETURNING id::text AS id, (xmax = 0) AS inserted`,
+      [
+        randomUUID(),
+        args.organizationId,
+        args.agentName,
+        defId,
+        args.triggerEventId,
+        args.graphKey,
+        args.graphVersion ?? null,
+        args.langgraphThreadId,
+        inputJson,
+      ],
+    );
+    const row = rows[0];
+    if (row) {
       console.log(
-        `[orch_runs] resume run=${runId} event=${args.triggerEventId}`,
+        `[orch_runs] ${row.inserted ? 'STARTED' : 'restarted'} run=${row.id} agent=${args.agentName} graph=${args.graphKey} event=${args.triggerEventId}`,
       );
-    } else {
-      runId = randomUUID();
-      await args.pool.query(
-        `INSERT INTO orch.runs (
-           id, organization_id, agent_name, trigger_event_id, graph_key,
-           graph_version, status, langgraph_thread_id, input_ref, started_at
-         ) VALUES ($1,$2,$3,$4,$5,$6,'RUNNING',$7,$8::jsonb, now())`,
-        [
-          runId,
-          args.organizationId,
-          args.agentName,
-          args.triggerEventId,
-          args.graphKey,
-          args.graphVersion ?? null,
-          args.langgraphThreadId,
-          inputJson,
-        ],
-      );
-      console.log(
-        `[orch_runs] STARTED run=${runId} agent=${args.agentName} graph=${args.graphKey} event=${args.triggerEventId}`,
-      );
+      return { kind: row.inserted ? 'started' : 'restarted', runId: row.id };
     }
+
+    // No row back: the conflict target exists and its status was not one we
+    // take over. Read it so the caller can say why the delivery is declined.
+    const { rows: settled } = await args.pool.query<{ id: string; status: string }>(
+      `SELECT id::text AS id, status FROM orch.runs
+        WHERE trigger_event_id = $1 AND graph_key = $2`,
+      [args.triggerEventId, args.graphKey],
+    );
+    const done = settled[0];
+    if (done) return { kind: 'settled', runId: done.id, status: done.status };
+    return { kind: 'unrecorded' };
   } catch (err) {
     console.warn(
-      `[orch_runs] start failed (fail-open):`,
+      `[orch_runs] claim failed (fail-open):`,
       err instanceof Error ? err.message : err,
     );
+    return { kind: 'unrecorded' };
   }
+}
 
-  // THE DUAL WRITE IS GONE.
-  //
-  // Every run used to be written twice: to orch.runs above, and to agent_runs
-  // here. This half was wrapped in try/catch and logged "(fail-open)", so a
-  // failure was invisible — and it had already lost rows. 9,965 runs in
-  // orch.runs against 9,929 in agent_runs, with nothing to say which 36 were
-  // missing or when.
-  //
-  // Of the six columns agent_runs had that orch.runs did not, five carried
-  // nothing: cost was `{}` on every row, trigger_type the constant 'EVENT',
-  // triggered_by always null, thread_id derived from two other columns, and
-  // updated_at bookkeeping. Only agent_definition_id was real, and
-  // V20260909.30 moved it onto orch.runs — which is why `defId` is still
-  // resolved above and written there.
-
-  return runId;
+/**
+ * The old entry point: claim, and answer with the run id or null. Kept for
+ * callers that only want the id; the runner uses `claimRun` because it has
+ * to know when NOT to run.
+ */
+export async function startAgentRun(
+  args: Parameters<typeof claimRun>[0],
+): Promise<string | null> {
+  const claim = await claimRun(args);
+  return claim.kind === 'unrecorded' ? null : claim.runId;
 }
 
 export async function finishAgentRun(args: {
   pool: Pool;
   organizationId: string;
   runId: string;
-  status: Extract<
-    AgentRunStatus,
-    'COMPLETED' | 'FAILED' | 'WAITING_APPROVAL' | 'CANCELLED'
-  >;
+  status: Extract<AgentRunStatus, 'COMPLETED' | 'FAILED' | 'PARKED' | 'CANCELLED'>;
   error?: { message: string; errorClass?: string };
 }): Promise<void> {
   const errJson = args.error

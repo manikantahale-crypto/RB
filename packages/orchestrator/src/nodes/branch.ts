@@ -25,7 +25,6 @@
  *   bands, since a custom set need not contain that name.
  * - onRejectEvent: optional event type emitted when the lowest band is taken
  */
-import { v4 as uuidv4 } from 'uuid';
 import { ClassifiedError } from '../workflow/errors.js';
 import type { NodeImpl } from './types.js';
 
@@ -77,7 +76,6 @@ export const orchBranchDecision: NodeImpl = async (state, ctx) => {
 
   if (branch_key === lowest && typeof ctx.config.onRejectEvent === 'string') {
     ctx.events.emit({
-      event_id: uuidv4(),
       event_type: String(ctx.config.onRejectEvent),
       aggregate_id: trigger.aggregate_id,
       aggregate_type: trigger.aggregate_type ?? 'requirement',

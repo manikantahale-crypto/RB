@@ -66,7 +66,7 @@ async function waitTrace(eventId: string) {
         String(r.trigger_event_id) === eventId &&
         (r.status === 'COMPLETED' ||
           r.status === 'FAILED' ||
-          r.status === 'WAITING_APPROVAL'),
+          r.status === 'PARKED'),
     );
     const caused = (last.outbox ?? []).some(
       (e: any) =>
