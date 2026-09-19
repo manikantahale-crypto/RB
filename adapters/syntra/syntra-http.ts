@@ -34,6 +34,7 @@ export type SyntraResponse = Record<string, any>;
 export async function postSyntra(
   path: string,
   body?: Record<string, unknown>,
+  opts: { signal?: AbortSignal } = {},
 ): Promise<SyntraResponse> {
   const mode = stubMode();
   if (mode === 'force') {
@@ -61,8 +62,14 @@ export async function postSyntra(
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: body ? JSON.stringify(body) : undefined,
+      // The node's time limit, from the runtime. Without it a timed-out node
+      // would keep SYNTRA working on a request nobody is waiting for.
+      signal: opts.signal,
     });
   } catch (err) {
+    // The runtime gave up on this node. That is not SYNTRA being unreachable
+    // and must never be stubbed into a success.
+    if (opts.signal?.aborted) throw err;
     // fetch only rejects when the request never got an answer.
     if (mode === 'off') throw err;
     console.warn(

@@ -222,7 +222,7 @@ export const resumeProcess = defineNode({
     const r = await postSyntra(`/internal/resumes/${resumeId}/process`, {
       candidateId,
       ...optionsFor(config),
-    });
+    }, { signal: ctx.signal });
 
     ctx.emit({
       event_type: "syntra.profile.prepared",

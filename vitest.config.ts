@@ -43,6 +43,10 @@ export default defineConfig({
       "node-api/tests/**",
       // Tests, but Playwright's. See above.
       "**/e2e/**",
+      // Other checkouts of this repository, kept beside it for reference and
+      // never committed. Their tests need their own node_modules.
+      "old_db_repo/**",
+      "orch_old-db/**",
     ],
   },
 });

@@ -174,7 +174,7 @@ export const shortlistNotify = defineNode({
       requirement_id: jobId,
       match_job_id: matchJobId,
       result_count: input.result_count,
-    });
+    }, { signal: ctx.signal });
 
     return {
       jobId,

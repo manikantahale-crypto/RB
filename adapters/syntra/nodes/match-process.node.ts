@@ -256,7 +256,7 @@ export const matchProcess = defineNode({
       resumeId: input.resumeId,
       candidateId,
       ...optionsFor(config),
-    });
+    }, { signal: ctx.signal });
 
     // Prefer SYNTRA's score; fall back to whatever the producer carried in.
     const skillMatchScore =

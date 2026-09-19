@@ -28,6 +28,12 @@ import { handlePlatformDispatchEvent } from "./workers/dispatch-handlers.js";
 import { ensureJobPinTable } from "./version-pin.js";
 import { ensureIngressEventSchemas } from "./ensure-event-schemas.js";
 import { ensureFailedWorkflowsTable } from "@tekisho/orchestrator/src/workflow/failed-workflows.js";
+import {
+  staleRunSettings,
+  startStaleRunSweeper,
+} from "@tekisho/orchestrator/src/workflow/stale-runs.js";
+import { orchStory } from "@tekisho/orchestrator/src/observability/story-log.js";
+import { announceRunFailed } from "@tekisho/orchestrator/src/workflow/announce-failure.js";
 import { runWorkflowWithOrgContext } from "./run-with-org.js";
 import { composeNodeRegistry, describeNodeRegistry } from "./node-registry.js";
 
@@ -126,6 +132,52 @@ async function bootstrapPgBoss(): Promise<void> {
     ensureEventBindingsSchema(pool),
   );
   const runner = new WorkflowRunner(compiler, pool);
+
+  // Runs whose worker died stop beating (orch.runs.heartbeat_at, written by
+  // the compiler while a node runs). This fails them after a silence, so the
+  // runs screen says "abandoned" rather than "in progress" for ever. First
+  // sweep is immediate: a restart after a crash is when there is one to find.
+  const stale = staleRunSettings(process.env);
+  const staleSweeper = startStaleRunSweeper({
+    db: pool,
+    ...stale,
+    onSwept: (runs) => {
+      for (const r of runs) {
+        orchStory(
+          "SWEEP",
+          `${r.graph_key}  run=${r.id}  silent since ${r.silent_since} — FAILED (stale)`,
+        );
+        // A swept run is a lost run: announce it like any other, so the
+        // retry workflow can decide. Needs the trigger and the correlation;
+        // a row without them (a manual run) is failed and left there.
+        if (r.trigger_event_id && r.correlation_id) {
+          void announceRunFailed(pool, {
+            runId: r.id,
+            organizationId: r.organization_id,
+            graphKey: r.graph_key,
+            correlationId: r.correlation_id,
+            triggerEventId: r.trigger_event_id,
+            errorClass: "transient",
+            errorMessage: `STALE_RUN: no heartbeat since ${r.silent_since}`,
+            failedNode: null,
+          }).catch((err) =>
+            console.warn(
+              `[Sweeper] could not announce swept run ${r.id}:`,
+              err instanceof Error ? err.message : err,
+            ),
+          );
+        }
+      }
+    },
+    onError: (err) =>
+      console.warn(
+        "[Sweeper] stale-run sweep failed:",
+        err instanceof Error ? err.message : err,
+      ),
+  });
+  console.log(
+    `[Sweeper] stale runs failed after ${stale.staleAfterMs}ms of silence, checked every ${stale.sweepEveryMs}ms`,
+  );
 
   await startIngressRouter({ boss, compiler, pool });
   await startModuleWorkers({ boss, pool, compiler, runner });
@@ -284,6 +336,7 @@ async function bootstrapPgBoss(): Promise<void> {
     console.log("\nShutting down dispatcher...");
     clearInterval(handlingRefresh);
     clearInterval(routingRefresh);
+    staleSweeper.stop();
     await stopOutboxRelay();
     await boss.stop();
     await pool.end();

@@ -247,7 +247,9 @@ export const jdProcess = defineNode({
     const jobId = input.jobId ?? input.requirement_id!;
 
     ctx.logger.info("calling Syntra JD process", { jobId, orgId: ctx.orgId });
-    const r = await postSyntra(`/internal/jobs/${jobId}/process`, optionsFor(config));
+    const r = await postSyntra(`/internal/jobs/${jobId}/process`, optionsFor(config), {
+      signal: ctx.signal,
+    });
 
     const stubbed = r.stub === true;
     const parserVersion = stubbed ? "orch.stub.v1" : "syntra";

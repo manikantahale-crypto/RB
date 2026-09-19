@@ -96,7 +96,14 @@ export const benchAlert = defineNode({
   },
 
   execution: {
-    timeoutMs: 60_000,
+    // Measured, not guessed. The endpoint runs the whole matching funnel
+    // inline — vector shortlist, skill floor, then LLM scoring per open
+    // requirement — and on 2026-09-18 a real candidate took over 240 s
+    // (ref/SYNTRA_Onboarding.md, stage 4). 60 s was the number written before
+    // anyone timed it, and the runtime now enforces this field, so a wrong
+    // one fails the step every time. The fix that brings this down is in
+    // SYNTRA: score asynchronously and answer with the shortlist.
+    timeoutMs: 300_000,
     retry: { limit: 2, backoff: "exponential", baseMs: 2_000 },
     classifyError: classifySyntraError,
     locks: [],
@@ -149,7 +156,7 @@ export const benchAlert = defineNode({
     const r = await postSyntra(`/internal/candidates/${candidateId}/bench-alert`, {
       candidateId,
       candidate_profile_id: input.candidate_profile_id,
-    });
+    }, { signal: ctx.signal });
 
     const jobId = (r.jobId ?? r.requirement_id ?? null) as string | null;
 

@@ -231,7 +231,7 @@ export const runRetry = defineNode({
       agent_run_id: agentRunId,
       error_code: input.error_code,
       failed_node: input.failed_node,
-    });
+    }, { signal: ctx.signal });
 
     return {
       agentRunId,

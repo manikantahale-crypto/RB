@@ -195,7 +195,7 @@ export const continuousMatch = defineNode({
     const r = await postSyntra(`/internal/jobs/${jobId}/continuous-match`, {
       jobId,
       requirement_id: jobId,
-    });
+    }, { signal: ctx.signal });
 
     const matchJobId = String(r.match_job_id ?? crypto.randomUUID());
     const resultCount = Number(r.result_count ?? 0);

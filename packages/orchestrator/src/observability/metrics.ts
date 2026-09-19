@@ -6,7 +6,14 @@
 
 import { orchStory } from './story-log.js';
 
-export type MetricStatus = 'ok' | 'error' | 'soft_error' | 'interrupted' | 'policy_denied';
+export type MetricStatus =
+  | 'ok'
+  | 'error'
+  | 'soft_error'
+  | 'interrupted'
+  | 'policy_denied'
+  /** The node's declared time ran out (node-timeout.ts). Retried as transient. */
+  | 'timeout';
 
 export type NodeMetric = {
   type: 'orch.node';

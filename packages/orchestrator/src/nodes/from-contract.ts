@@ -18,7 +18,6 @@
  * - A node returning something its own contract does not describe fails too.
  *   Better a loud failure than a registry row that quietly lies.
  */
-import { v4 as uuidv4 } from 'uuid';
 import type { AnyNodeContract } from '@tekisho/node-contract';
 import type { NodeCtx, NodeImpl } from './types.js';
 import { claimExecution, isDeduplicable } from './idempotency.js';
@@ -26,7 +25,7 @@ import { pgDedupeStore } from './idempotency-store.js';
 
 /** Turn a contract into something the graph compiler can run. */
 export function toNodeImpl(contract: AnyNodeContract): NodeImpl {
-  return async (state, ctx) => {
+  const impl: NodeImpl = async (state, ctx) => {
     const trigger = state.trigger_event;
     if (!trigger) {
       throw new Error(
@@ -37,10 +36,11 @@ export function toNodeImpl(contract: AnyNodeContract): NodeImpl {
     const input = parseOrThrow(contract.key, 'input', contract.input, trigger.payload ?? {});
     const config = parseOrThrow(contract.key, 'config', contract.config, ctx.config ?? {});
 
-    // The node names an event; the runtime builds the envelope around it.
+    // The node names an event; the runtime builds the envelope around it —
+    // including the id, which is derived from run + step + type + position
+    // (ctx.ts) so a re-run step emits the same event rather than a second.
     const emit = (event: { event_type: string; payload: Record<string, unknown> }) => {
       ctx.events.emit({
-        event_id: uuidv4(),
         event_type: event.event_type,
         aggregate_id: trigger.aggregate_id,
         aggregate_type: trigger.aggregate_type,
@@ -86,10 +86,13 @@ export function toNodeImpl(contract: AnyNodeContract): NodeImpl {
 
     let output: unknown;
     try {
-      output = await contract.run(
-        { orgId: ctx.orgId, logger: ctx.logger, emit },
-        input,
-        config,
+      output = await untilAborted(
+        contract.run(
+          { orgId: ctx.orgId, logger: ctx.logger, emit, signal: ctx.signal },
+          input,
+          config,
+        ),
+        ctx.signal,
       );
     } catch (err) {
       /**
@@ -97,6 +100,11 @@ export function toNodeImpl(contract: AnyNodeContract): NodeImpl {
        * Left in place, the key would be dead for the rest of the flow and the
        * step would never run — the silent omission, which is the one outcome
        * worse than doing the work twice.
+       *
+       * This includes a TIMEOUT. The runtime stops waiting and aborts the
+       * signal; `untilAborted` rejects here at once, the claim is released,
+       * and the retry pg-boss schedules can actually run the step instead of
+       * finding it "in flight" for the fifteen-minute stale window.
        */
       await releaseQuietly(dedupe, contract, ctx, trigger);
       throw err;
@@ -115,11 +123,57 @@ export function toNodeImpl(contract: AnyNodeContract): NodeImpl {
      * landing them together would have made a behaviour change out of what is
      * currently an addition.
      */
+    /**
+     * A control node chooses a path by writing `branch_key`; the compiler's
+     * conditional edges read it from the state. Until now the bridge dropped
+     * it, which is why the two platform control nodes stayed engine
+     * functions (adapters/index.ts). Carried only when the DECLARED output
+     * has it: a node that does not name an arm cannot steer the run by
+     * accident.
+     */
+    const branchKey =
+      checked && typeof checked === 'object' && typeof checked.branch_key === 'string'
+        ? (checked.branch_key as string)
+        : undefined;
+
     return {
       result: `${contract.key}: ${summarize(checked)}`,
       steps: { [ctx.nodeId]: checked },
+      ...(branchKey !== undefined ? { branch_key: branchKey } : {}),
     };
   };
+
+  // What the contract declared about running itself, where the compiler can
+  // read it without knowing what a contract is.
+  // Optional-chained for the tests that hand this a contract-shaped stub.
+  const declaredTimeout = contract.execution?.timeoutMs;
+  if (typeof declaredTimeout === 'number') {
+    impl.execution = { timeoutMs: declaredTimeout };
+  }
+  return impl;
+}
+
+/**
+ * Settle with the work, or reject the moment the signal aborts — whichever
+ * is first. A node that ignores its signal keeps running in the background;
+ * this makes sure nothing here waits for it.
+ */
+function untilAborted<T>(work: Promise<T>, signal: AbortSignal | undefined): Promise<T> {
+  if (!signal) return work;
+  if (signal.aborted) return Promise.reject(abortReason(signal));
+  return new Promise<T>((resolve, reject) => {
+    const onAbort = () => reject(abortReason(signal));
+    signal.addEventListener('abort', onAbort, { once: true });
+    work.then(resolve, reject).finally(() =>
+      signal.removeEventListener('abort', onAbort),
+    );
+  });
+}
+
+function abortReason(signal: AbortSignal): unknown {
+  return signal.reason instanceof Error
+    ? signal.reason
+    : new Error(`aborted: ${String(signal.reason ?? 'no reason given')}`);
 }
 
 /* ─────────────────────── the duplicate-work guard ────────────────────── */

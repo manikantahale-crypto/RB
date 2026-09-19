@@ -11,8 +11,17 @@ export type NodeDb = {
   withOrg: <T>(fn: (client: PoolClient) => Promise<T>) => Promise<T>;
 };
 
+/**
+ * What a node hands the runtime to publish. The id is optional: left out,
+ * the runtime derives it from the run, the step, the type and the position,
+ * so a re-run step emits the SAME event and the outbox refuses the copy
+ * (workflow/deterministic-id.ts). Supplied, it is used as given — for the
+ * legacy module nodes that still mint their own.
+ */
+export type EmitInput = Omit<EventInput, 'event_id'> & { event_id?: string };
+
 export type NodeEvents = {
-  emit: (event: EventInput) => void;
+  emit: (event: EmitInput) => void;
 };
 
 /**
@@ -30,12 +39,23 @@ export type NodeCtx = {
    * file this step's output in the run context under the right name.
    */
   nodeId: string;
+  /**
+   * The workflow this step is running in. A step that parks the run needs
+   * to say which workflow to resume; nothing else should branch on it.
+   */
+  graphKey?: string;
   config: Record<string, unknown>;
   logger: NodeLogger;
   /** Optional future seam. Do not require for backbone / resume-intake. */
   llm?: LLMClient;
   db: NodeDb;
   events: NodeEvents;
+  /**
+   * Aborted when the node has used up its time (node-timeout.ts). A node
+   * that forwards this to its HTTP call stops promptly; one that ignores it
+   * keeps running in the background and its result is dropped.
+   */
+  signal: AbortSignal;
 };
 
 export type CandidateProfile = {
@@ -82,9 +102,16 @@ export type SyntraGraphState = {
   steps?: Record<string, unknown>;
 };
 
-export type NodeImpl = (
+export type NodeImpl = ((
   state: SyntraGraphState,
   ctx: NodeCtx,
-) => Promise<Partial<SyntraGraphState>>;
+) => Promise<Partial<SyntraGraphState>>) & {
+  /**
+   * What the node declared about running itself — set by the contract bridge,
+   * absent on a legacy engine function. The compiler reads `timeoutMs` here;
+   * a function that declares nothing gets ORCH_NODE_TIMEOUT_MS.
+   */
+  execution?: { timeoutMs: number };
+};
 
 export type NodeFactory = () => NodeImpl;

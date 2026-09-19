@@ -174,7 +174,7 @@ export const duplicateMerge = defineNode({
       decision: input.decision,
       candidate_a: input.candidate_a,
       candidate_b: input.candidate_b,
-    });
+    }, { signal: ctx.signal });
 
     // SYNTRA decides whether the recorded decision authorises a merge. This
     // node does not re-interpret a human's answer.

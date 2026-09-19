@@ -30,6 +30,12 @@ import {
 } from '../observability/story-log.js';
 import { recordAgentStep } from '../workflow/agent-runs.js';
 import { withResolvedInputs } from './resolve-inputs.js';
+import {
+  isNodeTimeout,
+  resolveNodeTimeoutMs,
+  runWithTimeout,
+} from '../workflow/node-timeout.js';
+import { heartbeatIntervalMs, keepAlive } from '../workflow/run-heartbeat.js';
 
 export { validateDefinition, checksumOf, defineGraph } from './recipe.js';
 
@@ -180,6 +186,11 @@ export class GraphCompiler {
                    WHERE schemaname = 'authoring'
                      AND indexname = 'graph_versions_one_live_idx')
                   THEN 'graph_versions_one_live_idx'
+                WHEN NOT EXISTS (
+                  SELECT 1 FROM information_schema.columns
+                   WHERE table_schema = 'orch' AND table_name = 'runs'
+                     AND column_name = 'heartbeat_at')
+                  THEN 'orch.runs.heartbeat_at (V20260909.71)'
                 ELSE NULL
               END AS missing`,
     );
@@ -359,6 +370,18 @@ export class GraphCompiler {
       const agentName =
         (typeof config.agentName === 'string' ? config.agentName : undefined) ??
         graphAgent;
+      /**
+       * THE CONTRACT'S TIME LIMIT, FINALLY READ. Every contract declares
+       * execution.timeoutMs and nothing enforced it; a node that never
+       * returned held its run for the life of the process. Resolved once at
+       * compile time: the step's config may override, a legacy engine
+       * function falls back to ORCH_NODE_TIMEOUT_MS. See node-timeout.ts.
+       */
+      const timeoutMs = resolveNodeTimeoutMs({
+        config,
+        declared: impl.execution?.timeoutMs,
+        env: process.env,
+      });
 
       builder = builder.addNode(node.id, async (state: SyntraGraphState) => {
         const orgId = state.trigger_event?.organization_id ?? '';
@@ -366,12 +389,23 @@ export class GraphCompiler {
           ? `${state.trigger_event.organization_id}:${state.trigger_event.event_id}`
           : undefined;
         const started = Date.now();
-        const { ctx, drainEvents } = createNodeCtx({
-          orgId,
-          config,
-          nodeId: node.id,
-          pool,
+
+        // The run says it is alive for as long as this node is running, so
+        // the stale-run sweeper can tell a slow node from a dead worker.
+        const alive = keepAlive({
+          db: pool,
+          runId: state.agent_run_id,
+          intervalMs: heartbeatIntervalMs(),
+          onError: (err) =>
+            orchStoryDetail(
+              `heartbeat failed for run ${state.agent_run_id}: ${
+                err instanceof Error ? err.message : String(err)
+              }`,
+            ),
         });
+
+        let ctxRef: ReturnType<typeof createNodeCtx> | undefined;
+        const drainEvents = () => ctxRef?.drainEvents() ?? [];
         try {
           const decision = await this.policy.evaluate(agentName, actionClass);
           const gate = applyPolicyGate({
@@ -429,7 +463,21 @@ export class GraphCompiler {
             );
           }
 
-          const patch = await impl(runState, ctx);
+          const patch = await runWithTimeout(
+            (signal) => {
+              ctxRef = createNodeCtx({
+                orgId,
+                config,
+                nodeId: node.id,
+                graphKey: def.graphKey,
+                runKey: threadId,
+                pool,
+                signal,
+              });
+              return impl(runState, ctxRef.ctx);
+            },
+            { timeoutMs, nodeId: node.id, graphKey: def.graphKey },
+          );
           const viaCtx = drainEvents();
           const durationMs = Date.now() - started;
           const payload = patch.trigger_event?.payload as
@@ -493,6 +541,26 @@ export class GraphCompiler {
             });
             throw err;
           }
+          if (isNodeTimeout(err)) {
+            const durationMs = Date.now() - started;
+            recordNodeMetric({
+              graphKey: def.graphKey,
+              nodeId: node.id,
+              impl: node.impl,
+              status: 'timeout',
+              durationMs,
+              errorClass: err.errorClass,
+              threadId,
+            });
+            orchStoryDetail(
+              `out: timed out after ${err.timeoutMs}ms — transient, pg-boss retries`,
+            );
+            await writeStep(state, node.id, node.impl, 'FAILED', durationMs, {
+              errorClass: err.errorClass,
+              timeout_ms: err.timeoutMs,
+            });
+            throw err;
+          }
           const enriched = enrichError(err, {
             nodeId: node.id,
             graphKey: def.graphKey,
@@ -536,6 +604,8 @@ export class GraphCompiler {
             errorClass: enriched.errorClass,
           });
           throw enriched;
+        } finally {
+          alive.stop();
         }
       });
     }

@@ -276,6 +276,13 @@ export interface NodeRunCtx {
   };
   /** Buffered. The runner drains these into the outbox after the node succeeds. */
   readonly emit: (event: EmittedEvent) => void;
+  /**
+   * Aborted when `execution.timeoutMs` has passed. Forward it to every call
+   * that leaves the process (`fetch`, an SDK) so a timed-out node stops
+   * instead of running on in the background. Optional because a test may
+   * hand a node a bare context; a node must treat "absent" as "never aborts".
+   */
+  readonly signal?: AbortSignal;
 }
 
 /* ────────────────────────── the contract itself ──────────────────────── */

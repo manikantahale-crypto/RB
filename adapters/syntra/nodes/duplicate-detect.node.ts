@@ -184,6 +184,7 @@ export const duplicateDetect = defineNode({
     const r = await postSyntra(
       `/internal/candidates/${candidateId}/duplicates/detect`,
       { candidateId, candidate_profile_id: input.candidate_profile_id },
+      { signal: ctx.signal },
     );
 
     const other = (r.candidate_b ?? r.duplicateCandidateId ?? null) as string | null;
