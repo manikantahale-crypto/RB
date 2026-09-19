@@ -14,7 +14,10 @@
  * imports the canvas is not.
  */
 import type { GraphDefinition } from "../api/editor";
-import { ROUTER_DEFINITIONS } from "@tekisho/graph-contract";
+import {
+  ROUTER_DEFINITIONS,
+  resolveSwitchOutputLabels,
+} from "@tekisho/graph-contract";
 
 /**
  * Which edge an insertion is happening on, in DEFINITION space.
@@ -196,6 +199,10 @@ const ROUTER_WORDS: Record<string, { label: string; why: string }> = {
   branch_key: {
     label: "On a confidence score",
     why: "Adds a step that reads a score and decides. You choose the paths and where each one starts.",
+  },
+  switch: {
+    label: "On a rule about the event",
+    why: "Adds a step that reads the event and picks a path by rules you write — is this a requirement, did they say yes. Paths are named by the rules.",
   },
   "result.approved_or_end": {
     label: "On whether it was approved",
@@ -545,4 +552,15 @@ export function readBands(
     { name: "human_review", min: humanMin },
     { name: "reject", min: 0 },
   ];
+}
+
+/**
+ * The arms an `orch.switch` step can produce, from its rules — the switch's
+ * counterpart of `readBands`. Null for any other step.
+ */
+export function readSwitchArms(
+  node: { impl: string; config?: Record<string, unknown> } | undefined,
+): string[] | null {
+  if (!node || node.impl !== "orch.switch") return null;
+  return resolveSwitchOutputLabels(node.config ?? {});
 }

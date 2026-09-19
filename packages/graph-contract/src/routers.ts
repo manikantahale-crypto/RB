@@ -58,6 +58,23 @@ export const ROUTER_DEFINITIONS: readonly RouterDefinition[] = [
     decisionImpl: "orch.branch.decision",
     customOutcomes: true,
   },
+  /**
+   * The same state field, written by a different deciding step.
+   *
+   * `orch.switch` picks an arm by rules over the event's payload rather than
+   * by a score, and its arms are whatever its rules name — so the two here
+   * are only a seed: one arm for the first rule an author writes, and the
+   * arm the step takes when no rule holds. The engine's function is the one
+   * `branch_key` uses; what differs is which step the editor inserts.
+   * Definitions from the old project that pair `orch.switch` with
+   * `router: "branch_key"` still run: both read `state.branch_key`.
+   */
+  {
+    key: "switch",
+    outcomes: ["matched", "default"],
+    decisionImpl: "orch.switch",
+    customOutcomes: true,
+  },
   {
     key: "result.approved_or_end",
     outcomes: ["approved", "rejected"],

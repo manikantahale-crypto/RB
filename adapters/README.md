@@ -40,4 +40,7 @@ file sits where its key says: `syntra.duplicate.detect` →
 - External or financial nodes carry a written justification and are never
   added by generation.
 - May import `@tekisho/node-contract`, `@tekisho/domain`, and
-  `shared/http-contracts`. Nothing else in this repo.
+  `shared/http-contracts`. Nothing else in this repo — except that a
+  `platform/` node may also import `@tekisho/graph-contract`: the shape of a
+  branch is the platform's business, and the editor reads the same package,
+  so a routing rule means one thing on both sides.

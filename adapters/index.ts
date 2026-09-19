@@ -25,6 +25,7 @@ import { duplicateMerge } from "./syntra/nodes/duplicate-merge.node.js";
 import { runRetry } from "./syntra/nodes/run-retry.node.js";
 import { humanGate } from "./platform/nodes/human-gate.node.js";
 import { branchDecision } from "./platform/nodes/branch-decision.node.js";
+import { orchSwitch } from "./platform/nodes/orch-switch.node.js";
 
 /** Contracts the worker composes into the runtime. These RUN. */
 export const nodeContracts = [
@@ -37,6 +38,12 @@ export const nodeContracts = [
   shortlistNotify,
   duplicateMerge,
   runRetry,
+  /**
+   * The first control node to run from a contract. The bridge now carries a
+   * declared `branch_key` back to the graph state, which is what kept the
+   * two below out of this list.
+   */
+  orchSwitch,
 ];
 
 /**
@@ -61,8 +68,11 @@ export const nodeContracts = [
  * rather than `'contract'` so the screens can say so rather than imply a
  * guarantee that is not there.
  *
- * Temporary. When outcomes become part of the node contract, the bridge can
- * carry control flow and both of these move up into `nodeContracts`.
+ * Half of that is now done: the bridge carries `branch_key` (see
+ * `orch.switch` above). What still keeps `orch.branch.decision` here is its
+ * optional `onRejectEvent`, which publishes an event its `emits: []` does not
+ * declare; `human.gate` parks a run by calling `interrupt()`, which no
+ * contract can express yet.
  */
 export const declaredNodes = [humanGate, branchDecision];
 

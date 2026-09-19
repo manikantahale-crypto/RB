@@ -8,7 +8,7 @@
  * registers both the edge and the arms, so both fire.
  */
 import type { GraphDefinition, RegistryNode } from "../api/editor";
-import { readBands } from "./graph-edit";
+import { readBands, readSwitchArms } from "./graph-edit";
 
 export type Finding = {
   level: "error" | "warning" | "ok";
@@ -99,13 +99,24 @@ export function validate(
   // runtime matches on the name the deciding step produced, so a path whose
   // name is not among that step's outcomes is dead. No error, no failed run.
   const deadArms: string[] = [];
+  // The reverse for a switch: a rule that names a path with no arm. The run
+  // reaches the fork, the router answers a name the map does not have, and
+  // the workflow fails there — after the rule held.
+  const armless: string[] = [];
   for (const ce of def.conditionalEdges ?? []) {
     const node = def.nodes.find((n) => n.id === ce.from);
     const bands = readBands(node);
-    if (!bands) continue; // not a score decision — its names are fixed elsewhere
-    const produced = new Set(bands.map((b) => b.name));
+    const switchArms = readSwitchArms(node);
+    const producedNames = bands ? bands.map((b) => b.name) : switchArms;
+    if (!producedNames) continue; // its names are fixed elsewhere
+    const produced = new Set(producedNames);
     for (const label of Object.keys(ce.map)) {
       if (!produced.has(label)) deadArms.push(`${ce.from} –${label}→`);
+    }
+    if (switchArms) {
+      for (const name of switchArms) {
+        if (!(name in ce.map)) armless.push(`${ce.from} → ${name}`);
+      }
     }
   }
   if (deadArms.length > 0) {
@@ -113,6 +124,13 @@ export function validate(
       level: "error",
       text: `${deadArms.length} path${deadArms.length === 1 ? "" : "s"} nothing can ever take`,
       detail: `${deadArms.join(", ")} — the step never returns that name, so the path is dead`,
+    });
+  }
+  if (armless.length > 0) {
+    findings.push({
+      level: "error",
+      text: `${armless.length} rule${armless.length === 1 ? "" : "s"} naming a path that does not exist`,
+      detail: `${armless.join(", ")} — add the arm, or change the rule's path`,
     });
   }
 

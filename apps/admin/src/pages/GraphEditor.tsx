@@ -34,6 +34,7 @@ import "@xyflow/react/dist/style.css";
 import dagre from "dagre";
 import { token } from "../lib/tokens.js";
 import { NodeTestPanel } from "./node-test-panel";
+import { SwitchRulesField } from "../components/SwitchRulesField";
 import {
   GoLiveChecksRail,
   InsertableEdge,
@@ -1444,15 +1445,29 @@ export function GraphEditorPage() {
                       </p>
                     ) : (
                       <div className="ge-form">
-                        {configFields.map(([name, schema]) => (
-                          <FormField
-                            key={name}
-                            name={name}
-                            schema={schema}
-                            value={selectedNode.config?.[name]}
-                            onChange={(v) => setConfigValue(name, v)}
-                          />
-                        ))}
+                        {configFields.map(([name, schema]) =>
+                          selectedNode.impl === "orch.switch" && name === "rules" ? (
+                            // A rule is not a comma-separated list; it gets
+                            // its own control. Same config key, same shape.
+                            <div className="ge-field" key={name}>
+                              <div className="ge-field-head">
+                                <label className="ge-field-label">rules</label>
+                              </div>
+                              <SwitchRulesField
+                                rules={selectedNode.config?.rules}
+                                onChange={(v) => setConfigValue(name, v)}
+                              />
+                            </div>
+                          ) : (
+                            <FormField
+                              key={name}
+                              name={name}
+                              schema={schema}
+                              value={selectedNode.config?.[name]}
+                              onChange={(v) => setConfigValue(name, v)}
+                            />
+                          ),
+                        )}
                       </div>
                     )}
 

@@ -50,6 +50,7 @@ export const DEFAULT_IMPL_ACTION_CLASS: Record<string, ActionClass> = {
   'orbit.activity.note': 'INTERNAL_WRITE',
   'orbit.route.decision': 'CONTROL',
   'orch.branch.decision': 'CONTROL',
+  'orch.switch': 'CONTROL',
   'human.gate': 'CONTROL',
 };
 

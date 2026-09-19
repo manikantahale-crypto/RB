@@ -31,6 +31,7 @@ export const HARD_FILTER_KEYS = [
  */
 export const ALLOWED_ROUTER_KEYS = [
   "branch_key",
+  "switch",
   "result.approved_or_end",
   "result.continue_or_gate",
   "result.has_duplicate_or_end",

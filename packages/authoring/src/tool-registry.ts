@@ -254,6 +254,22 @@ export const TOOL_CATALOG: readonly ToolCatalogEntry[] = [
     triggeredBy: "any step that produced a score",
   },
   {
+    key: "orch.switch",
+    description:
+      "Rule-driven branch: reads the event's payload and sets branch_key to the first rule's output that holds, " +
+      "else config.defaultOutput. Presets relay.email.route (path_jd | path_default) and relay.consent " +
+      "(path_a_yes | path_c_no | path_b_timeout | path_b_waiting), or config.rules of your own. " +
+      "Wire graph.conditionalEdges from this node with router \"switch\" (or \"branch_key\").",
+    input: {
+      "<any payload field>": "whatever the rules name — a missing field simply does not hold",
+    },
+    output: {
+      event: "none",
+      shape: "state.branch_key = the arm taken; matched_rule; preset",
+    },
+    triggeredBy: "any event whose payload carries something to decide on",
+  },
+  {
     key: "orbit.lifecycle.transition",
     description:
       "ORBIT: move a candidate across bench lifecycle states " +

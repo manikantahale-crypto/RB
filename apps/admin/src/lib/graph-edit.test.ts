@@ -466,13 +466,16 @@ describe("readBands", () => {
   });
 });
 
-describe("only a score branch may name its own paths", () => {
-  it("is open for the score decision and closed for the result routers", () => {
+describe("only a deciding step may name its own paths", () => {
+  it("is open for the two decision steps and closed for the result routers", () => {
     // A `result.*` router matches the previous step's output text and can
     // return exactly two fixed strings; a renamed arm there is never taken.
-    expect(ROUTERS.find((r) => r.key === "branch_key")!.customOutcomes).toBe(true);
-    for (const r of ROUTERS.filter((r) => r.key !== "branch_key")) {
-      expect(r.customOutcomes).toBe(false);
+    // The score decision takes its bands from config and the switch takes
+    // its arms from its rules, so both are the author's to name.
+    const deciding = new Set(["branch_key", "switch"]);
+    for (const r of ROUTERS) {
+      expect(r.customOutcomes).toBe(deciding.has(r.key));
+      expect(r.decisionImpl === null).toBe(!deciding.has(r.key));
     }
   });
 });

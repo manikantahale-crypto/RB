@@ -132,6 +132,57 @@ describe("validate", () => {
     ).toBe(false);
   });
 
+  /**
+   * relay.intake.workflow v3 as the old project stores it: a switch on the
+   * email's intent, then ASTRA's intake on the JD path.
+   */
+  function relayIntake(): GraphDefinition {
+    return {
+      graphKey: "relay.intake.workflow",
+      nodes: [
+        { id: "route", impl: "orch.switch", config: { preset: "relay.email.route" } },
+        { id: "astra", impl: "astra.requirement.normalize" },
+      ],
+      edges: [
+        ["__start__", "route"],
+        ["astra", "__end__"],
+      ],
+      conditionalEdges: [
+        {
+          from: "route",
+          router: "branch_key",
+          map: { path_jd: "astra", path_default: "__end__" },
+        },
+      ],
+    } as GraphDefinition;
+  }
+  const withSwitch = [...registry, node("orch.switch")];
+
+  it("accepts a switch whose arms are exactly what its rules name", () => {
+    expect(
+      validate(relayIntake(), withSwitch).filter((f) => f.level === "error"),
+    ).toEqual([]);
+  });
+
+  it("catches a switch arm no rule can reach", () => {
+    const def = relayIntake();
+    def.conditionalEdges![0]!.map.path_interview = "__end__";
+    const found = validate(def, withSwitch).filter((f) => f.level === "error");
+    expect(found.some((f) => f.text.includes("nothing can ever take"))).toBe(true);
+    expect(found.some((f) => f.detail?.includes("path_interview"))).toBe(true);
+  });
+
+  it("catches a switch rule naming a path that has no arm", () => {
+    const def = relayIntake();
+    def.nodes[0]!.config = {
+      rules: [{ output: "path_jd", when: { field: "is_jd_intent", op: "true" } }],
+      defaultOutput: "path_other",
+    };
+    const found = validate(def, withSwitch).filter((f) => f.level === "error");
+    expect(found.some((f) => f.text.includes("naming a path that does not exist"))).toBe(true);
+    expect(found.some((f) => f.detail?.includes("path_other"))).toBe(true);
+  });
+
   it("catches a branch with no outcomes", () => {
     const def = astra();
     def.conditionalEdges = [{ from: "branch", router: "branch_key", map: {} }];

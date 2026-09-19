@@ -55,8 +55,21 @@ function hasDuplicateOrEnd(state: SyntraGraphState): string {
   return 'no_duplicate';
 }
 
+/**
+ * orch.switch — the same field as `branch_key`, written by a rule-driven step.
+ *
+ * The step always writes it (a switch with no matching rule still names its
+ * default arm), so the fallback here is only for a state the step never
+ * touched: `default`, the seed arm, rather than `reject`, which a switch
+ * need not have.
+ */
+function switchRouter(state: SyntraGraphState): string {
+  return String(state.branch_key ?? 'default');
+}
+
 export const ROUTER_REGISTRY: Record<string, RouterFn> = {
   branch_key: branchKeyRouter,
+  switch: switchRouter,
   'result.approved_or_end': approvedOrEnd,
   'result.continue_or_gate': continueOrGate,
   'result.has_duplicate_or_end': hasDuplicateOrEnd,

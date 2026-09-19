@@ -241,6 +241,24 @@ const NODE_COPY_BY_TOOL: Record<ToolKey, NodeCopy> = {
       },
     ],
   },
+  "orch.switch": {
+    title: "Route by a rule",
+    kicker: "Automatic step",
+    why: "Not every event needs the same handling. This step reads what the event says — is this email a requirement, did the candidate say yes — and sends the run down the matching path.",
+    produces: "The name of the path taken, so the next step is never a guess.",
+    outcomes: [
+      {
+        tone: "positive",
+        label: "A rule matched",
+        text: "The first rule that holds names the path; the workflow continues there.",
+      },
+      {
+        tone: "negative",
+        label: "Nothing matched",
+        text: "The default path is taken — often the end of the run.",
+      },
+    ],
+  },
   "human.gate": {
     title: "Human review",
     kicker: "Needs a person",
