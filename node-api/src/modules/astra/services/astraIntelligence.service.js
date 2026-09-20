@@ -1,4 +1,5 @@
-const { complete } = require("../../../core/aiClient");
+const { completeWithFallback } = require("../../../core/aiClient");
+const { safeJsonParse } = require("../../../utils/jsonParser");
 const astraService = require("./astra.service");
 const log = require("../../../utils/logger");
 
@@ -304,18 +305,41 @@ async function enrichRequirement(requirement = {}) {
   if (rawText) {
     try {
       const prompt = `JOB REQUIREMENT TEXT:\n${rawText.slice(0, 12000)}\n\nExtract and return the JSON object now:`;
-      const aiResponse = await complete(prompt, {
+      const { content: aiResponse, provider } = await completeWithFallback(prompt, {
         system: EXTRACTION_SYSTEM_PROMPT,
         modelKey: "reason",
         temperature: 0.1,
       });
-
-      const cleaned = stripCodeFences(aiResponse || "");
-      if (cleaned) {
-        parsedAi = JSON.parse(cleaned);
-      }
+      parsedAi = safeJsonParse(aiResponse || "");
+      log.info(`[ASTRA Intelligence] AI extraction ok (provider=${provider})`);
     } catch (err) {
-      log.warn(`[ASTRA Intelligence] AI extraction parsing warning: ${err.message}. Proceeding with deterministic normalization fallback.`);
+      /**
+       * THIS USED TO BE A WARNING AND A SUCCESS.
+       *
+       * The AI call failed — on this project, 1,482 times with OpenRouter 402
+       * — and the code "proceeded with deterministic normalization": a
+       * template summary, primary_role "other", required_skills [], and the
+       * extract stage marked SUCCEEDED. 2,818 of 3,415 processed requirements
+       * on 2026-09-20 have no skills for exactly this reason, and tier 2 of
+       * matching scores every candidate 0 against them
+       * (ref/SYNTRA_Matching_Study.md §2, mechanism 2).
+       *
+       * A requirement that already carries skills (the sender gave them, or a
+       * previous parse did) can take the deterministic path — nothing is
+       * lost. One that does not cannot be called processed without them, so
+       * the failure is raised: the worker marks the extract failed and
+       * pg-boss retries it, which, with the provider chain, is when it
+       * succeeds.
+       */
+      const alreadyHasSkills =
+        normalizeSkillsArray(requirement.required_skills || requirement.skills || []).length > 0;
+      if (!alreadyHasSkills) {
+        throw new Error(
+          `AI extraction failed and the requirement has no skills to fall back on — ` +
+            `not recording it as processed. Cause: ${err.message}`,
+        );
+      }
+      log.warn(`[ASTRA Intelligence] AI extraction failed (${err.message}); the requirement already carries skills, proceeding deterministically.`);
     }
   }
 

@@ -127,6 +127,8 @@ async function handleJdUploaded(job, options = {}) {
       summary: summary,
       skills: Array.from(skillsSet),
       primaryRole: parsedData.title || "other",
+      mandatorySkills: parsedData.mandatory_skills || [],
+      preferredSkills: parsedData.preferred_skills || [],
       summaryHash: newHash,
       embedding: embeddingVector,
       embeddingModel,

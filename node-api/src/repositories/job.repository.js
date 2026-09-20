@@ -84,7 +84,7 @@ async function markProcessing(jobId) {
 
 async function saveAiResult(
   jobId,
-  { summary, skills, primaryRole, summaryHash }
+  { summary, skills, primaryRole, summaryHash, mandatorySkills, preferredSkills }
 ) {
   // One statement became three tables. They go in one transaction because a
   // requirement that says "processed" while its summary is missing is worse
@@ -93,9 +93,11 @@ async function saveAiResult(
     await client.query(
       `UPDATE core.requirements
           SET summary = $2, required_skills = $3::jsonb, primary_role = $4,
+              mandatory_skills = $5::jsonb, preferred_skills = $6::jsonb,
               updated_at = now()
         WHERE id = $1`,
-      [jobId, summary, JSON.stringify(skills || []), primaryRole || "other"],
+      [jobId, summary, JSON.stringify(skills || []), primaryRole || "other",
+       JSON.stringify(mandatorySkills || []), JSON.stringify(preferredSkills || [])],
     );
     await setContentHash(client, {
       subjectType: "requirement", subjectId: jobId, hash: summaryHash,
@@ -109,7 +111,7 @@ async function saveAiResult(
 
 async function saveAiResultAndEmbedding(
   jobId,
-  { summary, skills, primaryRole, summaryHash, embedding, embeddingModel, embeddingVersion }
+  { summary, skills, primaryRole, summaryHash, embedding, embeddingModel, embeddingVersion, mandatorySkills, preferredSkills }
 ) {
   const vectorStr = embedding && Array.isArray(embedding) ? `[${embedding.join(",")}]` : null;
 
@@ -117,9 +119,11 @@ async function saveAiResultAndEmbedding(
     await client.query(
       `UPDATE core.requirements
           SET summary = $2, required_skills = $3::jsonb, primary_role = $4,
+              mandatory_skills = $5::jsonb, preferred_skills = $6::jsonb,
               updated_at = now()
         WHERE id = $1`,
-      [jobId, summary, JSON.stringify(skills || []), primaryRole || "other"],
+      [jobId, summary, JSON.stringify(skills || []), primaryRole || "other",
+       JSON.stringify(mandatorySkills || []), JSON.stringify(preferredSkills || [])],
     );
     await setContentHash(client, {
       subjectType: "requirement", subjectId: jobId, hash: summaryHash,

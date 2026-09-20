@@ -269,7 +269,9 @@ async function updateEnrichedRequirement(jobId, enrichedData = {}, client = null
            remote_policy = COALESCE($9, remote_policy),
            required_skills = $10::jsonb,
            primary_role = $11,
-           summary = $12
+           summary = $12,
+           mandatory_skills = $13::jsonb,
+           preferred_skills = $14::jsonb
      WHERE id = $1
      RETURNING *;
   `;
@@ -287,6 +289,10 @@ async function updateEnrichedRequirement(jobId, enrichedData = {}, client = null
     JSON.stringify(enrichedData.requiredSkills || []),
     enrichedData.primaryRole || "other",
     enrichedData.jdSummary || "",
+    // Extracted since the prompt asked for them; the columns have been on
+    // core.requirements all along (0 of 3,860 rows had either on 2026-09-20).
+    JSON.stringify(enrichedData.parsedData?.mandatorySkills || []),
+    JSON.stringify(enrichedData.parsedData?.preferredSkills || []),
   ];
 
   const { rows } = await dbClient.query(sql, values);

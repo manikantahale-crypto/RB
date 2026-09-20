@@ -65,7 +65,7 @@ async function runForJob(jobId, options = {}) {
       ? options.topN
       : env.MATCH_TOP_N;
 
-  const { finalists, gateCut } = rankCandidates({
+  const { finalists, gateCut, noSkillEvidence } = rankCandidates({
     requiredSkills: job.required_skills,
     candidates: survivors,
     skillFloor,
@@ -75,6 +75,7 @@ async function runForJob(jobId, options = {}) {
   log.info(
     `[funnel] job ${jobId}: pool=${pool.length} tier1=${survivors.length} ` +
       `tier2_finalists=${finalists.length} (gate cut ${gateCut}` +
+      (noSkillEvidence ? ", NO SKILLS ON THE REQUIREMENT — floor not applied, tier-1 order kept" : "") +
       `, floor=${skillFloor}${skillFloor !== env.MATCH_SKILL_FLOOR ? " from caller" : ""}` +
       `, topN=${topN}${topN !== env.MATCH_TOP_N ? " from caller" : ""})` +
       (pool.length === 0
