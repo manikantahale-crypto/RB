@@ -75,10 +75,19 @@ const CORE_RESUMES = `(SELECT r.*,
        ORDER BY x.created_at DESC LIMIT 1
     ) e ON true)`;
 const { match: matchStatus } = require("../constants/statuses");
+/**
+ * Missing since the core rewrite (b965c0e, 2026-09-09): markMatching,
+ * saveScoreResult and markFailed all call setProcessing and nothing imported
+ * it, so every tier-3 save on this branch threw "setProcessing is not
+ * defined" AFTER the match row was updated and BEFORE its processing record
+ * was written. Found on 2026-09-20 by scripts/prove-match-pair.js, the
+ * first thing to run tier 3 end to end here.
+ */
+const { setProcessing } = require("./core-writes");
 
 async function getJobForMatching(jobId) {
   const { rows } = await pool.query(
-    `SELECT id, primary_role, required_skills, processed_at
+    `SELECT id, title, primary_role, required_skills, processed_at
        FROM ${CORE_REQUIREMENTS}
       WHERE id = $1`,
     [jobId]
@@ -96,39 +105,32 @@ async function getResumeForMatching(resumeId) {
   return rows[0] || null;
 }
 
+/**
+ * Tier 1's SQL pool: every processed, current resume in the requirement's
+ * organisation — WITHOUT requiring an embedding. Unioned with the vector
+ * neighbours in tier1Filter.js, then narrowed by role family (roleFit.js).
+ *
+ * This used to prefer resumes whose primary_role equalled the job's and fall
+ * back to everyone, in two queries; production (old_db_repo, 2026-09-18)
+ * collapsed it to one and left the role judgement to roleFit, which reads
+ * titles and names rather than one exact string. The role fields it reads
+ * are selected here. Ported 2026-09-20 (ref/SYNTRA_Matching_Study.md).
+ *
+ * On 2026-09-20, 69 current resumes had skills and no embedding; this query
+ * is how they reach tier 2 at all.
+ */
 async function findCandidatesForJob(jobId) {
-  // Prefer same primary_role; if none, fall back to all processed current resumes
-  // Enforce isolated candidate pool: candidate must be created by the same user as the job.
-  const roleMatched = await pool.query(
-    `SELECT r.id AS resume_id,
-            r.candidate_id,
-            r.primary_role,
-            r.skills,
-            j.id AS job_id,
-            j.primary_role AS job_primary_role,
-            j.required_skills
-       FROM ${CORE_REQUIREMENTS} j
-       JOIN ${CORE_PEOPLE} c
-         ON c.org_id = j.org_id
-       JOIN ${CORE_RESUMES} r
-         ON r.candidate_id = c.id
-        AND r.primary_role = j.primary_role
-        AND r.is_current = true
-        AND r.processed_at IS NOT NULL
-      WHERE j.id = $1
-        AND j.processed_at IS NOT NULL
-        AND j.primary_role IS NOT NULL
-      ORDER BY r.id`,
-    [jobId]
-  );
-  if (roleMatched.rows.length) return roleMatched.rows;
-
   const { rows } = await pool.query(
     `SELECT r.id AS resume_id,
             r.candidate_id,
             r.primary_role,
+            r.primary_role AS resume_primary_role,
             r.skills,
+            r.current_role,
+            c.current_title,
+            c.full_name,
             j.id AS job_id,
+            j.title AS job_title,
             j.primary_role AS job_primary_role,
             j.required_skills
        FROM ${CORE_REQUIREMENTS} j
@@ -146,40 +148,21 @@ async function findCandidatesForJob(jobId) {
   return rows;
 }
 
+/** The mirror for one resume: every processed requirement in its organisation. */
 async function findOpenJobsForResume(resumeId) {
-  const roleMatched = await pool.query(
-    `SELECT j.id AS job_id,
-            j.primary_role,
-            j.required_skills,
-            r.id AS resume_id,
-            r.candidate_id,
-            r.primary_role AS resume_primary_role,
-            r.skills
-       FROM ${CORE_RESUMES} r
-       JOIN ${CORE_PEOPLE} c
-         ON c.id = r.candidate_id
-       JOIN ${CORE_REQUIREMENTS} j
-         ON j.org_id = c.org_id
-        AND j.primary_role = r.primary_role
-        AND j.processed_at IS NOT NULL
-        AND j.primary_role IS NOT NULL
-      WHERE r.id = $1
-        AND r.is_current = true
-        AND r.processed_at IS NOT NULL
-        AND r.primary_role IS NOT NULL
-      ORDER BY j.id`,
-    [resumeId]
-  );
-  if (roleMatched.rows.length) return roleMatched.rows;
-
   const { rows } = await pool.query(
     `SELECT j.id AS job_id,
+            j.title,
+            j.title AS job_title,
             j.primary_role,
             j.required_skills,
             r.id AS resume_id,
             r.candidate_id,
             r.primary_role AS resume_primary_role,
-            r.skills
+            r.skills,
+            r.current_role,
+            c.current_title,
+            c.full_name
        FROM ${CORE_RESUMES} r
        JOIN ${CORE_PEOPLE} c
          ON c.id = r.candidate_id
@@ -535,11 +518,16 @@ async function saveScoreResult(
     breakdown,
     evidence,
     modelName,
+    /** The model's score before any cap, and the word for how `score` was reached (V20260909.74). */
+    llmScore,
+    scoreSource,
   }
 ) {
   const { rows } = await pool.query(
     `UPDATE core.matches
         SET score = $3,
+            llm_score = $15,
+            score_source = $16,
             tier = $4,
             reasoning = $5,
             strengths = $6::jsonb,
@@ -571,6 +559,8 @@ async function saveScoreResult(
       JSON.stringify(evidence || {}),
       matchStatus.COMPLETED,
       modelName || null,
+      llmScore != null ? Number(llmScore) : null,
+      scoreSource || null,
     ]
   );
   if (rows[0]) {
@@ -611,8 +601,11 @@ async function getSummariesForScoring(jobId, resumeId) {
   const { rows } = await pool.query(
     `SELECT j.jd_summary,
             j.score_threshold,
+            j.required_skills,
+            j.mandatory_skills,
             r.resume_summary,
-            r.candidate_id
+            r.candidate_id,
+            r.skills AS resume_skills
        FROM ${CORE_REQUIREMENTS} j
        CROSS JOIN ${CORE_RESUMES} r
       WHERE j.id = $1 AND r.id = $2`,
@@ -659,12 +652,17 @@ async function findTopJobsByVector(resumeId, limit = 50) {
   // Find most similar current/processed job descriptions
   const { rows } = await pool.query(
     `SELECT j.id AS job_id,
+            j.title,
+            j.title AS job_title,
             j.primary_role,
             j.required_skills,
             r.id AS resume_id,
             r.candidate_id,
             r.primary_role AS resume_primary_role,
-            r.skills
+            r.skills,
+            r.current_role,
+            c.current_title,
+            c.full_name
        FROM ${CORE_REQUIREMENTS} j
        JOIN ${CORE_RESUMES} r ON r.id = $2
        JOIN ${CORE_PEOPLE} c ON r.candidate_id = c.id
@@ -698,7 +696,11 @@ async function findTopCandidatesByVector(jobId, limit = 50) {
             r.candidate_id,
             r.primary_role AS resume_primary_role,
             r.skills,
+            r.current_role,
+            c.current_title,
+            c.full_name,
             j.id AS job_id,
+            j.title AS job_title,
             j.primary_role,
             j.required_skills
        FROM ${CORE_RESUMES} r

@@ -91,8 +91,23 @@ router.post("/internal/matches/process", async (req, res) => {
     return res.status(400).json({ status: "failed", error: "jobId and resumeId required" });
   }
   try {
-    await handleMatchRequested({ data: { jobId, resumeId } });
-    res.json({ status: "processed", jobId, resumeId });
+    /**
+     * "processed" used to mean only "the request was handled": with no
+     * shortlist row for the pair, nothing was scored and the answer was
+     * still processed — the August branch report's finding 2.6, "a green
+     * node here is not evidence a match happened". The worker now says
+     * what it scored, and so does this.
+     */
+    const outcome = await handleMatchRequested({ data: { jobId, resumeId } });
+    const status = outcome.scored > 0 ? "processed" : "not_scored";
+    res.status(outcome.scored > 0 || outcome.failed === 0 ? 200 : 502).json({
+      status,
+      jobId,
+      resumeId,
+      scored: outcome.scored,
+      failed: outcome.failed,
+      missing_summary: outcome.missingSummary,
+    });
   } catch (err) {
     log.error(`[internal] match ${jobId}/${resumeId} failed: ${err.message}`);
     res.status(500).json({ status: "failed", jobId, resumeId, error: err.message });
