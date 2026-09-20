@@ -1,9 +1,19 @@
 const matchRepo = require("../../../repositories/match.repository");
 const log = require("../../../utils/logger");
+const { rolesCompatible } = require("./roleFit");
+
+function jobRoleParts(job) {
+  return [job.title, job.primary_role, job.job_title];
+}
+
+function resumeRoleParts(row) {
+  return [row.current_role, row.current_title, row.resume_primary_role, row.primary_role, row.full_name];
+}
 
 /**
- * Tier 1 — SQL role filter (0 LLM).
- * TODO: work-auth / location hard filters when structured fields exist on jobs/resumes.
+ * Tier 1 — vector neighbors, then drop opposite role families (PM vs Finance).
+ * Exact SQL role match is unioned in so a Product Manager like Sofia is not
+ * dropped just because a re-uploaded JD embedding drifted toward finance.
  */
 async function filterCandidatesForJob(jobId) {
   const job = await matchRepo.getJobForMatching(jobId);
@@ -16,7 +26,17 @@ async function filterCandidatesForJob(jobId) {
     return { job, pool: [], survivors: [] };
   }
 
-  const pool = await matchRepo.findTopCandidatesByVector(jobId);
+  const vectorPool = await matchRepo.findTopCandidatesByVector(jobId);
+  const rolePool = await matchRepo.findCandidatesForJob(jobId);
+  const byResume = new Map();
+  for (const row of [...rolePool, ...vectorPool]) {
+    if (row.resume_id && !byResume.has(row.resume_id)) byResume.set(row.resume_id, row);
+  }
+  const pool = [...byResume.values()];
+  const survivors = pool.filter((row) =>
+    rolesCompatible(jobRoleParts(job), resumeRoleParts(row)),
+  );
+
   if (pool.length === 0) {
     const diag = await matchRepo.countMatchPoolDiagnostics(jobId);
     if (diag) {
@@ -26,8 +46,13 @@ async function filterCandidatesForJob(jobId) {
           `job_owner=${diag.job_owner || "null"}`
       );
     }
+  } else if (survivors.length < pool.length) {
+    log.info(
+      `[tier1] job ${jobId}: dropped ${pool.length - survivors.length} role-incompatible candidate(s) (kept ${survivors.length})`,
+    );
   }
-  return { job, pool, survivors: pool };
+
+  return { job, pool, survivors };
 }
 
 async function filterJobsForResume(resumeId) {
@@ -41,8 +66,18 @@ async function filterJobsForResume(resumeId) {
     return { resume, pool: [], survivors: [] };
   }
 
-  const pool = await matchRepo.findTopJobsByVector(resumeId);
-  return { resume, pool, survivors: pool };
+  const vectorPool = await matchRepo.findTopJobsByVector(resumeId);
+  const rolePool = await matchRepo.findOpenJobsForResume(resumeId);
+  const byJob = new Map();
+  for (const row of [...rolePool, ...vectorPool]) {
+    if (row.job_id && !byJob.has(row.job_id)) byJob.set(row.job_id, row);
+  }
+  const pool = [...byJob.values()];
+  const survivors = pool.filter((row) =>
+    rolesCompatible([row.primary_role, row.job_title, row.title], resumeRoleParts({ ...resume, ...row })),
+  );
+
+  return { resume, pool, survivors };
 }
 
 module.exports = { filterCandidatesForJob, filterJobsForResume };

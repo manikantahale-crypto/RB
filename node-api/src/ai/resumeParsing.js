@@ -1,14 +1,15 @@
-const { complete } = require("../core/aiClient");
+const { completeWithFallback } = require("../core/aiClient");
+const { safeJsonParse } = require("../utils/jsonParser");
 const log = require("../utils/logger");
 
 const RESUME_PARSING_PROMPT = `You are an expert US Bench Sales resume parser. Extract structured consultant profile data from the resume text. Return ONLY valid JSON. No markdown. No explanation. No code fences.
 
 Extract these fields:
-- first_name: string
-- last_name: string
-- full_name: string (first_name + last_name)
-- email: string
-- phone: string
+- first_name: string (first name or "")
+- last_name: string (last name or "")
+- full_name: string (first_name + last_name, or "" if not found)
+- email: string (Candidate contact email address explicitly present in resume, or "" if not found. DO NOT guess, fabricate, or hallucinate an email)
+- phone: string (Candidate contact phone number explicitly present in resume, or "" if not found. DO NOT guess, fabricate, or hallucinate a phone number)
 - date_of_birth: string (if present, else "")
 - gender: string (if present, else "")
 - race_ethnicity: string (if present, else "")
@@ -48,8 +49,8 @@ Extract these fields:
 - embedding_text: string (A comprehensive normalized text combining Candidate Title, Core Skills, Total Experience, and Profile Summary suitable for vector embedding retrieval)
 
 Rules:
-1. If a value is not found, return an empty string or empty array.
-2. Do not invent private data like SSN, passport number, DOB, gender, or race.
+1. If a value is not found in the resume, return an empty string or empty array.
+2. DO NOT invent, guess, infer, or fabricate email addresses, phone numbers, full names, SSN, passport numbers, DOB, gender, or race. If email or phone is not explicitly stated in the resume text, return "".
 3. For skills, return a clean array of technical skills.
 4. For location, split into city, state, zip_code, and country if possible.
 5. For visa, normalize common terms: H1B, GC, US Citizen, OPT, CPT, H4 EAD.
@@ -60,12 +61,12 @@ Rules:
 10. Return clean valid JSON only. Do not wrap in \`\`\`json ... \`\`\` blocks.`;
 
 function stripCodeFences(text) {
-  let cleaned = text.trim();
+  let cleaned = (text || "").trim();
   if (cleaned.startsWith("```")) {
     cleaned = cleaned.replace(/^```(?:json)?\s*/i, "");
     cleaned = cleaned.replace(/\s*```$/, "");
   }
-  return cleaned;
+  return cleaned.trim();
 }
 
 function validateResumeSchema(parsed) {
@@ -106,18 +107,18 @@ async function parseResume(resumeText, maxAttempts = 3) {
     }
 
     try {
-      const raw = await complete(userPrompt, { 
-        system: RESUME_PARSING_PROMPT, 
-        modelKey: "reason", 
-        temperature: 0.1 
+      const { content: raw, provider: usedProvider } = await completeWithFallback(userPrompt, {
+        system: RESUME_PARSING_PROMPT,
+        modelKey: "reason",
+        temperature: 0.1,
+        maxTokens: 4096,
       });
 
-      const cleaned = stripCodeFences(raw || "");
       let parsed;
       try {
-        parsed = JSON.parse(cleaned);
+        parsed = safeJsonParse(raw || "");
       } catch (jsonErr) {
-        log.warn(`[AI] Resume parsing attempt ${attempt} returned invalid JSON: ${jsonErr.message}`);
+        log.warn(`[AI] Resume parsing attempt ${attempt} returned invalid JSON from ${usedProvider}: ${jsonErr.message}`);
         correctionInstruction = "Your previous response was not valid JSON. You MUST return ONLY a parseable JSON object with no extra text or markdown formatting.";
         throw new Error(`LLM returned invalid JSON response: ${jsonErr.message}`);
       }
@@ -129,21 +130,14 @@ async function parseResume(resumeText, maxAttempts = 3) {
         throw new Error(`AI response failed schema validation: ${validation.error}`);
       }
 
-      log.info(`[AI] Resume parsing successful on attempt ${attempt}/${maxAttempts} for candidate: ${validation.data.full_name}`);
+      log.info(`[AI] Resume parsing successful on attempt ${attempt}/${maxAttempts} (provider=${usedProvider}) for candidate: ${validation.data.full_name}`);
       return validation.data;
     } catch (err) {
       lastError = err;
       log.warn(`[AI] Resume parsing attempt ${attempt}/${maxAttempts} failed: ${err.message}`);
 
-      // Permanent Auth/Credit errors should fail fast without wasting retries
-      const isAuthOrCreditError = /\b(401|402|403|unauthorized|user not found|insufficient credits|invalid api key)\b/i.test(err.message);
-      if (isAuthOrCreditError) {
-        log.error(`[AI] Permanent AI authentication or configuration error encountered: ${err.message}. Aborting retries.`);
-        break;
-      }
-
       if (attempt < maxAttempts) {
-        const backoffMs = attempt * 1200;
+        const backoffMs = attempt * 1000;
         log.info(`[AI] Waiting ${backoffMs}ms before retry attempt ${attempt + 1}...`);
         await new Promise((resolve) => setTimeout(resolve, backoffMs));
       }

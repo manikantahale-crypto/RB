@@ -75,7 +75,7 @@ function localRequires(file) {
 
 describe("the application still assembles", () => {
   /**
-   * 30s, against a default of 5. This is the only test in the repository that
+   * 90s, against a default of 5. This is the only test in the repository that
    * touches the filesystem in anger — it loads the entire application, which
    * pulls in dotenvx, reads several `.env` files and constructs a pg Pool.
    *
@@ -87,7 +87,9 @@ describe("the application still assembles", () => {
    * every module resolve", and a slow disk is not a broken import. Anything
    * genuinely wrong throws immediately with the missing module named.
    */
-  it("loads app.js, and with it every file it reaches", { timeout: 30_000 }, () => {
+  // Raised from 30 s on 2026-09-20: it crossed 30 s twice more in full runs
+  // that shared the machine with fifty other files, for the reason above.
+  it("loads app.js, and with it every file it reaches", { timeout: 90_000 }, () => {
     // A stale require after a file move throws here, naming the missing module.
     // That is the whole failure mode of a restructure, caught in one line.
     expect(() => require_("./src/app.js")).not.toThrow();

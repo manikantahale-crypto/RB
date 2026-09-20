@@ -1,4 +1,5 @@
-const { complete } = require("../core/aiClient");
+const { completeWithFallback } = require("../core/aiClient");
+const { safeJsonParse } = require("../utils/jsonParser");
 const log = require("../utils/logger");
 
 const JD_PARSING_PROMPT = `You are an expert ATS job description parser.
@@ -88,16 +89,16 @@ async function parseJD({ jdText, spacyOrgs = [], spacyGpes = [], regexVisas = []
     }
 
     try {
-      const raw = await complete(userPrompt, { 
-        system: systemPrompt, 
-        modelKey: "reason", 
-        temperature: 0.1 
+      const { content: raw, provider: usedProvider } = await completeWithFallback(userPrompt, {
+        system: systemPrompt,
+        modelKey: "reason",
+        temperature: 0.1,
+        maxTokens: 4096,
       });
 
-      const cleaned = stripCodeFences(raw || "");
       let parsed;
       try {
-        parsed = JSON.parse(cleaned);
+        parsed = safeJsonParse(raw || "");
       } catch (jsonErr) {
         log.warn(`[AI] JD parsing attempt ${attempt} returned invalid JSON: ${jsonErr.message}`);
         correctionInstruction = "Your previous response was not valid JSON. You MUST return ONLY a parseable JSON object with no extra text or markdown formatting.";
