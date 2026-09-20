@@ -1,20 +1,19 @@
 /**
- * orbit.revenue.arrange — a DECLARATION, not an implementation.
- *
- * The engine runs this node: packages/orchestrator/src/nodes/orbit.ts
- * (orbitRevenueArrange). This file is what `node_registry` and the editor project
- * — input, output, settings, what it publishes — written from that code on
- * 2026-09-20, line by line. Like `orch.branch.decision`, it stays out of
- * `nodeContracts` until the implementation moves in here at stage 5; until
- * then a change to the engine file is a change to this one.
+ * orbit.revenue.arrange
  *
  * How the company earns on a placement — a markup, a fee, a formula — attached to the placement row. Money is described, not moved; the arrangement is a record.
+ *
+ * Ported from the engine function `orbitRevenueArrange` in packages/orchestrator/src/nodes/orbit.ts
+ * on 2026-09-20 — same request, same response fields read, same event
+ * published. That function stays in the engine registry; this contract
+ * overrides it by key when the worker composes the registry, the way the
+ * nine SYNTRA nodes did.
  */
 import { z } from "zod";
 import { defineNode, type NodeRunCtx } from "@tekisho/node-contract";
+import { classifyOrbitError, postOrbit } from "../orbit-http.js";
+import { candidateIdOf, placementIdOf } from "../fields.js";
 
-
-/** orbit.ts:292-330 */
 const Input = z
   .object({
     placement_id: z.string().optional(),
@@ -25,13 +24,15 @@ const Input = z
     notes: z.string().nullable().optional(),
     custom_formula: z.string().nullable().optional(),
     customFormula: z.string().nullable().optional(),
+    organization_id: z.string().optional(),
   })
-  .refine((v) => Boolean(v.placement_id ?? v.placementId), { message: "needs placement_id" });
+  .refine((v) => Boolean(placementIdOf(v)), { message: "needs placement_id" });
 
 const Output = z.object({
   placementId: z.string(),
   arrangementType: z.string(),
   value: z.number(),
+  stubbed: z.boolean(),
 });
 
 const Config = z.object({
@@ -61,11 +62,7 @@ export const revenueArrange = defineNode({
     /** One ORBIT call. UNVERIFIED — not yet timed here. */
     timeoutMs: 30_000,
     retry: { limit: 2, backoff: "exponential", baseMs: 2_000 },
-    classifyError: (e) => {
-      const m = String((e as Error)?.message ?? e);
-      if (/\b(400|404|422)\b|permanent-input|empty|no jobId|not found/i.test(m)) return "permanent_input";
-      return "transient";
-    },
+    classifyError: classifyOrbitError,
     locks: [],
   },
 
@@ -78,19 +75,31 @@ export const revenueArrange = defineNode({
           name: "a markup on a placement",
           input: { placement_id: "5d9e0b6a-0d1c-4f4e-9a3b-2c6d7e8f9a01", arrangement_type: "MARKUP", value: 25 },
           config: {},
-          expectedOutput: { placementId: "5d9e0b6a-0d1c-4f4e-9a3b-2c6d7e8f9a01", arrangementType: "MARKUP", value: 25 },
+          expectedOutput: { placementId: "5d9e0b6a-0d1c-4f4e-9a3b-2c6d7e8f9a01", arrangementType: "MARKUP", value: 25, stubbed: false },
         },
       ],
 
-  /**
-   * Never called. The engine's own function runs this node; this
-   * declaration must not be in `nodeContracts`, and throwing is how that
-   * stays true.
-   */
-  run: async (ctx: NodeRunCtx) => {
-    ctx.logger.error(
-      "orbit.revenue.arrange: declaration only — the live implementation is packages/orchestrator/src/nodes/orbit.ts",
-    );
-    throw new Error("orbit.revenue.arrange is a declaration, not an implementation. It must not be in nodeContracts.");
-  },
+
+run: async (ctx: NodeRunCtx, input) => {
+  const placementId = placementIdOf(input)!;
+  const arrangementType = String(input.arrangement_type ?? input.arrangementType ?? "MARKUP").toUpperCase();
+  const value = Number(input.value ?? 0);
+  ctx.logger.info("calling Orbit revenue arrange", { placementId, arrangementType, orgId: ctx.orgId });
+  const r = await postOrbit(
+    `/internal/orbit/placements/${placementId}/revenue`,
+    {
+      arrangement_type: arrangementType,
+      value,
+      notes: input.notes ?? null,
+      custom_formula: input.custom_formula ?? input.customFormula ?? null,
+      organization_id: input.organization_id ?? ctx.orgId,
+    },
+    { signal: ctx.signal },
+  );
+  ctx.emit({
+    event_type: "orbit.revenue.arranged",
+    payload: { placement_id: placementId, arrangement_type: arrangementType, value, orbit: r },
+  });
+  return { placementId, arrangementType, value, stubbed: r.stub === true };
+},
 });

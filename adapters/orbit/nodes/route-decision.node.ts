@@ -1,31 +1,31 @@
 /**
- * orbit.route.decision — a DECLARATION, not an implementation.
+ * orbit.route.decision
  *
- * The engine runs this node: packages/orchestrator/src/nodes/orbit.ts
- * (orbitRouteDecision). This file is what `node_registry` and the editor project
- * — input, output, settings, what it publishes — written from that code on
- * 2026-09-20, line by line. Like `orch.branch.decision`, it stays out of
- * `nodeContracts` until the implementation moves in here at stage 5; until
- * then a change to the engine file is a change to this one.
+ * After a lifecycle move, which way does the workflow go? placed → the placement path; hold → announce the hold and stop; anything else → the active path. Reads the state the transition produced — from the trigger, or from the transition step through an `inputs` map (branch_key ← transition.branch_key).
  *
- * After a lifecycle move, which way does the workflow go? placed → the placement path; hold → announce the hold and stop; anything else → the active path. Reads the state the transition produced.
+ * Ported from the engine function `orbitRouteDecision` in packages/orchestrator/src/nodes/orbit.ts
+ * on 2026-09-20 — same request, same response fields read, same event
+ * published. That function stays in the engine registry; this contract
+ * overrides it by key when the worker composes the registry, the way the
+ * nine SYNTRA nodes did.
  */
 import { z } from "zod";
 import { defineNode, type NodeRunCtx } from "@tekisho/node-contract";
+import { candidateIdOf } from "../fields.js";
 
-
-/** orbit.ts:416-441 — reads to_state, or the branch_key an earlier step set. */
 const Input = z.object({
   to_state: z.string().optional(),
   toState: z.string().optional(),
+  /** What an earlier step decided, when the definition maps it in. */
   branch_key: z.string().optional(),
   candidate_id: z.string().optional(),
   candidateId: z.string().optional(),
-  note: z.string().optional(),
+  note: z.string().nullable().optional(),
 });
 
 const Output = z.object({
   branch_key: z.enum(["placed", "hold", "active"]),
+  toState: z.string(),
 });
 
 const Config = z.object({
@@ -68,25 +68,42 @@ export const orbitRouteDecision = defineNode({
           name: "PLACED goes down the placement path",
           input: { to_state: "PLACED" },
           config: {},
-          expectedOutput: { branch_key: "placed" },
+          expectedOutput: { branch_key: "placed", toState: "PLACED" },
         },
         {
           name: "HOLD is announced and stops",
           input: { to_state: "HOLD", candidate_id: "21d2cb25-09be-456f-a4b4-9872e485445f", note: "visa pending" },
           config: {},
-          expectedOutput: { branch_key: "hold" },
+          expectedOutput: { branch_key: "hold", toState: "HOLD" },
+        },
+        {
+          name: "an earlier step's branch_key is honoured",
+          input: { branch_key: "placed", candidate_id: "21d2cb25-09be-456f-a4b4-9872e485445f" },
+          config: {},
+          expectedOutput: { branch_key: "placed", toState: "PLACED" },
         },
       ],
 
-  /**
-   * Never called. The engine's own function runs this node; this
-   * declaration must not be in `nodeContracts`, and throwing is how that
-   * stays true.
-   */
-  run: async (ctx: NodeRunCtx) => {
-    ctx.logger.error(
-      "orbit.route.decision: declaration only — the live implementation is packages/orchestrator/src/nodes/orbit.ts",
-    );
-    throw new Error("orbit.route.decision is a declaration, not an implementation. It must not be in nodeContracts.");
-  },
+
+run: async (ctx: NodeRunCtx, input) => {
+  const toState = String(input.to_state ?? input.toState ?? input.branch_key ?? "").toUpperCase();
+  const branch_key =
+    toState === "PLACED" || input.branch_key === "placed"
+      ? ("placed" as const)
+      : toState === "HOLD" || toState === "IGNORE"
+        ? ("hold" as const)
+        : ("active" as const);
+
+  if (branch_key === "hold") {
+    ctx.emit({
+      event_type: "orbit.bench.hold",
+      payload: {
+        candidate_id: candidateIdOf(input) ?? null,
+        to_state: toState || "HOLD",
+        reason: input.note ?? "lifecycle_hold",
+      },
+    });
+  }
+  return { branch_key, toState: branch_key === "placed" ? "PLACED" : toState || "HOLD" };
+},
 });

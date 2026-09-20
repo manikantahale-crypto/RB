@@ -1,20 +1,20 @@
 /**
- * astra.requirement.intake — a DECLARATION, not an implementation.
+ * astra.requirement.intake
  *
- * The engine runs this node: packages/orchestrator/src/nodes/astra.ts
- * (astraRequirementIntake). This file is what `node_registry` and the editor project
- * — input, output, settings, what it publishes — written from that code on
- * 2026-09-20, line by line. Like `orch.branch.decision`, it stays out of
- * `nodeContracts` until the implementation moves in here at stage 5; until
- * then a change to the engine file is a change to this one.
+ * An email arrives as a requirement. The body is the JD; ASTRA's intake parses it into a requirement row and answers with its id. The email body is a source document and is not stored on the run.
  *
- * An email arrives as a requirement. The body is the JD; SYNTRA's ASTRA intake parses it into a requirement row and answers with its id. The email body is a source document and is not stored on the run.
+ * Ported from the engine function `astraRequirementIntake` in packages/orchestrator/src/nodes/astra.ts
+ * on 2026-09-20 — same request, same response fields read, same event
+ * published. That function stays in the engine registry; this contract
+ * overrides it by key when the worker composes the registry, the way the
+ * nine SYNTRA nodes did.
  */
 import { z } from "zod";
 import { defineNode, type NodeRunCtx } from "@tekisho/node-contract";
+import { classifyAstraError, postAstra } from "../astra-http.js";
+import { jobIdOf, rawTextOf } from "../fields.js";
 
-
-/** What the engine reads from the trigger (astra.ts:128-140). The body may arrive under four names. */
+/** What the engine read from the trigger. The body may arrive under four names. */
 const Input = z
   .object({
     subject: z.string().optional(),
@@ -29,16 +29,18 @@ const Input = z
     location: z.string().optional(),
     jobId: z.string().optional(),
     requirement_id: z.string().optional(),
+    requirementId: z.string().optional(),
   })
-  .refine((v) => Boolean((v.raw_text ?? v.rawText ?? v.body ?? v.content ?? "").trim()), {
+  .refine((v) => Boolean((rawTextOf(v) ?? "").trim()), {
     message: "needs the email body — raw_text, rawText, body or content",
   });
 
 const Output = z.object({
-  /** The requirement SYNTRA created or found. */
+  /** The requirement ASTRA created or found. */
   jobId: z.string(),
   title: z.string().nullable(),
   channel_type: z.literal("EMAIL"),
+  stubbed: z.boolean(),
 });
 
 const Config = z.object({
@@ -53,7 +55,7 @@ export const requirementIntake = defineNode({
 
   title: "Take a requirement in from an email",
   description:
-    "Hands an email's body to SYNTRA's ASTRA intake, which parses it into a requirement, and announces the requirement received.",
+    "Hands an email's body to ASTRA's intake, which parses it into a requirement, and announces the requirement received.",
   tags: ["astra", "intake", "email"],
 
   input: Input,
@@ -62,17 +64,14 @@ export const requirementIntake = defineNode({
 
   emits: ["astra.requirement.received"],
   sideEffect: "external",
-  idempotency: { strategy: "natural_key", keyPaths: [["jobId", "requirement_id"]] },
+  idempotency: { strategy: "natural_key", keyPaths: [["jobId", "requirement_id", "requirementId", "subject", "title"]] },
 
   execution: {
-    /** One SYNTRA call that parses with an LLM. UNVERIFIED — not yet timed here. */
+    /** One ASTRA call that parses with an LLM. UNVERIFIED — not yet timed here. */
     timeoutMs: 60_000,
     retry: { limit: 2, backoff: "exponential", baseMs: 2_000 },
-    classifyError: (e) => {
-      const m = String((e as Error)?.message ?? e);
-      if (/\b(400|404|422)\b|permanent-input|empty|no jobId|not found/i.test(m)) return "permanent_input";
-      return "transient";
-    },
+    classifyError: (e) =>
+      /returned no jobId/.test(String((e as Error)?.message ?? e)) ? "permanent_input" : classifyAstraError(e),
     locks: [],
   },
 
@@ -89,19 +88,36 @@ export const requirementIntake = defineNode({
             body: "Client needs a Java developer, 6+ years, Spring Boot, AWS. Austin TX, hybrid. C2C.",
           },
           config: {},
-          expectedOutput: { jobId: "8f14e45f-ceea-467a-9f4b-4a2c1e9d0a11", title: "Java Developer — Austin, TX", channel_type: "EMAIL" },
+          expectedOutput: { jobId: "8f14e45f-ceea-467a-9f4b-4a2c1e9d0a11", title: "Java Developer — Austin, TX", channel_type: "EMAIL", stubbed: false },
         },
       ],
 
-  /**
-   * Never called. The engine's own function runs this node; this
-   * declaration must not be in `nodeContracts`, and throwing is how that
-   * stays true.
-   */
-  run: async (ctx: NodeRunCtx) => {
-    ctx.logger.error(
-      "astra.requirement.intake: declaration only — the live implementation is packages/orchestrator/src/nodes/astra.ts",
-    );
-    throw new Error("astra.requirement.intake is a declaration, not an implementation. It must not be in nodeContracts.");
-  },
+
+run: async (ctx: NodeRunCtx, input) => {
+  const body = {
+    subject: input.subject ?? input.title,
+    body: rawTextOf(input),
+    from: input.from ?? input.source_email ?? input.source,
+    title: input.title,
+    location: input.location,
+  };
+  ctx.logger.info("calling Astra email intake", { orgId: ctx.orgId });
+  const r = await postAstra("/internal/astra/intake/email", body, { signal: ctx.signal });
+
+  // Under the dev stub ASTRA answers nothing. The engine function minted
+  // an id so a local flow could continue; the same here, and `stubbed`
+  // says so on the row.
+  const jobId = String(
+    r.jobId ?? r.requirement_id ?? jobIdOf(input) ?? (r.stub ? crypto.randomUUID() : ""),
+  );
+  if (!jobId) throw new Error("astra.requirement.intake: Astra returned no jobId");
+
+  // The endpoint answers `{ created, jobId, job }`; the title is on the job.
+  const title = (r.title ?? r.job?.title ?? body.subject ?? null) as string | null;
+  ctx.emit({
+    event_type: "astra.requirement.received",
+    payload: { jobId, requirement_id: jobId, title, channel_type: "EMAIL", syntra: r },
+  });
+  return { jobId, title, channel_type: "EMAIL" as const, stubbed: r.stub === true };
+},
 });

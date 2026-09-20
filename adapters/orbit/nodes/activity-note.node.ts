@@ -1,36 +1,35 @@
 /**
- * orbit.activity.note — a DECLARATION, not an implementation.
- *
- * The engine runs this node: packages/orchestrator/src/nodes/orbit.ts
- * (orbitActivityNote). This file is what `node_registry` and the editor project
- * — input, output, settings, what it publishes — written from that code on
- * 2026-09-20, line by line. Like `orch.branch.decision`, it stays out of
- * `nodeContracts` until the implementation moves in here at stage 5; until
- * then a change to the engine file is a change to this one.
+ * orbit.activity.note
  *
  * A line on a person's timeline — what happened, said by whom. Every module appends to the same feed (core.activities, decision D2); this is ORBIT's node for doing it from a workflow.
+ *
+ * Ported from the engine function `orbitActivityNote` in packages/orchestrator/src/nodes/orbit.ts
+ * on 2026-09-20 — same request, same response fields read, same event
+ * published. That function stays in the engine registry; this contract
+ * overrides it by key when the worker composes the registry, the way the
+ * nine SYNTRA nodes did.
  */
 import { z } from "zod";
 import { defineNode, type NodeRunCtx } from "@tekisho/node-contract";
+import { classifyOrbitError, postOrbit } from "../orbit-http.js";
+import { candidateIdOf, placementIdOf } from "../fields.js";
 
-
-/** orbit.ts:357-390 */
 const Input = z
   .object({
     candidate_id: z.string().optional(),
     candidateId: z.string().optional(),
     summary: z.string().optional(),
     note: z.string().optional(),
-    activity_type: z.string().optional(),
-    activityType: z.string().optional(),
     payload: z.record(z.string(), z.unknown()).optional(),
   })
-  .refine((v) => Boolean(v.candidate_id ?? v.candidateId), { message: "needs candidate_id" })
+  .refine((v) => Boolean(candidateIdOf(v)), { message: "needs candidate_id" })
   .refine((v) => Boolean((v.summary ?? v.note ?? "").trim()), { message: "needs a summary or note" });
 
 const Output = z.object({
   candidateId: z.string(),
+  summary: z.string(),
   activityType: z.string(),
+  stubbed: z.boolean(),
 });
 
 const Config = z.object({
@@ -60,11 +59,7 @@ export const activityNote = defineNode({
     /** One ORBIT call. UNVERIFIED — not yet timed here. */
     timeoutMs: 15_000,
     retry: { limit: 2, backoff: "exponential", baseMs: 2_000 },
-    classifyError: (e) => {
-      const m = String((e as Error)?.message ?? e);
-      if (/\b(400|404|422)\b|permanent-input|empty|no jobId|not found/i.test(m)) return "permanent_input";
-      return "transient";
-    },
+    classifyError: classifyOrbitError,
     locks: [],
   },
 
@@ -75,21 +70,31 @@ export const activityNote = defineNode({
   fixtures: [
         {
           name: "a recruiter's note",
-          input: { candidate_id: "21d2cb25-09be-456f-a4b4-9872e485445f", summary: "Spoke on the phone; available from October.", activity_type: "NOTE" },
+          input: { candidate_id: "21d2cb25-09be-456f-a4b4-9872e485445f", summary: "Spoke on the phone; available from October." },
           config: {},
-          expectedOutput: { candidateId: "21d2cb25-09be-456f-a4b4-9872e485445f", activityType: "NOTE" },
+          expectedOutput: { candidateId: "21d2cb25-09be-456f-a4b4-9872e485445f", summary: "Spoke on the phone; available from October.", activityType: "NOTE", stubbed: false },
         },
       ],
 
-  /**
-   * Never called. The engine's own function runs this node; this
-   * declaration must not be in `nodeContracts`, and throwing is how that
-   * stays true.
-   */
-  run: async (ctx: NodeRunCtx) => {
-    ctx.logger.error(
-      "orbit.activity.note: declaration only — the live implementation is packages/orchestrator/src/nodes/orbit.ts",
-    );
-    throw new Error("orbit.activity.note is a declaration, not an implementation. It must not be in nodeContracts.");
-  },
+
+run: async (ctx: NodeRunCtx, input) => {
+  const candidateId = candidateIdOf(input)!;
+  const summary = String(input.summary ?? input.note).trim();
+  ctx.logger.info("calling Orbit activity note", { candidateId, orgId: ctx.orgId });
+  const r = await postOrbit(
+    `/internal/orbit/candidates/${candidateId}/activities`,
+    { summary, payload: input.payload ?? {} },
+    { signal: ctx.signal },
+  );
+  ctx.emit({
+    event_type: "orbit.activity.noted",
+    payload: { candidate_id: candidateId, summary, orbit: r },
+  });
+  return {
+    candidateId,
+    summary,
+    activityType: String(r.activity?.activity_type ?? "NOTE"),
+    stubbed: r.stub === true,
+  };
+},
 });

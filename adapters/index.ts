@@ -55,6 +55,25 @@ export const nodeContracts = [
    * two below out of this list.
    */
   orchSwitch,
+  /**
+   * ASTRA's six and ORBIT's five, ported from the engine functions in
+   * `packages/orchestrator/src/nodes/astra.ts` and `orbit.ts` (2026-09-20).
+   * The engine passed data on by rewriting `trigger_event.payload`; a contract
+   * writes its output to `steps[stepId]` and a later step reads it through
+   * its `inputs` map — so an ASTRA or ORBIT definition seeded here carries
+   * one (`{ jobId: "intake.jobId" }`). None is live in this project yet.
+   */
+  requirementIntake,
+  requirementIngest,
+  jobboardFetch,
+  requirementQuality,
+  requirementNormalize,
+  astraRouteDecision,
+  lifecycleTransition,
+  placementConfirm,
+  revenueArrange,
+  activityNote,
+  orbitRouteDecision,
 ];
 
 /**
@@ -85,30 +104,7 @@ export const nodeContracts = [
  * declare; `human.gate` parks a run by calling `interrupt()`, which no
  * contract can express yet.
  */
-export const declaredNodes = [
-  humanGate,
-  branchDecision,
-  /**
-   * ASTRA's six and ORBIT's five, declared from the engine functions in
-   * `packages/orchestrator/src/nodes/astra.ts` and `orbit.ts` (2026-09-20).
-   * They stay declarations for the reason the plan names: nine of the eleven
-   * pass data on by mutating `trigger_event.payload`, which the bridge does
-   * not carry. Until it does, composing them would compile and break the live
-   * ASTRA workflow silently. RELAY's four have no implementation here at all
-   * and wait for stage 5.
-   */
-  requirementIntake,
-  requirementIngest,
-  jobboardFetch,
-  requirementQuality,
-  requirementNormalize,
-  astraRouteDecision,
-  lifecycleTransition,
-  placementConfirm,
-  revenueArrange,
-  activityNote,
-  orbitRouteDecision,
-];
+export const declaredNodes = [humanGate, branchDecision];
 
 export type NodeContractEntry = (typeof nodeContracts)[number];
 export type DeclaredNodeEntry = (typeof declaredNodes)[number];
