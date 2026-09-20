@@ -69,3 +69,4 @@ packages/db/scripts/
 /node-api/test-*.js
 ref/
 old_db_repo/
+orch_old-db/
