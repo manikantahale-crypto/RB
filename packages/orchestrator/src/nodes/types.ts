@@ -112,6 +112,13 @@ export type NodeImpl = ((
    * a function that declares nothing gets ORCH_NODE_TIMEOUT_MS.
    */
   execution?: { timeoutMs: number };
+  /**
+   * The contract's config schema, so the compiler can refuse a bad setting
+   * when the definition is COMPILED — at go-live, or the first load — rather
+   * than when the step first runs in a live workflow. Absent on a legacy
+   * engine function, which declares nothing.
+   */
+  configSchema?: { safeParse: (v: unknown) => { success: boolean; error?: unknown } };
 };
 
 export type NodeFactory = () => NodeImpl;

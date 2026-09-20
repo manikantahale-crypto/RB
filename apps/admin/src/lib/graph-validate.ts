@@ -134,6 +134,30 @@ export function validate(
     });
   }
 
+  // 2d — a join that waits on something that never arrives.
+  //
+  // A step with `joinOn` runs once, after every step it names. A name that
+  // is not a step, is the join itself, or has no edge into the join is a
+  // barrier nothing can lift: the run reaches the join and waits for ever.
+  const badJoins: string[] = [];
+  for (const n of def.nodes) {
+    const joinOn = (n as { joinOn?: string[] }).joinOn;
+    if (!joinOn?.length) continue;
+    const into = new Set(def.edges.filter(([, to]) => to === n.id).map(([from]) => from));
+    for (const dep of joinOn) {
+      if (dep === n.id) badJoins.push(`${n.id} waits on itself`);
+      else if (!ids.has(dep)) badJoins.push(`${n.id} waits on "${dep}", which is not a step`);
+      else if (!into.has(dep)) badJoins.push(`${n.id} waits on ${dep}, but no edge leads from ${dep} to it`);
+    }
+  }
+  if (badJoins.length > 0) {
+    findings.push({
+      level: "error",
+      text: `${badJoins.length} join${badJoins.length === 1 ? "" : "s"} waiting on something that never arrives`,
+      detail: badJoins.join("; "),
+    });
+  }
+
   // 2b — a fork with no arms routes nowhere and rejects everything.
   const emptyForks = (def.conditionalEdges ?? []).filter(
     (ce) => Object.keys(ce.map).length === 0,

@@ -183,6 +183,25 @@ describe("validate", () => {
     expect(found.some((f) => f.detail?.includes("path_other"))).toBe(true);
   });
 
+  it("catches a join waiting on something that never arrives", () => {
+    const def = astra();
+    // route waits on normalize and human — fine — and on "ghost", which is no step
+    def.nodes = def.nodes.map((n) =>
+      n.id === "route" ? { ...n, joinOn: ["normalize", "human", "ghost"] } : n,
+    ) as typeof def.nodes;
+    const found = errors(def);
+    expect(found.some((f) => f.text.includes("waiting on something that never arrives"))).toBe(true);
+    expect(found.some((f) => f.detail?.includes("ghost"))).toBe(true);
+  });
+
+  it("accepts a join that names exactly the steps leading into it", () => {
+    const def = astra();
+    def.nodes = def.nodes.map((n) =>
+      n.id === "route" ? { ...n, joinOn: ["normalize", "human"] } : n,
+    ) as typeof def.nodes;
+    expect(errors(def).some((f) => f.text.includes("never arrives"))).toBe(false);
+  });
+
   it("catches a branch with no outcomes", () => {
     const def = astra();
     def.conditionalEdges = [{ from: "branch", router: "branch_key", map: {} }];

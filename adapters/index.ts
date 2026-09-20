@@ -26,6 +26,17 @@ import { runRetry } from "./syntra/nodes/run-retry.node.js";
 import { humanGate } from "./platform/nodes/human-gate.node.js";
 import { branchDecision } from "./platform/nodes/branch-decision.node.js";
 import { orchSwitch } from "./platform/nodes/orch-switch.node.js";
+import { requirementIntake } from "./astra/nodes/requirement-intake.node.js";
+import { requirementIngest } from "./astra/nodes/requirement-ingest.node.js";
+import { jobboardFetch } from "./astra/nodes/jobboard-fetch.node.js";
+import { requirementQuality } from "./astra/nodes/requirement-quality.node.js";
+import { requirementNormalize } from "./astra/nodes/requirement-normalize.node.js";
+import { routeDecision as astraRouteDecision } from "./astra/nodes/route-decision.node.js";
+import { lifecycleTransition } from "./orbit/nodes/lifecycle-transition.node.js";
+import { placementConfirm } from "./orbit/nodes/placement-confirm.node.js";
+import { revenueArrange } from "./orbit/nodes/revenue-arrange.node.js";
+import { activityNote } from "./orbit/nodes/activity-note.node.js";
+import { orbitRouteDecision } from "./orbit/nodes/route-decision.node.js";
 
 /** Contracts the worker composes into the runtime. These RUN. */
 export const nodeContracts = [
@@ -74,7 +85,30 @@ export const nodeContracts = [
  * declare; `human.gate` parks a run by calling `interrupt()`, which no
  * contract can express yet.
  */
-export const declaredNodes = [humanGate, branchDecision];
+export const declaredNodes = [
+  humanGate,
+  branchDecision,
+  /**
+   * ASTRA's six and ORBIT's five, declared from the engine functions in
+   * `packages/orchestrator/src/nodes/astra.ts` and `orbit.ts` (2026-09-20).
+   * They stay declarations for the reason the plan names: nine of the eleven
+   * pass data on by mutating `trigger_event.payload`, which the bridge does
+   * not carry. Until it does, composing them would compile and break the live
+   * ASTRA workflow silently. RELAY's four have no implementation here at all
+   * and wait for stage 5.
+   */
+  requirementIntake,
+  requirementIngest,
+  jobboardFetch,
+  requirementQuality,
+  requirementNormalize,
+  astraRouteDecision,
+  lifecycleTransition,
+  placementConfirm,
+  revenueArrange,
+  activityNote,
+  orbitRouteDecision,
+];
 
 export type NodeContractEntry = (typeof nodeContracts)[number];
 export type DeclaredNodeEntry = (typeof declaredNodes)[number];

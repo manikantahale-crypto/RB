@@ -3,6 +3,7 @@
  *
  *   node node-api/scripts/reextract-requirements.js --dry-run
  *   node node-api/scripts/reextract-requirements.js [--limit 100] [--org <uuid>]
+ *   node node-api/scripts/reextract-requirements.js --ids <uuid,uuid>   (re-extract these even if they have skills)
  *
  * WHY. 2,818 of 3,415 processed requirements had no required_skills on
  * 2026-09-20. They are not requirements without skills: their AI extraction
@@ -21,8 +22,10 @@
  * transaction per row. No platform event is emitted: these requirements
  * already went through their workflow; this repairs their record.
  *
- * WHAT IT DOES NOT DO. Touch a requirement that has skills, or one with no
- * body to read. Change processing status: it was "succeeded" and stays so,
+ * WHAT IT DOES NOT DO. Touch a requirement that has skills — unless --ids
+ * names it: the first matching proof found an old list reading
+ * ["sql","sap","abap","go","data"], where "go" and "data" are noise, and
+ * a row like that is re-extracted by naming it. Or one with no body to read. Change processing status: it was "succeeded" and stays so,
  * with the fields it should have had. Retry a row whose extraction fails
  * again — it is listed at the end for a second pass.
  *
@@ -41,6 +44,7 @@ const args = process.argv.slice(2);
 const DRY = args.includes("--dry-run");
 const LIMIT = Number(args[args.indexOf("--limit") + 1]) || 0;
 const ORG = args.includes("--org") ? args[args.indexOf("--org") + 1] : null;
+const IDS = args.includes("--ids") ? args[args.indexOf("--ids") + 1].split(",").map((s) => s.trim()).filter(Boolean) : null;
 
 async function candidates() {
   const { rows } = await pool.query(
@@ -55,14 +59,15 @@ async function candidates() {
             AND s.raw_text IS NOT NULL AND length(s.raw_text) > 40
           ORDER BY s.uploaded_at DESC NULLS LAST LIMIT 1
        ) f ON true
-      WHERE (q.required_skills IS NULL OR jsonb_array_length(q.required_skills) = 0)
+      WHERE ($2::uuid[] IS NOT NULL AND q.id = ANY($2::uuid[])
+             OR $2::uuid[] IS NULL AND (q.required_skills IS NULL OR jsonb_array_length(q.required_skills) = 0))
         AND EXISTS (SELECT 1 FROM core.processing_jobs p
                      WHERE p.subject_type = 'requirement' AND p.subject_id = q.id
                        AND p.stage = 'extract' AND p.finished_at IS NOT NULL)
         AND ($1::uuid IS NULL OR q.org_id = $1::uuid)
       ORDER BY q.created_at DESC
       ${LIMIT > 0 ? `LIMIT ${LIMIT}` : ""}`,
-    [ORG],
+    [ORG, IDS],
   );
   return rows;
 }

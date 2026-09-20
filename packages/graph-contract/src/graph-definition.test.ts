@@ -181,3 +181,82 @@ describe("the schema still accepts what it always did", () => {
     expect(GraphDefinitionSchema.safeParse(linear()).success).toBe(true);
   });
 });
+
+describe("a workflow that ends only through a branch arm", () => {
+  it("is valid — the arm counts", () => {
+    // relay.consent's shape: the only way to __end__ is the switch's "no" arm.
+    const def: GraphDefinition = {
+      graphKey: "relay.consent.workflow",
+      nodes: [
+        { id: "send", impl: "relay.consent.send" },
+        { id: "branch", impl: "orch.switch" },
+        { id: "remind", impl: "relay.consent.remind" },
+      ],
+      edges: [
+        ["__start__", "send"],
+        ["send", "branch"],
+        ["remind", "send"],
+      ],
+      conditionalEdges: [
+        { from: "branch", router: "switch", map: { path_b_timeout: "remind", path_c_no: "__end__" } },
+      ],
+    };
+    expect(() => validateGraphTopology(def)).not.toThrow();
+  });
+
+  it("still refuses a workflow that cannot end at all", () => {
+    const def: GraphDefinition = {
+      graphKey: "loop",
+      nodes: [{ id: "a", impl: "x" }, { id: "b", impl: "y" }],
+      edges: [["__start__", "a"], ["a", "b"], ["b", "a"]],
+    };
+    expect(() => validateGraphTopology(def)).toThrow(/nothing reaches __end__/);
+  });
+});
+
+describe("fan-out and fan-in", () => {
+  /**
+   *            parse
+   *          ╱   │   ╲
+   *     dedupe  bench  match
+   *          ╲   │   ╱
+   *           notify   ← joinOn: [dedupe, bench, match]
+   */
+  const fan = (joinOn?: string[]): GraphDefinition => ({
+    graphKey: "syntra.parallel",
+    nodes: [
+      { id: "parse", impl: "syntra.jd.process" },
+      { id: "dedupe", impl: "syntra.duplicate.detect" },
+      { id: "bench", impl: "syntra.bench.alert" },
+      { id: "match", impl: "syntra.match.process" },
+      { id: "notify", impl: "syntra.shortlist.notify", ...(joinOn ? { joinOn } : {}) },
+    ],
+    edges: [
+      ["__start__", "parse"],
+      ["parse", "dedupe"],
+      ["parse", "bench"],
+      ["parse", "match"],
+      ["dedupe", "notify"],
+      ["bench", "notify"],
+      ["match", "notify"],
+      ["notify", "__end__"],
+    ],
+  });
+
+  it("accepts a join that names the branches leading into it", () => {
+    expect(() => validateGraphTopology(fan(["dedupe", "bench", "match"]))).not.toThrow();
+    // and the same shape with the join implied by its three incoming edges
+    expect(() => validateGraphTopology(fan())).not.toThrow();
+  });
+
+  it("refuses a join waiting on itself, on a step that does not exist, or on one that never reaches it", () => {
+    expect(() => validateGraphTopology(fan(["notify"]))).toThrow(/waits on itself/);
+    expect(() => validateGraphTopology(fan(["ghost"]))).toThrow(/not a step/);
+    expect(() => validateGraphTopology(fan(["parse"]))).toThrow(/no edge leads from "parse"/);
+  });
+
+  it("stores joinOn through the schema", () => {
+    const parsed = GraphDefinitionSchema.parse(fan(["dedupe", "bench"]));
+    expect(parsed.nodes.find((n) => n.id === "notify")?.joinOn).toEqual(["dedupe", "bench"]);
+  });
+});

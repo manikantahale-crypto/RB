@@ -48,6 +48,20 @@ export const GraphDefinitionSchema = z.object({
          * did before this existed.
          */
         inputs: z.record(z.string(), z.string()).optional(),
+        /**
+         * The steps this one waits for — a JOIN.
+         *
+         * A workflow may fan out: several plain edges leave one step and every
+         * one of them is taken, the branches running side by side. Where they
+         * come back together, the step that needs all of them names them here,
+         * and the runtime runs it once, after the last of them, never on
+         * partial results. A branch that failed blocks the join.
+         *
+         * Two or more plain edges INTO a step make it a join whether or not
+         * this is written; writing it is what the editor draws and the gate
+         * checks. A step with one predecessor never needs it.
+         */
+        joinOn: z.array(z.string().min(1)).min(1).optional(),
         config: z.record(z.string(), z.unknown()).optional(),
       }),
     )
@@ -145,8 +159,36 @@ export function validateGraphTopology(def: GraphDefinition): void {
   if (!def.edges.some(([from]) => from === "__start__")) {
     throw new Error("DEFINITION_INVALID: no edge from __start__");
   }
-  if (!def.edges.some(([, to]) => to === "__end__")) {
+  // A workflow may reach its end only through a branch arm — every gate's
+  // "rejected" and every switch's default path go straight to __end__ — so
+  // the arms count. Plain edges alone rejected relay.consent's shape.
+  const plainReachesEnd = def.edges.some(([, to]) => to === "__end__");
+  const armReachesEnd = (def.conditionalEdges ?? []).some((ce) =>
+    Object.values(ce.map).includes("__end__"),
+  );
+  if (!plainReachesEnd && !armReachesEnd) {
     throw new Error("DEFINITION_INVALID: nothing reaches __end__");
+  }
+
+  // A join names the steps it waits for. Each must exist, must not be the
+  // join itself, and must actually lead into it by a plain edge — a join
+  // waiting on a step that never arrives waits for ever.
+  for (const node of def.nodes) {
+    if (!node.joinOn) continue;
+    const into = new Set(def.edges.filter(([, to]) => to === node.id).map(([from]) => from));
+    for (const dep of node.joinOn) {
+      if (dep === node.id) {
+        throw new Error(`DEFINITION_INVALID: join "${node.id}" waits on itself`);
+      }
+      if (!nodeIds.has(dep)) {
+        throw new Error(`DEFINITION_INVALID: join "${node.id}" waits on "${dep}", which is not a step`);
+      }
+      if (!into.has(dep)) {
+        throw new Error(
+          `DEFINITION_INVALID: join "${node.id}" waits on "${dep}", but no edge leads from "${dep}" to it`,
+        );
+      }
+    }
   }
 
   const onEdge = new Set<string>();

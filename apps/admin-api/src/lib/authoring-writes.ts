@@ -500,7 +500,12 @@ export async function cancelGoLiveRequest(
         SET status             = 'compiled',
             requested_by       = NULL,
             requested_by_label = NULL,
-            requested_at       = NULL
+            requested_at       = NULL,
+            -- A note without a request is a note about nothing (V20260909.62's
+            -- CHECK says so). This left the note behind and every withdrawal of
+            -- a request that carried one failed with the constraint — AUTH-002
+            -- in the 2026-09-19 testing report.
+            request_note       = NULL
        FROM authoring.graphs g
       WHERE g.id = v.graph_id
         AND g.graph_key = $1

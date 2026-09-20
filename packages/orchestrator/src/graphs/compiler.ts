@@ -1,4 +1,4 @@
-import { Annotation, StateGraph, type CompiledGraph, isGraphInterrupt } from '@langchain/langgraph';
+import { Annotation, END, StateGraph, type CompiledGraph, isGraphInterrupt } from '@langchain/langgraph';
 import type { BaseCheckpointSaver } from '@langchain/langgraph-checkpoint';
 import type { Pool } from 'pg';
 import type { EventInput } from '../types.js';
@@ -114,6 +114,18 @@ function resolveActionClass(
     return fromConfig;
   }
   return DEFAULT_IMPL_ACTION_CLASS[impl] ?? 'INTERNAL_WRITE';
+}
+
+/**
+ * The steps a join waits for, or null when the step is not a join.
+ * Declared `joinOn` wins; otherwise two or more plain edges in make one.
+ */
+function joinDependencies(def: GraphDefinition, nodeId: string): string[] | null {
+  const node = def.nodes.find((n) => n.id === nodeId);
+  if (!node) return null;
+  if (node.joinOn && node.joinOn.length > 0) return [...node.joinOn];
+  const into = def.edges.filter(([from, to]) => to === nodeId && from !== '__start__').map(([from]) => from);
+  return into.length > 1 ? [...new Set(into)] : null;
 }
 
 /**
@@ -325,6 +337,14 @@ export class GraphCompiler {
     return rows[0] ?? null;
   }
 
+  /**
+   * Compile a definition that is not (yet) stored — the gate's dry run, a
+   * test, a proposal. Same checks, same wiring, no cache.
+   */
+  public compileDefinition(def: GraphDefinition): CompiledGraph<any, any, any> {
+    return this.compile(def);
+  }
+
   private compile(def: GraphDefinition): CompiledGraph<any, any, any> {
     validateDefinition(def);
 
@@ -366,6 +386,37 @@ export class GraphCompiler {
       }
       const impl = factory();
       const config = node.config ?? {};
+      /**
+       * A BAD SETTING FAILS HERE, NOT IN A LIVE RUN.
+       *
+       * The bridge parses config against the contract when the step runs.
+       * That is the right last line, and the wrong first one: a workflow with
+       * a mistyped threshold went live, and its first real event failed on
+       * it. The contract's schema is known at compile time, so the same
+       * check runs now — at go-live (the gate compiles) and at first load —
+       * naming the step and the field.
+       */
+      if (impl.configSchema) {
+        const parsed = impl.configSchema.safeParse(config);
+        if (!parsed.success) {
+          const issues = (parsed.error as { issues?: Array<{ path: unknown[]; message: string }> })?.issues;
+          const detail = issues
+            ? issues.map((i) => `${i.path.join('.') || '(root)'}: ${i.message}`).join('; ')
+            : String(parsed.error);
+          throw new Error(
+            `DEFINITION_INVALID: step "${node.id}" (${node.impl}) has a config its contract refuses — ${detail}`,
+          );
+        }
+      }
+      /**
+       * A JOIN: a step several branches lead into, that must run once, after
+       * all of them. Declared with `joinOn`, or implied by more than one
+       * plain edge in. The wiring below hands LangGraph the sources as a
+       * group, which is its own barrier; what is added here is the rule that
+       * a branch that FAILED blocks the join instead of the join running on
+       * the branches that did not.
+       */
+      const joinDeps = joinDependencies(def, node.id);
       const actionClass = resolveActionClass(node.impl, config);
       const agentName =
         (typeof config.agentName === 'string' ? config.agentName : undefined) ??
@@ -449,6 +500,42 @@ export class GraphCompiler {
            * A step with no map gets the state untouched, which is every
            * definition stored before this existed.
            */
+          if (joinDeps) {
+            const failed = (state.errorsSoft ?? []).filter((e) => joinDeps.includes(e.nodeId));
+            if (failed.length > 0) {
+              // The join is BLOCKED, not failed: the step that failed already
+              // recorded its own error. Said in the run's own record, and the
+              // run stops here (the join's outgoing edges read `steps`).
+              const durationMs = Date.now() - started;
+              const detail = failed.map((f) => `${f.nodeId}: ${f.message}`).join('; ');
+              recordNodeMetric({
+                graphKey: def.graphKey,
+                nodeId: node.id,
+                impl: node.impl,
+                status: 'soft_error',
+                durationMs,
+                errorClass: 'permanent-input',
+                threadId,
+              });
+              orchStory(
+                'SKIP',
+                `node=${node.id}  join blocked — ${failed.length} of ${joinDeps.length} branch(es) failed: ${detail}`,
+              );
+              await writeStep(state, node.id, node.impl, 'SKIPPED', durationMs, {
+                join_blocked_by: failed.map((f) => f.nodeId),
+              });
+              return {
+                errorsSoft: [
+                  {
+                    nodeId: node.id,
+                    class: 'permanent-input',
+                    message: `join blocked: ${detail}`,
+                  },
+                ],
+              };
+            }
+          }
+
           const { state: runState, unresolved } = withResolvedInputs(
             state,
             node.inputs,
@@ -518,9 +605,16 @@ export class GraphCompiler {
               payload?.confidence_score ?? payload?.branch_score,
             is_actionable: payload?.is_actionable,
           });
-          if (viaCtx.length === 0) return patch;
+          // A join's outgoing edges read `steps[join]` to know it ran (below);
+          // a legacy engine function writes no steps, so it is written for it.
+          const joined =
+            joinDeps && !(patch.steps && node.id in patch.steps)
+              ? { steps: { ...(patch.steps ?? {}), [node.id]: { joined: true } } }
+              : {};
+          if (viaCtx.length === 0) return { ...patch, ...joined };
           return {
             ...patch,
+            ...joined,
             _emittedEvents: [...(patch._emittedEvents ?? []), ...viaCtx],
           };
         } catch (err) {
@@ -610,8 +704,45 @@ export class GraphCompiler {
       });
     }
 
+    /**
+     * EDGES, WITH JOINS AS GROUPS.
+     *
+     * `addEdge(from, to)` one at a time made a step with two incoming edges
+     * a matter of luck: LangGraph runs it once if both branches finish in
+     * the same step, twice if they do not. `addEdge([a, b], to)` is the form
+     * it provides for "after all of these" — the barrier is the platform's,
+     * not ours. A join's OWN outgoing edges are conditional on it having
+     * run, so a blocked join ends the run instead of continuing past it.
+     */
+    const joinTargets = new Map<string, string[]>();
+    const plain: Array<[string, string]> = [];
     for (const [from, to] of def.edges) {
+      const deps = joinDependencies(def, to);
+      if (deps) {
+        if (!joinTargets.has(to)) joinTargets.set(to, deps);
+      } else {
+        plain.push([from, to]);
+      }
+    }
+    const joinIds = new Set(joinTargets.keys());
+    for (const [from, to] of plain) {
+      if (joinIds.has(from)) continue; // wired below, guarded
       builder = builder.addEdge(from, to);
+    }
+    for (const [join, sources] of joinTargets) {
+      builder = builder.addEdge(sources, join);
+    }
+    for (const join of joinIds) {
+      const outs = plain.filter(([from]) => from === join).map(([, to]) => to);
+      if (outs.length === 0) continue;
+      const map: Record<string, string> = { __blocked__: END };
+      for (const to of outs) map[to] = to === '__end__' ? END : to;
+      builder = builder.addConditionalEdges(
+        join,
+        (state: SyntraGraphState) =>
+          state.steps && join in state.steps ? (outs.length === 1 ? outs[0]! : outs) : '__blocked__',
+        map,
+      );
     }
 
     // Conditional branches — prefer named routers from ROUTER_REGISTRY;

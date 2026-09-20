@@ -47,6 +47,7 @@ export default defineConfig({
       // never committed. Their tests need their own node_modules.
       "old_db_repo/**",
       "orch_old-db/**",
+      "new_db_feature_branch/**",
     ],
   },
 });

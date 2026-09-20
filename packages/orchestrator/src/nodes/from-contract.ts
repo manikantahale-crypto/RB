@@ -150,6 +150,9 @@ export function toNodeImpl(contract: AnyNodeContract): NodeImpl {
   if (typeof declaredTimeout === 'number') {
     impl.execution = { timeoutMs: declaredTimeout };
   }
+  if (contract.config && typeof contract.config.safeParse === 'function') {
+    impl.configSchema = contract.config;
+  }
   return impl;
 }
 
