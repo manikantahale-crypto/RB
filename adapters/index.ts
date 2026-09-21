@@ -40,6 +40,13 @@ import { orbitRouteDecision } from "./orbit/nodes/route-decision.node.js";
 import { consentSend } from "./relay/nodes/consent-send.node.js";
 import { consentRemind } from "./relay/nodes/consent-remind.node.js";
 import { profileSend } from "./relay/nodes/profile-send.node.js";
+import { submissionOpen } from "./prism/nodes/submission-open.node.js";
+import { consentRecord } from "./prism/nodes/consent-record.node.js";
+import { profileMask } from "./prism/nodes/profile-mask.node.js";
+import { vendorRecord } from "./prism/nodes/vendor-record.node.js";
+import { submissionTransition } from "./prism/nodes/submission-transition.node.js";
+import { rtrRecord } from "./prism/nodes/rtr-record.node.js";
+import { confirmationRecord } from "./prism/nodes/confirmation-record.node.js";
 
 /** Contracts the worker composes into the runtime. These RUN. */
 export const nodeContracts = [
@@ -89,6 +96,22 @@ export const nodeContracts = [
   consentSend,
   consentRemind,
   profileSend,
+  /**
+   * PRISM's seven, designed 2026-09-20 from its submission lifecycle
+   * (prism.workflow.service.js) and the roadmap's "Submission & RTR
+   * Control" — PRISM had no orchestrator nodes on the old project. Four
+   * record an answer that came by mail through the inbound handlers RELAY
+   * already calls (consent, vendor, RTR, rate/availability confirmation);
+   * three call endpoints added for them (open, mask, transition). The
+   * record and its order stay PRISM's; RELAY sends — none of these does.
+   */
+  submissionOpen,
+  consentRecord,
+  profileMask,
+  vendorRecord,
+  submissionTransition,
+  rtrRecord,
+  confirmationRecord,
 ];
 
 /**

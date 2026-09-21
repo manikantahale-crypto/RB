@@ -25,6 +25,9 @@ const express = require("express");
 const { pool } = require("../../../config/db");
 const log = require("../../../utils/logger");
 const prismWorkflow = require("../services/prism.workflow.service");
+const prismService = require("../services/prism.service");
+const prismRepo = require("../repositories/prism.repository");
+const candidateRepo = require("../../../repositories/candidate.repository");
 
 const router = express.Router();
 
@@ -367,6 +370,149 @@ router.post("/internal/prism/rtr/response", async (req, res) => {
     res.json({ status: "success", submissionId: targetSubmission.id, rtrStatus: normalizedResponse, newStatus: updated.status });
   } catch (err) {
     fail(res, err, "[PRISM-RELAY] Failed to process RTR response");
+  }
+});
+
+/* ─────────────────────────────────────────────────────────────────────────
+ * THE ORCHESTRATOR'S DOOR INTO A SUBMISSION (2026-09-20).
+ *
+ * The four handlers above are inbound: someone replied and RELAY tells PRISM.
+ * The three below are outbound from a workflow: open a submission, mask its
+ * profile, move it through the matrix. Until now every one of those needed a
+ * recruiter's session on /submissions — a workflow has none.
+ *
+ * WHO ACTS. Every PRISM row is scoped to `created_by` (a recruiter; FK to
+ * platform.users) and every lookup filters by it. A run has no user, so the
+ * actor is `actorId` from the payload, else the requirement's owner
+ * (`core.requirements.created_by`) — the recruiter whose JD this is — and,
+ * for an existing submission, its own `created_by`, as the inbound handlers
+ * already do. Said on the row: `actor_source` in every answer.
+ * ───────────────────────────────────────────────────────────────────────── */
+
+async function requirementOwner(jobId) {
+  const { rows } = await pool.query(`SELECT created_by FROM core.requirements WHERE id = $1`, [jobId]);
+  return rows[0]?.created_by || null;
+}
+
+async function submissionById(submissionId) {
+  const { rows } = await pool.query(`SELECT ${SUB} FROM prism.submissions s WHERE s.id = $1`, [submissionId]);
+  return rows[0] || null;
+}
+
+/**
+ * Open a submission for a candidate against a requirement — DRAFT.
+ * Idempotent for a workflow: an active submission for the same pair is
+ * answered with `exists`, not the 409 the UI gets.
+ */
+router.post("/internal/prism/submissions", async (req, res) => {
+  const { candidateId, jobId, resumeId, matchId, actorId } = req.body || {};
+  if (!candidateId || !jobId) {
+    return res.status(400).json({ status: "failed", error: "candidateId and jobId are required." });
+  }
+  try {
+    const actor = actorId || (await requirementOwner(jobId));
+    if (!actor) {
+      return res.status(422).json({ status: "failed", error: "No actor: pass actorId, or give the requirement an owner." });
+    }
+    const existing = await prismRepo.findActiveDuplicateSubmission(candidateId, jobId, actor);
+    if (existing) {
+      return res.json({
+        status: "exists",
+        submission: { id: existing.id, status: existing.status, candidate_id: candidateId, job_id: jobId },
+        actor_source: actorId ? "payload" : "requirement_owner",
+      });
+    }
+    let resume = resumeId;
+    if (!resume) {
+      const candidate = await candidateRepo.getCandidateWithCurrentResume(candidateId, actor);
+      resume = candidate?.resume_id || null;
+      if (!resume) {
+        return res.status(422).json({ status: "failed", error: "Candidate has no current resume; pass resumeId." });
+      }
+    }
+    const created = await prismService.createSubmission({ candidateId, resumeId: resume, jobId, matchId: matchId || null, userId: actor });
+    res.status(201).json({
+      status: "created",
+      submission: { id: created.id, status: created.status, candidate_id: candidateId, job_id: jobId, resume_id: resume },
+      actor_source: actorId ? "payload" : "requirement_owner",
+    });
+  } catch (err) {
+    fail(res, err, "[PRISM-ORCH] Failed to open submission");
+  }
+});
+
+/**
+ * Mask the profile — CANDIDATE_VALIDATED → MASKED — and answer with the
+ * masked profile, which is what RELAY's profile send takes.
+ */
+router.post("/internal/prism/submissions/:submissionId/mask", async (req, res) => {
+  const { submissionId } = req.params;
+  const { maskedProfile } = req.body || {};
+  try {
+    const sub = await submissionById(submissionId);
+    if (!sub) return res.status(404).json({ status: "failed", error: "Submission not found." });
+    if (sub.status === "MASKED" && sub.masked_profile) {
+      return res.json({ status: "already_processed", submissionId, currentStatus: sub.status, maskedProfile: sub.masked_profile });
+    }
+    const updated = await prismWorkflow.maskCandidateDetails(submissionId, sub.created_by, maskedProfile || null);
+    res.json({ status: "success", submissionId, newStatus: updated.status, maskedProfile: updated.masked_profile || null, actor_source: "submission_owner" });
+  } catch (err) {
+    fail(res, err, "[PRISM-ORCH] Failed to mask submission");
+  }
+});
+
+/**
+ * Move a submission to a status the matrix allows. `metadata` is what that
+ * transition's own function reads (rate, availability, documentUrl, …).
+ * A submission already there is `already_processed`, not an error.
+ *
+ * RECORD, NEVER SEND. Two of PRISM's own action functions send mail through
+ * RELAY on the way — `requestCandidateConsent` (→ PENDING_CONSENT) and
+ * `sendToVendor` (→ VENDOR_SUBMITTED). From the UI that is right. From a
+ * workflow it is a second copy of what `relay.consent.send` and
+ * `relay.profile.send` just sent (the roadmap: RELAY is the communication
+ * layer; PRISM keeps the record). So those two go through the bare
+ * transition — matrix, lock, audit — and PENDING_CONSENT also gets its
+ * `prism.consents` row marked REQUESTED, which is the consent TRACKING
+ * PRISM is named for, and what the inbound consent handler correlates on.
+ */
+const SENDING_TARGETS = new Set(["PENDING_CONSENT", "VENDOR_SUBMITTED"]);
+
+async function recordOnlyTransition(sub, targetStatus, metadata) {
+  const updated = await prismWorkflow.executeTransition(sub.id, sub.created_by, targetStatus, metadata || {});
+  if (targetStatus === "PENDING_CONSENT") {
+    const client = await pool.connect();
+    try {
+      const existing = await prismRepo.getLatestConsent(client, sub.id, sub.created_by);
+      if (existing && existing.status !== "REQUESTED") {
+        await prismRepo.updateConsentStatus(client, existing.id, sub.id, sub.created_by, "REQUESTED", "[ORCH] consent sent by RELAY");
+      } else if (!existing) {
+        await prismRepo.createConsent(client, { submissionId: sub.id, status: "REQUESTED", notes: "[ORCH] consent sent by RELAY", createdBy: sub.created_by });
+      }
+    } finally {
+      client.release();
+    }
+  }
+  return updated;
+}
+
+router.post("/internal/prism/submissions/:submissionId/transition", async (req, res) => {
+  const { submissionId } = req.params;
+  const { targetStatus, metadata } = req.body || {};
+  if (!targetStatus) return res.status(400).json({ status: "failed", error: "targetStatus is required." });
+  try {
+    const sub = await submissionById(submissionId);
+    if (!sub) return res.status(404).json({ status: "failed", error: "Submission not found." });
+    if (sub.status === String(targetStatus).toUpperCase()) {
+      return res.json({ status: "already_processed", submissionId, previousStatus: sub.status, newStatus: sub.status });
+    }
+    const target = String(targetStatus).toUpperCase();
+    const updated = SENDING_TARGETS.has(target)
+      ? await recordOnlyTransition(sub, target, metadata)
+      : await prismWorkflow.transitionStatus(submissionId, sub.created_by, target, metadata || {});
+    res.json({ status: "success", submissionId, previousStatus: sub.status, newStatus: updated.status, sent: false, actor_source: "submission_owner" });
+  } catch (err) {
+    fail(res, err, "[PRISM-ORCH] Failed to transition submission");
   }
 });
 

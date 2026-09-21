@@ -1953,6 +1953,11 @@ module.exports = {
   WORKFLOW_STATUSES,
   VALID_STATUSES,
   TRANSITIONS,
+  // The record-only move: matrix, lock, audit — and nothing sent. The
+  // orchestrator's transition endpoint uses it for the two statuses whose
+  // action functions also send mail (PENDING_CONSENT, VENDOR_SUBMITTED),
+  // because in a workflow RELAY's own nodes have already done the sending.
+  executeTransition,
 
   runCandidateValidation,
   buildMaskedProfile,

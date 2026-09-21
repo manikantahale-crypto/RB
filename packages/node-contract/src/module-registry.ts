@@ -120,6 +120,20 @@ export const MODULE_REGISTRY = [
     shared: false,
   },
   {
+    key: "prism",
+    title: "Submissions",
+    owns:
+      "A candidate's submission to a vendor as a record with a lifecycle: draft, consent, masked " +
+      "profile, sent to the vendor, accepted, rate and availability, RTR, ready, submitted. " +
+      "PRISM keeps the record and enforces the order; RELAY does the sending.",
+    // Opened when a candidate said yes to a requirement; done when the
+    // vendor has the profile and answered. Both are announced by PRISM's
+    // own nodes; the catalogue rows are stage 6's (none has fired yet).
+    frontDoor: ["relay.consent.decided"],
+    handsOff: ["prism.submission.completed"],
+    shared: false,
+  },
+  {
     key: "interview",
     title: "Interviews and scoring",
     owns:
@@ -154,6 +168,7 @@ export const MODULES = MODULE_REGISTRY.map((m) => m.key) as unknown as readonly 
   "syntra",
   "orbit",
   "relay",
+  "prism",
   "interview",
   "platform",
 ];
