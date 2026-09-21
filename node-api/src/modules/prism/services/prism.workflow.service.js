@@ -621,8 +621,13 @@ async function requestCandidateConsent(submissionId, userId, { notes, channel = 
  * Hierarchy:
  * 1. Explicit Assigned Vendor: If job.vendor_id is set and owned by userId, return that vendor.
  * 2. Source Email Match: If job.source_email matches a vendor's email owned by userId, return that vendor.
- * 3. Skill & Location Alignment: If vendor.preferred_technologies matches job.required_skills or job.location matches vendor.location.
- * 4. Deterministic Recruiter Default: Earliest created eligible vendor owned by userId with a valid email.
+ *
+ * Nothing else. Until 2026-09-21 this went on to guess — by skills/location
+ * overlap, and failing that the recruiter's EARLIEST vendor — and a
+ * candidate's profile could be emailed to a company nobody chose. A
+ * requirement that does not name its vendor has no vendor; every caller
+ * already answers that with "awaiting vendor assignment" or a 400, and
+ * the recruiter assigns one. Decided with the product owner (D-A).
  * @param {object} client - pg pool client
  * @param {object} job - core.requirements row (as job.repository returns it)
  * @param {string} userId - Recruiter user ID
@@ -667,29 +672,8 @@ async function resolveVendorForJob(client, job, userId) {
     }
   }
 
-  // 3. Match by Technology / Location Alignment
-  const jobSkills = Array.isArray(job.required_skills) ? job.required_skills.map((s) => String(s).toLowerCase()) : [];
-  const jobTitle = String(job.title || "").toLowerCase();
-  const jobLocation = String(job.location || "").toLowerCase();
-
-  for (const v of eligibleVendors) {
-    const vTech = String(v.preferred_technologies || "").toLowerCase();
-    const vLoc = String(v.location || "").toLowerCase();
-
-    const techMatch = vTech && (jobSkills.some((s) => s.includes(vTech) || vTech.includes(s)) || jobTitle.includes(vTech));
-    const locMatch = vLoc && jobLocation && (jobLocation.includes(vLoc) || vLoc.includes(jobLocation));
-
-    if (techMatch || locMatch) {
-      log.info(`[resolveVendorForJob] Selected vendor by tech/location match (tech=${Boolean(techMatch)}, loc=${Boolean(locMatch)}): ${v.name} (${v.id})`);
-      return v;
-    }
-  }
-
-  // 4. Deterministic Recruiter Default: Earliest created eligible vendor
-  const sorted = [...eligibleVendors].sort((a, b) => new Date(a.created_at) - new Date(b.created_at));
-  const defaultVendor = sorted[0];
-  log.info(`[resolveVendorForJob] Selected deterministic default vendor: ${defaultVendor.name} (${defaultVendor.id})`);
-  return defaultVendor;
+  log.info(`[resolveVendorForJob] Job ${job.id} names no vendor and its sender matches none — not guessing.`);
+  return null;
 }
 
 /**
@@ -697,7 +681,17 @@ async function resolveVendorForJob(client, job, userId) {
  * If YES/APPROVED: Runs Candidate Validation -> Transitions to CANDIDATE_VALIDATED if passed.
  * If NO/REJECTED: Transitions to CONSENT_REJECTED (Stop/Follow-up).
  */
-async function recordCandidateConsentResponse(submissionId, userId, { response, notes } = {}) {
+/**
+ * `autoDispatch` — whether a YES goes on to email the vendor. TRUE for the
+ * recruiter's click in the UI: a person confirmed with the candidate and
+ * pressed the button, and that is the authorization. FALSE for the
+ * inbound path (RELAY parsed the candidate's reply; nobody clicked) and so
+ * for the orchestrator's `prism.consent.record`: the yes is recorded and
+ * the profile masked, and the send is a workflow step behind a person's
+ * approval (`human.gate` → `relay.profile.send`). Roadmap rule 4, decided
+ * with the product owner 2026-09-21 (D-A).
+ */
+async function recordCandidateConsentResponse(submissionId, userId, { response, notes, autoDispatch = true } = {}) {
   const normalizedResponse = (response || "").toUpperCase();
   const isAccepted = ["YES", "APPROVED", "ACCEPTED"].includes(normalizedResponse);
   const isRejected = ["NO", "REJECTED", "DECLINED"].includes(normalizedResponse);
@@ -812,6 +806,10 @@ async function recordCandidateConsentResponse(submissionId, userId, { response, 
     // Step A: Auto-Masking (CANDIDATE_VALIDATED -> MASKED)
     const maskedSub = await maskCandidateDetails(submissionId, userId);
     log.info(`[PRISM] Submission ${submissionId} automatically masked.`);
+    if (!autoDispatch) {
+      log.info(`[PRISM] Submission ${submissionId} masked; the send to the vendor waits for a person (autoDispatch=false).`);
+      return maskedSub;
+    }
 
     // Step B: Auto-Vendor Identification from JD
     const clientVendor = await pool.connect();

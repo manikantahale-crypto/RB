@@ -20,14 +20,13 @@
  * ephemeral port and called over HTTP, exactly as the worker calls it. No
  * pg-boss, no workers, no dev server needed.
  *
- * WHAT IT MUST NOT DO. PRISM's consent handler, on YES, auto-chains: masks,
- * resolves a vendor for the requirement — falling back to the recruiter's
- * EARLIEST vendor when nothing matches — and emails the profile to them
- * through RELAY (prism.workflow.service.js:764-800). A proof must never
- * send a real email. So RELAY is pointed at a port nothing listens on
- * BEFORE the app loads; the adapter throws, the chain catches, and the
- * submission stays MASKED. Asserted below: the status is never
- * VENDOR_SUBMITTED. (That auto-chain is itself a finding — §13.)
+ * WHAT IT MUST NOT DO. Send mail. PRISM's consent handler used to auto-chain
+ * a YES into a vendor email (guessing the vendor when the JD named none);
+ * since D-A (2026-09-21) the INBOUND path records, masks and stops, and a
+ * vendor is never guessed. Both are asserted below by watching the log:
+ * no vendor resolution, no RELAY call. RELAY is still pointed at a dead
+ * port before the app loads — a proof stays safe by construction, not by
+ * trusting the code it is proving.
  *
  * Scratch rows are named "SCRATCH stage-5 proof" and deleted at the end
  * unless --keep. The candidate and requirement used are REAL and are not
@@ -44,6 +43,15 @@ process.env.LOG_LEVEL = process.env.LOG_LEVEL || "warn";
 
 const crypto = require("crypto");
 const { pool } = require("../src/config/db");
+const log = require("../src/utils/logger");
+
+// Every line node-api logs during the run, so a proof can assert on what the
+// code DID (resolved a vendor, called RELAY) and not only on what it stored.
+const logged = [];
+for (const level of ["info", "warn", "error"]) {
+  const orig = log[level].bind(log);
+  log[level] = (...args) => { logged.push(args.map(String).join(" ")); return orig(...args); };
+}
 
 const KEEP = process.argv.includes("--keep");
 const TAG = "SCRATCH stage-5 proof";
@@ -172,8 +180,13 @@ async function provePrism(post, cleanup) {
     `status=${consent.status} body=${JSON.stringify(consent.json)}`);
 
   const { rows: afterConsent } = await pool.query(`SELECT status, masked_profile IS NOT NULL AS masked FROM prism.submissions WHERE id = $1`, [submissionId]);
-  ok("prism: the consent auto-chain did NOT reach VENDOR_SUBMITTED (RELAY unreachable by design)",
-    afterConsent[0].status !== "VENDOR_SUBMITTED", `status=${afterConsent[0].status}`);
+  ok("prism: an inbound YES records and masks, and stops there (D-A)",
+    afterConsent[0].status === "MASKED" && afterConsent[0].masked === true, `status=${afterConsent[0].status} masked=${afterConsent[0].masked}`);
+  const resolved = logged.filter((l) => l.includes("[resolveVendorForJob]"));
+  const relayCalls = logged.filter((l) => /Relay Adapter|\/internal\/profile\/send/.test(l));
+  ok("prism: no vendor was resolved and RELAY was never called", resolved.length === 0 && relayCalls.length === 0,
+    `vendor lines: ${resolved.length}, relay lines: ${relayCalls.length}`);
+  ok("prism: the handler said the send waits for a person", logged.some((l) => l.includes("waits for a person")), "no such log line");
   console.log(`   after consent: status=${afterConsent[0].status} masked=${afterConsent[0].masked}`);
 
   const mask = await post(`/internal/prism/submissions/${submissionId}/mask`, {});

@@ -173,7 +173,11 @@ router.post("/internal/prism/consent/response", async (req, res) => {
       return res.json({ status: "already_processed", submissionId: targetSubmission.id, currentStatus: targetSubmission.status });
     }
 
+    // Inbound: the candidate's reply, read by RELAY. Nobody clicked, so the
+    // yes is recorded and the profile masked, and the send waits for a
+    // person (D-A). The UI's own consent action keeps autoDispatch.
     const updated = await prismWorkflow.recordCandidateConsentResponse(targetSubmission.id, targetSubmission.created_by, {
+      autoDispatch: false,
       response: normalizedResponse,
       notes: notes ? `[RELAY Inbound Email ${messageId ? `msg:${messageId}` : ""}] ${notes}` : `[RELAY Inbound Email]`,
     });
