@@ -102,6 +102,8 @@ export const requirementIngest = defineNode({
       channel_type: input.channel_type ?? "API",
       source: input.source ?? "orch",
       correlation_id: ctx.correlationId ?? undefined,
+      // Whose requirement this is. A session would say; a run says here.
+      organization_id: ctx.orgId,
     };
     ctx.logger.info("calling Astra ingest", { orgId: ctx.orgId });
     const r = await postAstra("/internal/astra/requirements/ingest", body, { signal: ctx.signal });

@@ -16,6 +16,7 @@ async function fetchRequirements(req, res, next) {
     try {
       result = await fetchAndIngest(source, keyword || "React Developer", location || "Dallas", userId, {
         correlationId: req.body.correlation_id || req.body.correlationId || null,
+        organizationId: req.body.organization_id || req.body.organizationId || null,
       });
     } catch (apiErr) {
       return res.status(400).json({

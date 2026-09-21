@@ -70,10 +70,11 @@ async function insertRequirement(client, data = {}) {
       origin,
       score_threshold,
       uploaded_at,
-      created_by
+      created_by,
+      org_id
     ) VALUES (
       $1, $2, $3, $4, $5, $6, $7, $8, $9, $10,
-      $11, $12, $13, $14, $15, $16, 'astra', 50, now(), $17
+      $11, $12, $13, $14, $15, $16, 'astra', 50, now(), $17, $18
     )
     RETURNING
       id,
@@ -109,6 +110,11 @@ async function insertRequirement(client, data = {}) {
     data.remotePolicy || null,
     data.status || "Active",
     data.createdBy || null,
+    // The organisation, when the caller knows it — a workflow does (its
+    // run's), a session does. NULL lets the trigger derive it from
+    // created_by; with neither, the database refuses the row (V.28), which
+    // is what an orchestrated ingest hit on 2026-09-21 before this existed.
+    data.orgId || data.org_id || data.organizationId || null,
   ];
 
   const { rows } = await dbClient.query(sql, values);

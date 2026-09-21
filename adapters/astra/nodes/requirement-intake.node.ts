@@ -107,6 +107,8 @@ export const requirementIntake = defineNode({
       title: input.title,
       location: input.location,
       correlation_id: ctx.correlationId ?? undefined,
+      // Whose requirement this is. A session would say; a run says here.
+      organization_id: ctx.orgId,
     };
     ctx.logger.info("calling Astra email intake", { orgId: ctx.orgId });
     const r = await postAstra("/internal/astra/intake/email", body, { signal: ctx.signal });

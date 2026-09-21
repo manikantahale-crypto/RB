@@ -44,8 +44,22 @@ async function insertResume(
   return { ...resume, file_path: filePath ?? null };
 }
 
-async function getResumeById(resumeId) {
-  const { rows } = await pool.query(
+/**
+ * A caller inside a transaction may pass its client first — PRISM's workflow
+ * does, eleven times, so its reads see its own uncommitted rows. The old
+ * project's repositories took that leading client; the port dropped it, and
+ * every PRISM consent YES then sent the pg client object as the candidate
+ * id ("invalid input syntax for type uuid: {…connectionParameters…}").
+ * Found by node-api/scripts/prove-stage5-live.js on 2026-09-21.
+ */
+function splitClient(args) {
+  return args[0] && typeof args[0].query === "function" ? { db: args[0], rest: args.slice(1) } : { db: pool, rest: args };
+}
+
+async function getResumeById(...args) {
+  const { db, rest } = splitClient(args);
+  const [resumeId] = rest;
+  const { rows } = await db.query(
     `SELECT id, candidate_id, file_path, mime_type, raw_text,
             resume_summary, skills, primary_role, summary_hash,
             processed_at, processing_failed_at, processing_status, processing_error,

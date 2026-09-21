@@ -101,6 +101,8 @@ export const jobboardFetch = defineNode({
       listings: input.listings,
       raw_text: rawTextOf(input),
       correlation_id: ctx.correlationId ?? undefined,
+      // Whose requirement this is. A session would say; a run says here.
+      organization_id: ctx.orgId,
     };
     ctx.logger.info("calling Astra jobboard fetch", { source: body.source, orgId: ctx.orgId });
     const r = await postAstra("/internal/astra/jobboards/fetch", body, { signal: ctx.signal });

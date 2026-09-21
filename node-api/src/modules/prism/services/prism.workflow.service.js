@@ -158,11 +158,51 @@ async function runCandidateValidation(client, submission, userId) {
  * Generate Real Vendor-Safe Masked Profile
  * Sanitizes candidate PII while preserving skills, experience, and qualification summary.
  */
+/**
+ * Everything that names the person, taken out of free text before it goes to
+ * a vendor: the full name, each part of it (three letters or more, so "Al"
+ * inside "Also" is left alone), the email and the phone. Case-insensitive.
+ *
+ * Found on 2026-09-21 by the live proof: the masked profile's summary was
+ * the resume summary verbatim, and resume summaries open with the name —
+ * "Basic profile extracted from resume text for ARJUN RAO …". The roadmap
+ * names contact masking as PRISM's job; a summary that says who it is
+ * defeats the reference on the line above it.
+ */
+function scrubIdentity(text, candidate, replacement) {
+  if (!text) return text;
+  let out = String(text);
+  const terms = [];
+  if (candidate.full_name) {
+    terms.push(candidate.full_name.trim());
+    for (const part of candidate.full_name.split(/\s+/)) if (part.length >= 3) terms.push(part);
+  }
+  if (candidate.email) terms.push(String(candidate.email).trim());
+  if (candidate.phone) {
+    const digits = String(candidate.phone).replace(/\D/g, "");
+    // With and without the country code, written any way: 512-555-0199,
+    // (512) 555 0199, +1 512.555.0199.
+    for (const d of new Set([digits, digits.slice(-10)])) {
+      if (d.length >= 7) out = out.replace(new RegExp(d.split("").join("[\\s().-]*"), "g"), replacement);
+    }
+    terms.push(String(candidate.phone).trim());
+  }
+  // Longest first, so the whole name goes before its parts and the email
+  // before the name inside it. A term is a whole word: "Rao" in "Rao knows"
+  // goes, "Arjun" inside "Arjuna" stays.
+  for (const term of terms.filter(Boolean).sort((a, b) => b.length - a.length)) {
+    const escaped = term.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    out = out.replace(new RegExp(`(^|[^\\w@])${escaped}(?![\\w@])`, "gi"), `$1${replacement}`);
+  }
+  return out;
+}
+
 function buildMaskedProfile(candidate, resume, job) {
   const candidateIdShort = candidate.id ? candidate.id.slice(0, 8).toUpperCase() : "REF";
   const initials = candidate.full_name
     ? candidate.full_name.split(" ").map((n) => n[0]).join("").toUpperCase()
     : "CD";
+  const reference = `Candidate ${initials}`;
 
   return {
     maskedCandidateId: `CAN-${candidateIdShort}`,
@@ -172,7 +212,11 @@ function buildMaskedProfile(candidate, resume, job) {
     immigrationStatus: candidate.immigration_status || "Verified / Authorized",
     generalLocation: candidate.location ? candidate.location.split(",").slice(-2).join(",").trim() : "US / Remote",
     skills: resume?.skills || candidate.skills || [],
-    profileSummary: resume?.resume_summary || resume?.profile_summary || "Candidate matched with requirement.",
+    profileSummary: scrubIdentity(
+      resume?.resume_summary || resume?.profile_summary || "Candidate matched with requirement.",
+      candidate,
+      reference,
+    ),
     jobTitle: job?.title || "Target Position",
     email: "[PROTECTED / VIA RECRUITER]",
     phone: "[PROTECTED]",
@@ -1961,6 +2005,7 @@ module.exports = {
 
   runCandidateValidation,
   buildMaskedProfile,
+  scrubIdentity,
   runVendorValidation,
   runFinalValidation,
 

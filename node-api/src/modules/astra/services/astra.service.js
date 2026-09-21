@@ -362,6 +362,7 @@ async function ingestRequirement(payload = {}) {
   const effectiveTitle = rawTitle ? rawTitle.trim() : (rawSubject ? rawSubject.trim() : "Untitled Role");
 
   const requirementData = {
+    orgId: payload.organization_id || payload.organizationId || payload.org_id || null,
     title: effectiveTitle,
     companyName: rawCompany ? rawCompany.trim() : null,
     originalFileName: payload.originalFileName || payload.original_file_name || null,

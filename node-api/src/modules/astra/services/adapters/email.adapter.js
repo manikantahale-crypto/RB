@@ -262,6 +262,9 @@ async function ingestEmail(payload = {}) {
   if (payload.correlation_id || payload.correlationId) {
     canonicalPayload.correlation_id = payload.correlation_id || payload.correlationId;
   }
+  if (payload.organization_id || payload.organizationId) {
+    canonicalPayload.organization_id = payload.organization_id || payload.organizationId;
+  }
   return astraService.ingestRequirement(canonicalPayload);
 }
 

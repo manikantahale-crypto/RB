@@ -80,7 +80,7 @@ describe("astra.requirement.intake", () => {
     });
     expect(calls[0]).toEqual({
       path: "/internal/astra/intake/email",
-      body: { subject: "Java Developer — Austin", body: "Client needs a Java developer.", from: "vendor@example.invalid", correlation_id: CORR },
+      body: { subject: "Java Developer — Austin", body: "Client needs a Java developer.", from: "vendor@example.invalid", correlation_id: CORR, organization_id: ctx.orgId },
     });
     expect(out).toMatchObject({ jobId: JOB, title: "Java Developer (parsed)", channel_type: "EMAIL", stubbed: false });
     // astra.service.js writes astra.requirement.received in the row's own
@@ -119,6 +119,7 @@ describe("astra.requirement.ingest", () => {
       channel_type: "API",
       source: "orch",
       correlation_id: CORR,
+      organization_id: ctx.orgId,
     });
     expect(out).toEqual({ jobId: JOB, channel_type: "API", duplicate: false, stubbed: false });
     expect(emitted).toHaveLength(0);
@@ -150,7 +151,7 @@ describe("astra.jobboard.fetch", () => {
       }),
     );
     const out = await run(jobboardFetch, { source: "jsearch", keyword: "SAP ABAP", location: "Dallas" });
-    expect(calls[0]!.body).toMatchObject({ source: "jsearch", keyword: "SAP ABAP", location: "Dallas", correlation_id: CORR });
+    expect(calls[0]!.body).toMatchObject({ source: "jsearch", keyword: "SAP ABAP", location: "Dallas", correlation_id: CORR, organization_id: ctx.orgId });
     expect(out).toEqual({ count: 2, firstJobId: "a1", source: "jsearch", stubbed: false });
     expect(emitted).toHaveLength(0);
   });

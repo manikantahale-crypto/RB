@@ -103,6 +103,7 @@ router.post("/internal/astra/requirements/ingest", async (req, res, next) => {
     const channelType = String(body.channel_type || body.channelType || "API").toUpperCase();
     const job = await withTransaction(async (client) => {
       const created = await astraRepo.insertRequirement(client, {
+        orgId: body.organization_id || body.organizationId || body.org_id || null,
         title: body.title || "Untitled Role",
         rawText,
         summaryHash,
