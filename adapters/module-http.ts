@@ -22,15 +22,16 @@ export type ModuleResponse = Record<string, any>;
  * "Unreachable" means the connection never completed — DNS, refused, reset,
  * timed out. It does NOT mean an error response. See `post`.
  *
- * One switch, `ORCH_STUB_SYNTRA`, for every module: they are one process, and
- * a stubbed ASTRA beside a live SYNTRA would answer nothing anyone asked.
+ * One switch, `ORCH_STUB_SYNTRA`, for every module node-api serves: they are
+ * one process, and a stubbed ASTRA beside a live SYNTRA would answer nothing
+ * anyone asked. RELAY is its own process and has its own, `ORCH_STUB_RELAY`.
  *
  * This is a DEV convenience and is not the contract's `stub`. Contract stubs
  * are CI machinery and never run in a real process; this runs in a real
  * process and says so in the log.
  */
-function stubMode(): 'force' | 'auto' | 'off' {
-  const v = (process.env.ORCH_STUB_SYNTRA ?? 'auto').toLowerCase();
+function stubMode(stubEnv: string): 'force' | 'auto' | 'off' {
+  const v = (process.env[stubEnv] ?? 'auto').toLowerCase();
   if (v === '1' || v === 'true' || v === 'force') return 'force';
   if (v === '0' || v === 'false' || v === 'off') return 'off';
   return 'auto';
@@ -44,11 +45,16 @@ export type ModulePoster = (
 
 /**
  * A poster for one module. `service` is the word in the log and the error;
- * `baseUrl` is read on every call so a test can set the environment.
+ * `baseUrl` is read on every call so a test can set the environment;
+ * `stubEnv` names the dev-stub switch (default: node-api's).
  */
-export function modulePoster(service: string, baseUrl: () => string): ModulePoster {
+export function modulePoster(
+  service: string,
+  baseUrl: () => string,
+  { stubEnv = 'ORCH_STUB_SYNTRA' }: { stubEnv?: string } = {},
+): ModulePoster {
   return async function post(path, body, opts = {}) {
-    const mode = stubMode();
+    const mode = stubMode(stubEnv);
     if (mode === 'force') {
       return {
         status: 'stubbed',
@@ -87,7 +93,7 @@ export function modulePoster(service: string, baseUrl: () => string): ModulePost
       if (mode === 'off') throw err;
       console.warn(
         `[${service}] unreachable (${base}${path}) — stubbing response. ` +
-          `Set ORCH_STUB_SYNTRA=0 to fail hard. Cause: ${
+          `Set ${stubEnv}=0 to fail hard. Cause: ${
             err instanceof Error ? err.message : err
           }`,
       );

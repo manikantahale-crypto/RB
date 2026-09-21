@@ -37,6 +37,9 @@ import { placementConfirm } from "./orbit/nodes/placement-confirm.node.js";
 import { revenueArrange } from "./orbit/nodes/revenue-arrange.node.js";
 import { activityNote } from "./orbit/nodes/activity-note.node.js";
 import { orbitRouteDecision } from "./orbit/nodes/route-decision.node.js";
+import { consentSend } from "./relay/nodes/consent-send.node.js";
+import { consentRemind } from "./relay/nodes/consent-remind.node.js";
+import { profileSend } from "./relay/nodes/profile-send.node.js";
 
 /** Contracts the worker composes into the runtime. These RUN. */
 export const nodeContracts = [
@@ -74,6 +77,18 @@ export const nodeContracts = [
   revenueArrange,
   activityNote,
   orbitRouteDecision,
+  /**
+   * RELAY's three action nodes, ported from the old project's
+   * relay-actions.ts against the handlers in apps/relay (2026-09-20). The
+   * old project's two RELAY branch nodes were already thin wrappers over
+   * `orch.switch` with the `relay.email.route` and `relay.consent` presets,
+   * which `switch-config.ts` carries — so they are not ported; a workflow
+   * uses the switch. With these, both RELAY workflows (`relay.intake` v3,
+   * `relay.consent` v3) have every step they name.
+   */
+  consentSend,
+  consentRemind,
+  profileSend,
 ];
 
 /**

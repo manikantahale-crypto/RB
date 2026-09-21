@@ -88,7 +88,13 @@ export function toNodeImpl(contract: AnyNodeContract): NodeImpl {
     try {
       output = await untilAborted(
         contract.run(
-          { orgId: ctx.orgId, logger: ctx.logger, emit, signal: ctx.signal },
+          {
+            orgId: ctx.orgId,
+            logger: ctx.logger,
+            emit,
+            signal: ctx.signal,
+            correlationId: trigger.correlation_id ?? null,
+          },
           input,
           config,
         ),

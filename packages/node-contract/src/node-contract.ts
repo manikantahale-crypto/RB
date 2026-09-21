@@ -283,6 +283,14 @@ export interface NodeRunCtx {
    * hand a node a bare context; a node must treat "absent" as "never aborts".
    */
   readonly signal?: AbortSignal;
+  /**
+   * The flow this run belongs to — the trigger's correlation id. A node that
+   * asks another service to do something the flow will later WAIT ON hands
+   * this over, so the answer can find the parked run (RELAY stores it on the
+   * consent thread and publishes `relay.consent.decided` with it). Optional
+   * for the same reason `signal` is; absent means "not part of a flow".
+   */
+  readonly correlationId?: string | null;
 }
 
 /* ────────────────────────── the contract itself ──────────────────────── */
