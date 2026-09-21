@@ -17,6 +17,7 @@
  * the graph looks live, and simply never fires.
  */
 import type { Pool } from "pg";
+import { runnableImpls } from "../lib/runnable-impls.js";
 import { withOrgScope } from "../with-org-scope.js";
 
 import { GRAPH_DEFINITIONS, GRAPH_EVENT_BINDINGS } from "../lib/authoring-views.js";
@@ -925,6 +926,7 @@ export function registerWorkflowRoutes(app: FastifyLike, pool: Pool): void {
         const artifactSource = `${JSON.stringify(row.definition, null, 2)}\n`;
         const evidence = await collectGateEvidence(client, artifactSource, graphKey);
         const gate = evaluateGoLiveGate({
+          runnableImpls: runnableImpls(),
           artifactSource,
           storedChecksum: row.checksum ?? "",
           expectedGraphKey: graphKey,

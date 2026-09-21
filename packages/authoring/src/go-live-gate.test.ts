@@ -311,3 +311,27 @@ describe("check 9 — will this workflow stop", () => {
     expect(c?.message).toContain("match_all");
   });
 });
+
+describe("check 1 — the runtime can run every step: whose list", () => {
+  const relay = () => artifact([{ id: "send", impl: "relay.consent.send" }]).source;
+
+  it("with no list from the caller, falls back to tool-registry.ts — which never learned RELAY", () => {
+    const check = checkFor(gate({ artifactSource: relay() }), "tools_runnable");
+    expect(check?.ok).toBe(false);
+    expect(check?.message).toContain("relay.consent.send");
+  });
+
+  it("with the composed contract keys from the caller, a RELAY step is runnable", () => {
+    const check = checkFor(
+      gate({ artifactSource: relay(), runnableImpls: ["relay.consent.send", "human.gate"] }),
+      "tools_runnable",
+    );
+    expect(check?.ok).toBe(true);
+  });
+
+  it("the caller's list is the whole truth — a step not on it is not runnable, even a SYNTRA one", () => {
+    const { source } = artifact([{ id: "p", impl: "syntra.jd.process" }]);
+    const check = checkFor(gate({ artifactSource: source, runnableImpls: ["relay.consent.send"] }), "tools_runnable");
+    expect(check?.ok).toBe(false);
+  });
+});

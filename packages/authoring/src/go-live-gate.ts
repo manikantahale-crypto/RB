@@ -34,6 +34,15 @@ export type GoLiveGateCheck = {
 export type GoLiveGateInput = {
   artifactSource: string;
   storedChecksum: string;
+  /**
+   * The step implementations the runtime can actually run — the composed
+   * contract registry's keys, handed in by the caller (admin-api reads
+   * `adapters/index.ts`). Absent, the gate falls back to `tool-registry.ts`,
+   * a hardcoded list that was the fourth place onboarding a module cost a
+   * release: it knew SYNTRA, ASTRA and ORBIT and would have refused every
+   * RELAY and PRISM workflow at go-live. Found 2026-09-21.
+   */
+  runnableImpls?: Iterable<string>;
   /** Expected authored key, e.g. syntra.authored */
   expectedGraphKey: string;
   /**
@@ -169,8 +178,8 @@ function parseArtifactObject(
 }
 
 /** Check 1 — every node.impl ∈ runtime nodeRegistry (production). */
-function checkToolsRunnable(obj: Record<string, unknown>): GoLiveGateCheck {
-  const runtime = new Set<string>(RUNTIME_RUNNABLE_IMPLS);
+function checkToolsRunnable(obj: Record<string, unknown>, runnable?: Iterable<string>): GoLiveGateCheck {
+  const runtime = new Set<string>(runnable ?? RUNTIME_RUNNABLE_IMPLS);
   const nodes = obj.nodes;
   if (!Array.isArray(nodes)) {
     return {
@@ -691,7 +700,7 @@ export function evaluateGoLiveGate(input: GoLiveGateInput): GoLiveGateResult {
   }
 
   // 1 — RUNTIME-RUNNABLE (before schema so missing tools surface clearly)
-  checks.push(checkToolsRunnable(parsed.obj));
+  checks.push(checkToolsRunnable(parsed.obj, input.runnableImpls));
 
   // 2 — VALID
   const structural = checkStructurallyValid(

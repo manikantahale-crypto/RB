@@ -1,56 +1,22 @@
 import type { NodeFactory } from './types.js';
-import { syntraJdProcess, syntraResumeProcess, syntraMatchProcess } from './syntra.js';
-import {
-  syntraBenchAlert,
-  syntraContinuousMatch,
-  syntraDuplicateDetect,
-  syntraDuplicateMerge,
-  syntraRunRetry,
-  syntraShortlistNotify,
-} from './syntra-followups.js';
 import { humanGate } from './human-gate.js';
-import {
-  astraRequirementNormalize,
-  astraRouteDecision,
-  astraRequirementIntake,
-  astraRequirementIngest,
-  astraJobboardFetch,
-  astraRequirementQuality,
-} from './astra.js';
-import {
-  orbitLifecycleTransition,
-  orbitPlacementConfirm,
-  orbitRevenueArrange,
-  orbitActivityNote,
-  orbitRouteDecision,
-} from './orbit.js';
 import { orchBranchDecision } from './branch.js';
 
 /**
- * Production graph node registry — keys must match authoring TOOL_CATALOG.
- * ASTRA (JD intake), ORBIT (bench/workforce), and Syntra tools are independent.
+ * What the engine still runs by itself: two platform control nodes that no
+ * contract can express yet (`human.gate` parks a run with `interrupt()`;
+ * `orch.branch.decision` publishes an event its declaration does not name).
+ * Everything else — 31 nodes across SYNTRA, ASTRA, ORBIT, RELAY and PRISM —
+ * is a contract in `adapters/` and is composed over this map by
+ * `apps/worker/src/node-registry.ts`.
+ *
+ * The engine functions that used to sit here (syntra.ts, syntra-followups.ts,
+ * astra.ts, orbit.ts) were deleted on 2026-09-21, once their contracts had
+ * run against the live backends (ref/Orchestrator_Refinements.md §13).
+ * Their behaviour is in the contracts, request for request; their history
+ * is in git.
  */
 export const nodeRegistry = {
-  'syntra.jd.process': (() => syntraJdProcess) as NodeFactory,
-  'syntra.resume.process': (() => syntraResumeProcess) as NodeFactory,
-  'syntra.match.process': (() => syntraMatchProcess) as NodeFactory,
-  'syntra.continuous.match': (() => syntraContinuousMatch) as NodeFactory,
-  'syntra.duplicate.detect': (() => syntraDuplicateDetect) as NodeFactory,
-  'syntra.bench.alert': (() => syntraBenchAlert) as NodeFactory,
-  'syntra.shortlist.notify': (() => syntraShortlistNotify) as NodeFactory,
-  'syntra.duplicate.merge': (() => syntraDuplicateMerge) as NodeFactory,
-  'syntra.run.retry': (() => syntraRunRetry) as NodeFactory,
-  'astra.requirement.intake': (() => astraRequirementIntake) as NodeFactory,
-  'astra.requirement.ingest': (() => astraRequirementIngest) as NodeFactory,
-  'astra.jobboard.fetch': (() => astraJobboardFetch) as NodeFactory,
-  'astra.requirement.quality': (() => astraRequirementQuality) as NodeFactory,
-  'astra.requirement.normalize': (() => astraRequirementNormalize) as NodeFactory,
-  'astra.route.decision': (() => astraRouteDecision) as NodeFactory,
-  'orbit.lifecycle.transition': (() => orbitLifecycleTransition) as NodeFactory,
-  'orbit.placement.confirm': (() => orbitPlacementConfirm) as NodeFactory,
-  'orbit.revenue.arrange': (() => orbitRevenueArrange) as NodeFactory,
-  'orbit.activity.note': (() => orbitActivityNote) as NodeFactory,
-  'orbit.route.decision': (() => orbitRouteDecision) as NodeFactory,
   'orch.branch.decision': (() => orchBranchDecision) as NodeFactory,
   'human.gate': (() => humanGate) as NodeFactory,
 } as const satisfies Record<string, NodeFactory>;

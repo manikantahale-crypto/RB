@@ -1,4 +1,5 @@
 import type { Pool, PoolClient, QueryResultRow } from "pg";
+import { runnableImpls } from "../lib/runnable-impls.js";
 import { createHash } from "node:crypto";
 import {
   baseFieldsFor,
@@ -1427,6 +1428,7 @@ export function registerAgentRoutes(
       );
 
       const gate = evaluateGoLiveGate({
+          runnableImpls: runnableImpls(),
         artifactSource: row.artifact_source,
         storedChecksum: row.checksum,
         expectedGraphKey: `${tmpl.agentKey}.authored`,

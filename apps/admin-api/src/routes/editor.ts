@@ -14,6 +14,7 @@
  *   PUT  /workflows/:key/versions/:version    save a draft
  */
 import type { Pool } from "pg";
+import { runnableImpls } from "../lib/runnable-impls.js";
 import {
   GraphDefinitionSchema,
   validateGraphTopology,
@@ -796,6 +797,7 @@ export function registerEditorRoutes(app: FastifyLike, pool: Pool): void {
           graphKey,
         );
         const gate = evaluateGoLiveGate({
+          runnableImpls: runnableImpls(),
           artifactSource,
           storedChecksum: candidate[0].checksum ?? "",
           expectedGraphKey: graphKey,
@@ -1306,6 +1308,7 @@ export function registerEditorRoutes(app: FastifyLike, pool: Pool): void {
       const evidence = await collectGateEvidence(pool, artifactSource, graphKey);
 
       const gate = evaluateGoLiveGate({
+          runnableImpls: runnableImpls(),
         artifactSource,
         storedChecksum: row.checksum ?? "",
         expectedGraphKey: graphKey,
