@@ -96,27 +96,41 @@ router.post("/internal/astra/requirements/ingest", async (req, res, next) => {
     // The vendor, if the sender's domain matches one of this recruiter's vendors.
     const vendorId = await astraRepo.findVendorIdForSender(createdBy, sourceEmail);
 
-    // One transaction: the requirement and its document land together or not at all.
-    const job = await withTransaction((client) => astraRepo.insertRequirement(client, {
-      title: body.title || "Untitled Role",
-      rawText,
-      summaryHash,
-      sourceUrl: body.source_url || body.sourceUrl || null,
-      sourceEmail,
-      messageId: body.message_id || body.messageId || null,
-      sourceType: body.source_type || body.sourceType || null,
-      relayThreadId: body.relay_thread_id || body.relayThreadId || body.thread_id || null,
-      vendorId,
-      location: body.location || null,
-      createdBy,
-    }));
-
-    log.info(`[internal/astra] ingest jobId=${job.id}`);
+    // One transaction: the requirement, its document and the event that
+    // announces it land together or not at all. This route used to insert
+    // the row and announce nothing — the orchestrator's node announced for
+    // it, which put the announcement in two places for the other paths.
+    const channelType = String(body.channel_type || body.channelType || "API").toUpperCase();
+    const job = await withTransaction(async (client) => {
+      const created = await astraRepo.insertRequirement(client, {
+        title: body.title || "Untitled Role",
+        rawText,
+        summaryHash,
+        sourceUrl: body.source_url || body.sourceUrl || null,
+        sourceEmail,
+        messageId: body.message_id || body.messageId || null,
+        sourceType: body.source_type || body.sourceType || null,
+        relayThreadId: body.relay_thread_id || body.relayThreadId || body.thread_id || null,
+        vendorId,
+        location: body.location || null,
+        createdBy,
+      });
+      const ev = await astraService.writeRequirementReceived(client, created, channelType, {
+        correlationId: body.correlation_id || body.correlationId || null,
+      });
+      created.correlationId = ev.correlation_id;
+      created.eventId = ev.event_id;
+      return created;
+    });
+    log.info(`[internal/astra] ingest jobId=${job.id} correlationId=${job.correlationId}`);
     res.status(201).json({
       status: "created",
       jobId: job.id,
       requirement_id: job.id,
       title: job.title,
+      channel_type: channelType,
+      correlation_id: job.correlationId,
+      event_id: job.eventId,
     });
   } catch (err) {
     next(err);

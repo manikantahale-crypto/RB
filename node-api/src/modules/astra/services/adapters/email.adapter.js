@@ -258,6 +258,10 @@ function adaptEmailToRequirement(payload = {}) {
  */
 async function ingestEmail(payload = {}) {
   const canonicalPayload = adaptEmailToRequirement(payload);
+  // The flow's id, when a workflow asked; the announcement joins that flow.
+  if (payload.correlation_id || payload.correlationId) {
+    canonicalPayload.correlation_id = payload.correlation_id || payload.correlationId;
+  }
   return astraService.ingestRequirement(canonicalPayload);
 }
 

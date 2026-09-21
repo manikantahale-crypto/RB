@@ -90,39 +90,39 @@ export const requirementNormalize = defineNode({
       ],
 
 
-run: async (ctx: NodeRunCtx, input, config) => {
-  const jobId = jobIdOf(input)!;
-  const prompt = typeof config.prompt === "string" && config.prompt.trim() ? config.prompt.trim() : undefined;
-  const body = {
-    jobId,
-    requirement_id: jobId,
-    raw_text: rawTextOf(input),
-    title: input.title,
-    channel_type: input.channel_type,
-    ...(prompt ? { prompt } : {}),
-  };
-  ctx.logger.info("calling Astra normalize", { jobId, orgId: ctx.orgId });
-  const r = await postAstra(`/internal/astra/requirements/${jobId}/normalize`, body, { signal: ctx.signal });
-
-  const is_actionable = Boolean(r.is_actionable ?? r.isActionable ?? true);
-  const confidence_score = r.stub ? 0.9 : Number(r.confidence_score ?? r.confidenceScore ?? 0);
-  const parser_version = String(
-    r.parser_version ?? r.parserVersion ?? (r.stub ? "orch.stub.astra.v1" : "astra-intelligence-v1"),
-  );
-  const status = String(r.status ?? "normalized");
-
-  ctx.emit({
-    event_type: "astra.requirement.normalized",
-    payload: {
+  run: async (ctx: NodeRunCtx, input, config) => {
+    const jobId = jobIdOf(input)!;
+    const prompt = typeof config.prompt === "string" && config.prompt.trim() ? config.prompt.trim() : undefined;
+    const body = {
       jobId,
       requirement_id: jobId,
-      status,
-      parser_version,
-      is_actionable,
-      confidence_score,
-      syntra: r,
-    },
-  });
-  return { jobId, status, is_actionable, confidence_score, parser_version, stubbed: r.stub === true };
-},
+      raw_text: rawTextOf(input),
+      title: input.title,
+      channel_type: input.channel_type,
+      ...(prompt ? { prompt } : {}),
+    };
+    ctx.logger.info("calling Astra normalize", { jobId, orgId: ctx.orgId });
+    const r = await postAstra(`/internal/astra/requirements/${jobId}/normalize`, body, { signal: ctx.signal });
+
+    const is_actionable = Boolean(r.is_actionable ?? r.isActionable ?? true);
+    const confidence_score = r.stub ? 0.9 : Number(r.confidence_score ?? r.confidenceScore ?? 0);
+    const parser_version = String(
+      r.parser_version ?? r.parserVersion ?? (r.stub ? "orch.stub.astra.v1" : "astra-intelligence-v1"),
+    );
+    const status = String(r.status ?? "normalized");
+
+    ctx.emit({
+      event_type: "astra.requirement.normalized",
+      payload: {
+        jobId,
+        requirement_id: jobId,
+        status,
+        parser_version,
+        is_actionable,
+        confidence_score,
+        syntra: r,
+      },
+    });
+    return { jobId, status, is_actionable, confidence_score, parser_version, stubbed: r.stub === true };
+  },
 });

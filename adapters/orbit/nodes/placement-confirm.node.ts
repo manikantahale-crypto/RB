@@ -94,35 +94,35 @@ export const placementConfirm = defineNode({
       ],
 
 
-run: async (ctx: NodeRunCtx, input) => {
-  const candidateId = candidateIdOf(input)!;
-  const clientName = String(input.client_name ?? input.clientName);
-  const body = {
-    candidate_id: candidateId,
-    requirement_id: input.requirement_id ?? input.requirementId ?? null,
-    client_name: clientName,
-    start_date: input.start_date ?? input.startDate,
-    end_date: input.end_date ?? input.endDate ?? null,
-    confirmed_bill_rate: input.confirmed_bill_rate ?? input.confirmedBillRate,
-    confirmed_pay_rate: input.confirmed_pay_rate ?? input.confirmedPayRate,
-    employment_model: input.employment_model ?? input.employmentModel ?? "C2C",
-    work_mode: input.work_mode ?? input.workMode ?? "ONSITE",
-    location: input.location ?? null,
-    notes: input.notes ?? null,
-    organization_id: input.organization_id ?? ctx.orgId,
-  };
-  ctx.logger.info("calling Orbit placement confirm", { candidateId, clientName, orgId: ctx.orgId });
-  const r = await postOrbit("/internal/orbit/placements", body, { signal: ctx.signal });
+  run: async (ctx: NodeRunCtx, input) => {
+    const candidateId = candidateIdOf(input)!;
+    const clientName = String(input.client_name ?? input.clientName);
+    const body = {
+      candidate_id: candidateId,
+      requirement_id: input.requirement_id ?? input.requirementId ?? null,
+      client_name: clientName,
+      start_date: input.start_date ?? input.startDate,
+      end_date: input.end_date ?? input.endDate ?? null,
+      confirmed_bill_rate: input.confirmed_bill_rate ?? input.confirmedBillRate,
+      confirmed_pay_rate: input.confirmed_pay_rate ?? input.confirmedPayRate,
+      employment_model: input.employment_model ?? input.employmentModel ?? "C2C",
+      work_mode: input.work_mode ?? input.workMode ?? "ONSITE",
+      location: input.location ?? null,
+      notes: input.notes ?? null,
+      organization_id: input.organization_id ?? ctx.orgId,
+    };
+    ctx.logger.info("calling Orbit placement confirm", { candidateId, clientName, orgId: ctx.orgId });
+    const r = await postOrbit("/internal/orbit/placements", body, { signal: ctx.signal });
 
-  // The stub creates no row; the engine function minted an id so a local
-  // flow could continue.
-  const placementId = String(r.placement?.id ?? (r.stub ? crypto.randomUUID() : ""));
-  if (!placementId) throw new Error("orbit.placement.confirm: Orbit returned no placement id");
+    // The stub creates no row; the engine function minted an id so a local
+    // flow could continue.
+    const placementId = String(r.placement?.id ?? (r.stub ? crypto.randomUUID() : ""));
+    if (!placementId) throw new Error("orbit.placement.confirm: Orbit returned no placement id");
 
-  ctx.emit({
-    event_type: "orbit.placement.confirmed",
-    payload: { candidate_id: candidateId, placement_id: placementId, client_name: clientName, orbit: r },
-  });
-  return { placementId, candidateId, clientName, branch_key: "placed" as const, stubbed: r.stub === true };
-},
+    ctx.emit({
+      event_type: "orbit.placement.confirmed",
+      payload: { candidate_id: candidateId, placement_id: placementId, client_name: clientName, orbit: r },
+    });
+    return { placementId, candidateId, clientName, branch_key: "placed" as const, stubbed: r.stub === true };
+  },
 });

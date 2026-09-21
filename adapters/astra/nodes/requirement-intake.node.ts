@@ -7,7 +7,13 @@
  * on 2026-09-20 — same request, same response fields read, same event
  * published. That function stays in the engine registry; this contract
  * overrides it by key when the worker composes the registry, the way the
- * nine SYNTRA nodes did.
+ * nine SYNTRA nodes did. *
+ * DOES NOT ANNOUNCE THE REQUIREMENT. ASTRA's service writes
+ * `astra.requirement.received` to the outbox inside the transaction that
+ * creates the row (astra.service.js `writeRequirementReceived`), with the
+ * flow's correlation id this node hands it. The engine function emitted a
+ * second copy — two announcements, two runs of whatever is bound to it
+ * (onboarding path 4.4). Fixed 2026-09-20: the service owns the emit.
  */
 import { z } from "zod";
 import { defineNode, type NodeRunCtx } from "@tekisho/node-contract";
@@ -62,7 +68,7 @@ export const requirementIntake = defineNode({
   output: Output,
   config: Config,
 
-  emits: ["astra.requirement.received"],
+  emits: [],
   sideEffect: "external",
   idempotency: { strategy: "natural_key", keyPaths: [["jobId", "requirement_id", "requirementId", "subject", "title"]] },
 
@@ -93,31 +99,28 @@ export const requirementIntake = defineNode({
       ],
 
 
-run: async (ctx: NodeRunCtx, input) => {
-  const body = {
-    subject: input.subject ?? input.title,
-    body: rawTextOf(input),
-    from: input.from ?? input.source_email ?? input.source,
-    title: input.title,
-    location: input.location,
-  };
-  ctx.logger.info("calling Astra email intake", { orgId: ctx.orgId });
-  const r = await postAstra("/internal/astra/intake/email", body, { signal: ctx.signal });
+  run: async (ctx: NodeRunCtx, input) => {
+    const body = {
+      subject: input.subject ?? input.title,
+      body: rawTextOf(input),
+      from: input.from ?? input.source_email ?? input.source,
+      title: input.title,
+      location: input.location,
+      correlation_id: ctx.correlationId ?? undefined,
+    };
+    ctx.logger.info("calling Astra email intake", { orgId: ctx.orgId });
+    const r = await postAstra("/internal/astra/intake/email", body, { signal: ctx.signal });
 
-  // Under the dev stub ASTRA answers nothing. The engine function minted
-  // an id so a local flow could continue; the same here, and `stubbed`
-  // says so on the row.
-  const jobId = String(
-    r.jobId ?? r.requirement_id ?? jobIdOf(input) ?? (r.stub ? crypto.randomUUID() : ""),
-  );
-  if (!jobId) throw new Error("astra.requirement.intake: Astra returned no jobId");
+    // Under the dev stub ASTRA answers nothing. The engine function minted
+    // an id so a local flow could continue; the same here, and `stubbed`
+    // says so on the row.
+    const jobId = String(
+      r.jobId ?? r.requirement_id ?? jobIdOf(input) ?? (r.stub ? crypto.randomUUID() : ""),
+    );
+    if (!jobId) throw new Error("astra.requirement.intake: Astra returned no jobId");
 
-  // The endpoint answers `{ created, jobId, job }`; the title is on the job.
-  const title = (r.title ?? r.job?.title ?? body.subject ?? null) as string | null;
-  ctx.emit({
-    event_type: "astra.requirement.received",
-    payload: { jobId, requirement_id: jobId, title, channel_type: "EMAIL", syntra: r },
-  });
-  return { jobId, title, channel_type: "EMAIL" as const, stubbed: r.stub === true };
-},
+    // The endpoint answers `{ created, jobId, job }`; the title is on the job.
+    const title = (r.title ?? r.job?.title ?? body.subject ?? null) as string | null;
+    return { jobId, title, channel_type: "EMAIL" as const, stubbed: r.stub === true };
+  },
 });

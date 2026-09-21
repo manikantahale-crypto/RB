@@ -80,26 +80,26 @@ export const revenueArrange = defineNode({
       ],
 
 
-run: async (ctx: NodeRunCtx, input) => {
-  const placementId = placementIdOf(input)!;
-  const arrangementType = String(input.arrangement_type ?? input.arrangementType ?? "MARKUP").toUpperCase();
-  const value = Number(input.value ?? 0);
-  ctx.logger.info("calling Orbit revenue arrange", { placementId, arrangementType, orgId: ctx.orgId });
-  const r = await postOrbit(
-    `/internal/orbit/placements/${placementId}/revenue`,
-    {
-      arrangement_type: arrangementType,
-      value,
-      notes: input.notes ?? null,
-      custom_formula: input.custom_formula ?? input.customFormula ?? null,
-      organization_id: input.organization_id ?? ctx.orgId,
-    },
-    { signal: ctx.signal },
-  );
-  ctx.emit({
-    event_type: "orbit.revenue.arranged",
-    payload: { placement_id: placementId, arrangement_type: arrangementType, value, orbit: r },
-  });
-  return { placementId, arrangementType, value, stubbed: r.stub === true };
-},
+  run: async (ctx: NodeRunCtx, input) => {
+    const placementId = placementIdOf(input)!;
+    const arrangementType = String(input.arrangement_type ?? input.arrangementType ?? "MARKUP").toUpperCase();
+    const value = Number(input.value ?? 0);
+    ctx.logger.info("calling Orbit revenue arrange", { placementId, arrangementType, orgId: ctx.orgId });
+    const r = await postOrbit(
+      `/internal/orbit/placements/${placementId}/revenue`,
+      {
+        arrangement_type: arrangementType,
+        value,
+        notes: input.notes ?? null,
+        custom_formula: input.custom_formula ?? input.customFormula ?? null,
+        organization_id: input.organization_id ?? ctx.orgId,
+      },
+      { signal: ctx.signal },
+    );
+    ctx.emit({
+      event_type: "orbit.revenue.arranged",
+      payload: { placement_id: placementId, arrangement_type: arrangementType, value, orbit: r },
+    });
+    return { placementId, arrangementType, value, stubbed: r.stub === true };
+  },
 });

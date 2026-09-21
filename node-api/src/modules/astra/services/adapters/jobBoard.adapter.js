@@ -133,6 +133,8 @@ const log = require("../../../../utils/logger");
         : null;
 
       const canonicalPayload = {
+        // The flow's id, when a workflow asked; every listing's announcement joins it.
+        ...(context.correlationId ? { correlation_id: context.correlationId } : {}),
         title: job.title || "Job Requirement",
         companyName: job.company || "Unknown Company",
         location: job.location || "USA",

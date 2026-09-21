@@ -100,43 +100,43 @@ export const routeDecision = defineNode({
       ],
 
 
-run: async (ctx: NodeRunCtx, input, config) => {
-  const jobId = jobIdOf(input)!;
-  const is_actionable = Boolean(input.is_actionable ?? input.isActionable);
-  const confidence_score = Number(input.confidence_score ?? input.confidenceScore ?? 0);
-  const parser_version = input.parser_version ?? input.parserVersion ?? null;
+  run: async (ctx: NodeRunCtx, input, config) => {
+    const jobId = jobIdOf(input)!;
+    const is_actionable = Boolean(input.is_actionable ?? input.isActionable);
+    const confidence_score = Number(input.confidence_score ?? input.confidenceScore ?? 0);
+    const parser_version = input.parser_version ?? input.parserVersion ?? null;
 
-  if (is_actionable && confidence_score >= config.minConfidence) {
+    if (is_actionable && confidence_score >= config.minConfidence) {
+      ctx.emit({
+        event_type: config.onActionable,
+        payload: {
+          jobId,
+          requirement_id: jobId,
+          status: "normalized",
+          is_actionable: true,
+          confidence_score,
+          parser_version,
+          source_event_id: input.event_id ?? null,
+        },
+      });
+      return { branch_key: "pass" as const, jobId, reason: null };
+    }
+
+    const reason = !is_actionable
+      ? "not_actionable"
+      : `confidence_below_min (${confidence_score} < ${config.minConfidence})`;
     ctx.emit({
-      event_type: config.onActionable,
+      event_type: config.onRejected,
       payload: {
         jobId,
         requirement_id: jobId,
-        status: "normalized",
-        is_actionable: true,
+        status: "rejected",
+        is_actionable,
         confidence_score,
-        parser_version,
+        reason,
         source_event_id: input.event_id ?? null,
       },
     });
-    return { branch_key: "pass" as const, jobId, reason: null };
-  }
-
-  const reason = !is_actionable
-    ? "not_actionable"
-    : `confidence_below_min (${confidence_score} < ${config.minConfidence})`;
-  ctx.emit({
-    event_type: config.onRejected,
-    payload: {
-      jobId,
-      requirement_id: jobId,
-      status: "rejected",
-      is_actionable,
-      confidence_score,
-      reason,
-      source_event_id: input.event_id ?? null,
-    },
-  });
-  return { branch_key: "reject" as const, jobId, reason };
-},
+    return { branch_key: "reject" as const, jobId, reason };
+  },
 });

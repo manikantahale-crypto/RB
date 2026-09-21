@@ -24,10 +24,12 @@ type Call = { path: string; body: unknown };
 const calls: Call[] = [];
 const emitted: Array<{ event_type: string; payload: Record<string, unknown> }> = [];
 
+const CORR = "corr-0000-1111";
 const ctx: NodeRunCtx = {
   orgId: "00000000-0000-0000-0000-000000000001",
   logger: { info: () => {}, error: () => {} },
   emit: (e) => emitted.push(e),
+  correlationId: CORR,
 };
 
 /** One answer per path, in the handler's shape. */
@@ -61,7 +63,7 @@ afterEach(() => {
 });
 
 describe("astra.requirement.intake", () => {
-  it("posts the email and announces the requirement ASTRA created", async () => {
+  it("posts the email with the flow's id; the SERVICE announces the requirement, not this node", async () => {
     vi.stubGlobal(
       "fetch",
       fakeBackend({
@@ -78,12 +80,13 @@ describe("astra.requirement.intake", () => {
     });
     expect(calls[0]).toEqual({
       path: "/internal/astra/intake/email",
-      body: { subject: "Java Developer — Austin", body: "Client needs a Java developer.", from: "vendor@example.invalid" },
+      body: { subject: "Java Developer — Austin", body: "Client needs a Java developer.", from: "vendor@example.invalid", correlation_id: CORR },
     });
     expect(out).toMatchObject({ jobId: JOB, title: "Java Developer (parsed)", channel_type: "EMAIL", stubbed: false });
-    expect(emitted).toHaveLength(1);
-    expect(emitted[0]!.event_type).toBe("astra.requirement.received");
-    expect(emitted[0]!.payload).toMatchObject({ jobId: JOB, requirement_id: JOB, channel_type: "EMAIL" });
+    // astra.service.js writes astra.requirement.received in the row's own
+    // transaction; a second copy from here would start a second run.
+    expect(emitted).toHaveLength(0);
+    expect(requirementIntake.emits).toEqual([]);
   });
 
   it("refuses an email with no body before calling anyone", () => {
@@ -99,7 +102,7 @@ describe("astra.requirement.intake", () => {
 });
 
 describe("astra.requirement.ingest", () => {
-  it("posts the text with its channel and announces the requirement", async () => {
+  it("posts the text with its channel and the flow's id, and announces nothing itself", async () => {
     vi.stubGlobal(
       "fetch",
       fakeBackend({
@@ -115,17 +118,15 @@ describe("astra.requirement.ingest", () => {
       raw_text: "Snowflake, dbt.",
       channel_type: "API",
       source: "orch",
+      correlation_id: CORR,
     });
     expect(out).toEqual({ jobId: JOB, channel_type: "API", duplicate: false, stubbed: false });
-    expect(emitted[0]).toMatchObject({
-      event_type: "astra.requirement.received",
-      payload: { jobId: JOB, title: "Data Engineer", channel_type: "API" },
-    });
+    expect(emitted).toHaveLength(0);
   });
 });
 
 describe("astra.jobboard.fetch", () => {
-  it("reads the endpoint's real shape and announces each NEW requirement only", async () => {
+  it("reads the endpoint's real shape and counts the NEW requirements; the service announced each", async () => {
     vi.stubGlobal(
       "fetch",
       fakeBackend({
@@ -149,10 +150,9 @@ describe("astra.jobboard.fetch", () => {
       }),
     );
     const out = await run(jobboardFetch, { source: "jsearch", keyword: "SAP ABAP", location: "Dallas" });
-    expect(calls[0]!.body).toMatchObject({ source: "jsearch", keyword: "SAP ABAP", location: "Dallas" });
+    expect(calls[0]!.body).toMatchObject({ source: "jsearch", keyword: "SAP ABAP", location: "Dallas", correlation_id: CORR });
     expect(out).toEqual({ count: 2, firstJobId: "a1", source: "jsearch", stubbed: false });
-    expect(emitted.map((e) => e.payload.jobId)).toEqual(["a1", "a3"]);
-    expect(emitted.every((e) => e.event_type === "astra.requirement.received")).toBe(true);
+    expect(emitted).toHaveLength(0);
   });
 
   it("takes the board from config when the event does not say", async () => {

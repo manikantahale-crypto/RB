@@ -7,7 +7,13 @@
  * on 2026-09-20 — same request, same response fields read, same event
  * published. That function stays in the engine registry; this contract
  * overrides it by key when the worker composes the registry, the way the
- * nine SYNTRA nodes did.
+ * nine SYNTRA nodes did. *
+ * DOES NOT ANNOUNCE THE REQUIREMENT. ASTRA's service writes
+ * `astra.requirement.received` to the outbox inside the transaction that
+ * creates the row (astra.service.js `writeRequirementReceived`), with the
+ * flow's correlation id this node hands it. The engine function emitted a
+ * second copy — two announcements, two runs of whatever is bound to it
+ * (onboarding path 4.4). Fixed 2026-09-20: the service owns the emit.
  */
 import { z } from "zod";
 import { defineNode, type NodeRunCtx } from "@tekisho/node-contract";
@@ -60,7 +66,7 @@ export const requirementIngest = defineNode({
   output: Output,
   config: Config,
 
-  emits: ["astra.requirement.received"],
+  emits: [],
   sideEffect: "internal_write",
   idempotency: { strategy: "natural_key", keyPaths: [["jobId", "requirement_id", "requirementId", "title"]] },
 
@@ -87,38 +93,29 @@ export const requirementIngest = defineNode({
       ],
 
 
-run: async (ctx: NodeRunCtx, input) => {
-  const body = {
-    title: input.title,
-    raw_text: rawTextOf(input),
-    location: input.location,
-    company_name: input.company_name ?? input.companyName,
-    channel_type: input.channel_type ?? "API",
-    source: input.source ?? "orch",
-  };
-  ctx.logger.info("calling Astra ingest", { orgId: ctx.orgId });
-  const r = await postAstra("/internal/astra/requirements/ingest", body, { signal: ctx.signal });
+  run: async (ctx: NodeRunCtx, input) => {
+    const body = {
+      title: input.title,
+      raw_text: rawTextOf(input),
+      location: input.location,
+      company_name: input.company_name ?? input.companyName,
+      channel_type: input.channel_type ?? "API",
+      source: input.source ?? "orch",
+      correlation_id: ctx.correlationId ?? undefined,
+    };
+    ctx.logger.info("calling Astra ingest", { orgId: ctx.orgId });
+    const r = await postAstra("/internal/astra/requirements/ingest", body, { signal: ctx.signal });
 
-  const jobId = String(
-    r.jobId ?? r.requirement_id ?? (r.stub ? (jobIdOf(input) ?? crypto.randomUUID()) : ""),
-  );
-  if (!jobId) throw new Error("astra.requirement.ingest: Astra returned no jobId");
+    const jobId = String(
+      r.jobId ?? r.requirement_id ?? (r.stub ? (jobIdOf(input) ?? crypto.randomUUID()) : ""),
+    );
+    if (!jobId) throw new Error("astra.requirement.ingest: Astra returned no jobId");
 
-  ctx.emit({
-    event_type: "astra.requirement.received",
-    payload: {
+    return {
       jobId,
-      requirement_id: jobId,
-      title: r.title ?? body.title ?? null,
       channel_type: body.channel_type,
-      syntra: r,
-    },
-  });
-  return {
-    jobId,
-    channel_type: body.channel_type,
-    duplicate: Boolean(r.duplicate),
-    stubbed: r.stub === true,
-  };
-},
+      duplicate: Boolean(r.duplicate),
+      stubbed: r.stub === true,
+    };
+  },
 });

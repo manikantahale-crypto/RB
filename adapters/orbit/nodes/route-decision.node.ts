@@ -85,25 +85,25 @@ export const orbitRouteDecision = defineNode({
       ],
 
 
-run: async (ctx: NodeRunCtx, input) => {
-  const toState = String(input.to_state ?? input.toState ?? input.branch_key ?? "").toUpperCase();
-  const branch_key =
-    toState === "PLACED" || input.branch_key === "placed"
-      ? ("placed" as const)
-      : toState === "HOLD" || toState === "IGNORE"
-        ? ("hold" as const)
-        : ("active" as const);
+  run: async (ctx: NodeRunCtx, input) => {
+    const toState = String(input.to_state ?? input.toState ?? input.branch_key ?? "").toUpperCase();
+    const branch_key =
+      toState === "PLACED" || input.branch_key === "placed"
+        ? ("placed" as const)
+        : toState === "HOLD" || toState === "IGNORE"
+          ? ("hold" as const)
+          : ("active" as const);
 
-  if (branch_key === "hold") {
-    ctx.emit({
-      event_type: "orbit.bench.hold",
-      payload: {
-        candidate_id: candidateIdOf(input) ?? null,
-        to_state: toState || "HOLD",
-        reason: input.note ?? "lifecycle_hold",
-      },
-    });
-  }
-  return { branch_key, toState: branch_key === "placed" ? "PLACED" : toState || "HOLD" };
-},
+    if (branch_key === "hold") {
+      ctx.emit({
+        event_type: "orbit.bench.hold",
+        payload: {
+          candidate_id: candidateIdOf(input) ?? null,
+          to_state: toState || "HOLD",
+          reason: input.note ?? "lifecycle_hold",
+        },
+      });
+    }
+    return { branch_key, toState: branch_key === "placed" ? "PLACED" : toState || "HOLD" };
+  },
 });

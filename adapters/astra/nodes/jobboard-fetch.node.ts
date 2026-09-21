@@ -7,7 +7,13 @@
  * on 2026-09-20 — same request, same response fields read, same event
  * published. That function stays in the engine registry; this contract
  * overrides it by key when the worker composes the registry, the way the
- * nine SYNTRA nodes did.
+ * nine SYNTRA nodes did. *
+ * DOES NOT ANNOUNCE THE REQUIREMENT. ASTRA's service writes
+ * `astra.requirement.received` to the outbox inside the transaction that
+ * creates each row (astra.service.js `writeRequirementReceived`), with the
+ * flow's correlation id this node hands it. The engine function emitted a
+ * second copy — two announcements, two runs of whatever is bound to it
+ * (onboarding path 4.4). Fixed 2026-09-20: the service owns the emit.
  */
 import { z } from "zod";
 import { defineNode, type NodeRunCtx } from "@tekisho/node-contract";
@@ -60,7 +66,7 @@ export const jobboardFetch = defineNode({
   output: Output,
   config: Config,
 
-  emits: ["astra.requirement.received"],
+  emits: [],
   sideEffect: "external",
   idempotency: { strategy: "natural_key", keyPaths: [["source", "jobId"], ["keyword", "query", "title", "location"]] },
 
@@ -87,55 +93,45 @@ export const jobboardFetch = defineNode({
       ],
 
 
-run: async (ctx: NodeRunCtx, input, config) => {
-  const body = {
-    source: input.source ?? config.source ?? "manual",
-    keyword: input.keyword ?? input.query ?? input.title ?? "software engineer",
-    location: input.location ?? "",
-    listings: input.listings,
-    raw_text: rawTextOf(input),
-  };
-  ctx.logger.info("calling Astra jobboard fetch", { source: body.source, orgId: ctx.orgId });
-  const r = await postAstra("/internal/astra/jobboards/fetch", body, { signal: ctx.signal });
+  run: async (ctx: NodeRunCtx, input, config) => {
+    const body = {
+      source: input.source ?? config.source ?? "manual",
+      keyword: input.keyword ?? input.query ?? input.title ?? "software engineer",
+      location: input.location ?? "",
+      listings: input.listings,
+      raw_text: rawTextOf(input),
+      correlation_id: ctx.correlationId ?? undefined,
+    };
+    ctx.logger.info("calling Astra jobboard fetch", { source: body.source, orgId: ctx.orgId });
+    const r = await postAstra("/internal/astra/jobboards/fetch", body, { signal: ctx.signal });
 
-  // WHAT THE ENDPOINT ACTUALLY ANSWERS (node-api jobBoards.controller →
-  // jobBoard.adapter.fetchAndIngest): `{ status, data: { created,
-  // duplicates, items: [{ id, status: "New" | "Duplicate" | "Failed" }] } }`.
-  // The engine function read `r.results[].jobId`, a field that does not
-  // exist, so against the real backend it always threw "no jobs
-  // created" — only the stub ever let it pass. Found while porting.
-  //
-  // The stub answers with no listings; one is invented, as the engine
-  // did, so a local flow can continue.
-  const items: Array<Record<string, unknown>> = Array.isArray(r.data?.items)
-    ? r.data.items
-    : r.stub
-      ? [{ id: jobIdOf(input) ?? crypto.randomUUID(), status: "New" }]
-      : [];
+    // WHAT THE ENDPOINT ACTUALLY ANSWERS (node-api jobBoards.controller →
+    // jobBoard.adapter.fetchAndIngest): `{ status, data: { created,
+    // duplicates, items: [{ id, status: "New" | "Duplicate" | "Failed" }] } }`.
+    // The engine function read `r.results[].jobId`, a field that does not
+    // exist, so against the real backend it always threw "no jobs
+    // created" — only the stub ever let it pass. Found while porting.
+    //
+    // The stub answers with no listings; one is invented, as the engine
+    // did, so a local flow can continue.
+    const items: Array<Record<string, unknown>> = Array.isArray(r.data?.items)
+      ? r.data.items
+      : r.stub
+        ? [{ id: jobIdOf(input) ?? crypto.randomUUID(), status: "New" }]
+        : [];
 
-  let firstJobId: string | undefined;
-  let created = 0;
-  for (const item of items) {
-    const id = item?.id;
-    if (!id) continue; // a listing that failed to ingest has no row
-    if (!firstJobId) firstJobId = String(id);
-    // A duplicate is a requirement that already exists and was announced
-    // when it first arrived; announcing it again would run intake twice.
-    if (item.status !== "New") continue;
-    created += 1;
-    ctx.emit({
-      event_type: "astra.requirement.received",
-      payload: {
-        jobId: String(id),
-        requirement_id: String(id),
-        channel_type: "JOB_BOARD",
-        source: body.source,
-        syntra: item,
-      },
-    });
-  }
-  if (!firstJobId) throw new Error("astra.jobboard.fetch: no jobs created");
+    let firstJobId: string | undefined;
+    let created = 0;
+    for (const item of items) {
+      const id = item?.id;
+      if (!id) continue; // a listing that failed to ingest has no row
+      if (!firstJobId) firstJobId = String(id);
+      // A duplicate is a requirement that already exists and was announced
+      // by the service when it first arrived.
+      if (item.status === "New") created += 1;
+    }
+    if (!firstJobId) throw new Error("astra.jobboard.fetch: no jobs created");
 
-  return { count: created, firstJobId, source: body.source, stubbed: r.stub === true };
-},
+    return { count: created, firstJobId, source: body.source, stubbed: r.stub === true };
+  },
 });

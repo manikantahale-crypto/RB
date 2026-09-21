@@ -77,24 +77,24 @@ export const activityNote = defineNode({
       ],
 
 
-run: async (ctx: NodeRunCtx, input) => {
-  const candidateId = candidateIdOf(input)!;
-  const summary = String(input.summary ?? input.note).trim();
-  ctx.logger.info("calling Orbit activity note", { candidateId, orgId: ctx.orgId });
-  const r = await postOrbit(
-    `/internal/orbit/candidates/${candidateId}/activities`,
-    { summary, payload: input.payload ?? {} },
-    { signal: ctx.signal },
-  );
-  ctx.emit({
-    event_type: "orbit.activity.noted",
-    payload: { candidate_id: candidateId, summary, orbit: r },
-  });
-  return {
-    candidateId,
-    summary,
-    activityType: String(r.activity?.activity_type ?? "NOTE"),
-    stubbed: r.stub === true,
-  };
-},
+  run: async (ctx: NodeRunCtx, input) => {
+    const candidateId = candidateIdOf(input)!;
+    const summary = String(input.summary ?? input.note).trim();
+    ctx.logger.info("calling Orbit activity note", { candidateId, orgId: ctx.orgId });
+    const r = await postOrbit(
+      `/internal/orbit/candidates/${candidateId}/activities`,
+      { summary, payload: input.payload ?? {} },
+      { signal: ctx.signal },
+    );
+    ctx.emit({
+      event_type: "orbit.activity.noted",
+      payload: { candidate_id: candidateId, summary, orbit: r },
+    });
+    return {
+      candidateId,
+      summary,
+      activityType: String(r.activity?.activity_type ?? "NOTE"),
+      stubbed: r.stub === true,
+    };
+  },
 });

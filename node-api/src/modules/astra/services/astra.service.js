@@ -233,6 +233,38 @@ function buildRequirementContentHash({ title, companyName, location, skills, sou
  * @param {Object} payload
  * @returns {Promise<Object>}
  */
+/**
+ * THE SERVICE OWNS `astra.requirement.received`. One writer, here, inside the
+ * transaction that created the row. Every intake path — email, API, job
+ * board — calls this; the orchestrator's intake nodes do not emit it
+ * (onboarding path 4.4: "service owns each emit — no node emits the same
+ * event"). Until 2026-09-20 the engine's intake node emitted a second copy,
+ * and the API ingest route emitted none.
+ *
+ * `correlationId` is the FLOW's, when a workflow asked for this
+ * requirement: the run it starts then sits in the same flow as the RELAY
+ * run that received the email. Absent, the outbox mints one.
+ */
+async function writeRequirementReceived(client, job, channelType, { correlationId = null, causationId = null } = {}) {
+  const outboxRepo = require("../../../repositories/outbox.repository");
+  return outboxRepo.insertEvent(client, {
+    eventType: "astra.requirement.received",
+    // The event belongs to the requirement's organisation — never an env default.
+    organizationId: job.org_id,
+    aggregateType: "requirement",
+    aggregateId: job.id,
+    producer: "astra-intake",
+    correlationId,
+    causationId,
+    payload: {
+      requirement_id: job.id,
+      jobId: job.id,
+      title: job.title,
+      channel_type: channelType,
+    },
+  });
+}
+
 async function ingestRequirement(payload = {}) {
   if (!payload || typeof payload !== "object" || Object.keys(payload).length === 0) {
     const err = new Error("Requirement payload cannot be empty");
@@ -358,30 +390,16 @@ async function ingestRequirement(payload = {}) {
   const newJob = await withTransaction(async (client) => {
     const job = await astraRepo.insertRequirement(client, requirementData);
 
-    // Write platform event 'astra.requirement.received' to outbox transactionally
-    const outboxRepo = require("../../../repositories/outbox.repository");
-
     let channelType = "API";
     if (requirementData.sourceEmail || payload.sourceType === "email" || payload.source_type === "email") {
       channelType = "EMAIL";
     } else if (payload.sourceType === "job_board" || payload.source_type === "job_board") {
       channelType = "JOB_BOARD";
     }
-
-    const outboxResult = await outboxRepo.insertEvent(client, {
-      eventType: "astra.requirement.received",
-      // The event belongs to the requirement's organisation — never an env default.
-      organizationId: job.org_id,
-      aggregateType: "requirement",
-      aggregateId: job.id,
-      producer: "astra-intake",
-      payload: {
-        requirement_id: job.id,
-        title: job.title,
-        channel_type: channelType
-      }
+    const outboxResult = await writeRequirementReceived(client, job, channelType, {
+      correlationId: payload.correlation_id || payload.correlationId || null,
+      causationId: payload.causation_id || payload.causationId || null,
     });
-
     job.correlationId = outboxResult.correlation_id;
     job.eventId = outboxResult.event_id;
     return job;
@@ -438,6 +456,7 @@ async function ingestRequirement(payload = {}) {
 }
 
 module.exports = {
+  writeRequirementReceived,
   ingestRequirement,
   normalizeText,
   normalizeSkills,

@@ -81,36 +81,36 @@ export const requirementQuality = defineNode({
       ],
 
 
-run: async (ctx: NodeRunCtx, input) => {
-  const jobId = jobIdOf(input) ?? null;
-  const body = {
-    jobId,
-    requirement_id: jobId,
-    title: input.title,
-    raw_text: rawTextOf(input),
-    required_skills: input.required_skills ?? input.requiredSkills,
-    location: input.location,
-  };
-  ctx.logger.info("calling Astra quality", { jobId, orgId: ctx.orgId });
-  const r = await postAstra("/internal/astra/requirements/quality", body, { signal: ctx.signal });
-
-  // The stub says nothing about quality; the engine function read it as
-  // actionable at 0.75 so a local flow could continue.
-  const is_actionable = r.stub ? true : Boolean(r.is_actionable ?? r.isActionable);
-  const confidence_score = r.stub ? 0.75 : Number(r.confidence_score ?? r.confidenceScore ?? 0);
-  const validation_details = r.validation_details ?? r.validationDetails;
-
-  ctx.emit({
-    event_type: "astra.requirement.scored",
-    payload: {
+  run: async (ctx: NodeRunCtx, input) => {
+    const jobId = jobIdOf(input) ?? null;
+    const body = {
       jobId,
       requirement_id: jobId,
-      is_actionable,
-      confidence_score,
-      validation_details,
-      syntra: r,
-    },
-  });
-  return { jobId, is_actionable, confidence_score, validation_details, stubbed: r.stub === true };
-},
+      title: input.title,
+      raw_text: rawTextOf(input),
+      required_skills: input.required_skills ?? input.requiredSkills,
+      location: input.location,
+    };
+    ctx.logger.info("calling Astra quality", { jobId, orgId: ctx.orgId });
+    const r = await postAstra("/internal/astra/requirements/quality", body, { signal: ctx.signal });
+
+    // The stub says nothing about quality; the engine function read it as
+    // actionable at 0.75 so a local flow could continue.
+    const is_actionable = r.stub ? true : Boolean(r.is_actionable ?? r.isActionable);
+    const confidence_score = r.stub ? 0.75 : Number(r.confidence_score ?? r.confidenceScore ?? 0);
+    const validation_details = r.validation_details ?? r.validationDetails;
+
+    ctx.emit({
+      event_type: "astra.requirement.scored",
+      payload: {
+        jobId,
+        requirement_id: jobId,
+        is_actionable,
+        confidence_score,
+        validation_details,
+        syntra: r,
+      },
+    });
+    return { jobId, is_actionable, confidence_score, validation_details, stubbed: r.stub === true };
+  },
 });

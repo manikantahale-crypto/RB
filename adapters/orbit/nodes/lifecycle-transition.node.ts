@@ -84,40 +84,40 @@ export const lifecycleTransition = defineNode({
       ],
 
 
-run: async (ctx: NodeRunCtx, input) => {
-  const candidateId = candidateIdOf(input)!;
-  const toState = String(input.to_state ?? input.toState ?? "").toUpperCase();
-  ctx.logger.info("calling Orbit lifecycle transition", { candidateId, toState, orgId: ctx.orgId });
-  const r = await postOrbit(
-    `/internal/orbit/candidates/${candidateId}/lifecycle/transition`,
-    {
-      to_state: toState,
-      note: input.note ?? null,
-      context: input.context ?? null,
-      organization_id: input.organization_id ?? ctx.orgId,
-      transitioned_by: null,
-    },
-    { signal: ctx.signal },
-  );
+  run: async (ctx: NodeRunCtx, input) => {
+    const candidateId = candidateIdOf(input)!;
+    const toState = String(input.to_state ?? input.toState ?? "").toUpperCase();
+    ctx.logger.info("calling Orbit lifecycle transition", { candidateId, toState, orgId: ctx.orgId });
+    const r = await postOrbit(
+      `/internal/orbit/candidates/${candidateId}/lifecycle/transition`,
+      {
+        to_state: toState,
+        note: input.note ?? null,
+        context: input.context ?? null,
+        organization_id: input.organization_id ?? ctx.orgId,
+        transitioned_by: null,
+      },
+      { signal: ctx.signal },
+    );
 
-  const fromState = (r.state?.previous_state ?? input.from_state ?? input.fromState ?? null) as string | null;
-  const newState = String(r.state?.state ?? toState);
-  ctx.emit({
-    event_type: "orbit.lifecycle.transitioned",
-    payload: {
-      candidate_id: candidateId,
-      from_state: fromState,
-      to_state: newState,
-      note: input.note ?? null,
-      orbit: r,
-    },
-  });
-  return {
-    candidateId,
-    fromState,
-    toState: newState,
-    branch_key: newState === "PLACED" ? ("placed" as const) : ("active" as const),
-    stubbed: r.stub === true,
-  };
-},
+    const fromState = (r.state?.previous_state ?? input.from_state ?? input.fromState ?? null) as string | null;
+    const newState = String(r.state?.state ?? toState);
+    ctx.emit({
+      event_type: "orbit.lifecycle.transitioned",
+      payload: {
+        candidate_id: candidateId,
+        from_state: fromState,
+        to_state: newState,
+        note: input.note ?? null,
+        orbit: r,
+      },
+    });
+    return {
+      candidateId,
+      fromState,
+      toState: newState,
+      branch_key: newState === "PLACED" ? ("placed" as const) : ("active" as const),
+      stubbed: r.stub === true,
+    };
+  },
 });
