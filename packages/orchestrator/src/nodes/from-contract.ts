@@ -17,11 +17,80 @@
  *   the node's own field names, before any HTTP call is made.
  * - A node returning something its own contract does not describe fails too.
  *   Better a loud failure than a registry row that quietly lies.
+ *
+ * EXCEPT FOR THE FIELDS IT DOES NOT FAIL ON. Parsing an object against a zod
+ * schema STRIPS keys the schema does not name rather than rejecting them, so a
+ * node returning a field it never declared does not fail loudly — the field is
+ * silently deleted on the way to `steps`. Nothing downstream can read it, and
+ * because input maps are now worked out from these same declarations, it is a
+ * connection that can never be made. That is drift between what a node does
+ * and what it says, it is invisible by construction, and the only place it can
+ * be seen is here, where both are in hand. So it is logged.
  */
-import type { AnyNodeContract } from '@tekisho/node-contract';
+import { undeclaredFields, type AnyNodeContract } from '@tekisho/node-contract';
+import { ClassifiedError } from '../workflow/errors.js';
 import type { NodeCtx, NodeImpl } from './types.js';
 import { claimExecution, isDeduplicable } from './idempotency.js';
 import { pgDedupeStore } from './idempotency-store.js';
+
+/**
+ * THE CLASS THE NODE ITSELF DECLARED, WHICH NOTHING USED TO ASK FOR.
+ *
+ * Every contract carries `execution.classifyError`, and the module nodes all
+ * point it at `classifyModuleError` — which reads an HTTP status out of the
+ * message and decides retryable from not. None of it ever ran: the engine
+ * classified with its own `classifyError` and no code path consulted the
+ * contract's. Thirty-three contracts declared retry behaviour that did
+ * nothing.
+ *
+ * Wrapping in `ClassifiedError` is how the answer survives the journey:
+ * `classifyError` returns `err.errorClass` on sight of one, so the node's own
+ * judgement reaches the runner unchanged instead of being re-derived from the
+ * message.
+ *
+ * A node that declares nothing is left alone, so the engine's rules still
+ * apply — this adds an opinion where one was offered, it does not replace the
+ * default with silence.
+ *
+ * The two vocabularies differ by a punctuation mark: contracts say
+ * `permanent_input`, the engine says `permanent-input`. Mapped here rather
+ * than changed in either, because both names are already stored — the engine's
+ * in `orch.run_failures.error_class`, the contract's in `node_registry`.
+ */
+function classifiedByContract(
+  contract: AnyNodeContract,
+  ctx: NodeCtx,
+  err: unknown,
+): unknown {
+  const classify = contract.execution?.classifyError;
+  if (typeof classify !== 'function') return err;
+  // Already judged further in; the innermost opinion is the informed one.
+  if (err instanceof ClassifiedError) return err;
+
+  let declared: string;
+  try {
+    declared = classify(err);
+  } catch {
+    // A classifier that throws must not replace the error it was judging.
+    return err;
+  }
+
+  const errorClass =
+    declared === 'transient'
+      ? 'transient'
+      : declared === 'permanent_input'
+        ? 'permanent-input'
+        : declared === 'permanent_system'
+          ? 'permanent-system'
+          : null;
+  if (!errorClass) return err;
+
+  return new ClassifiedError(
+    err instanceof Error ? err.message : String(err),
+    errorClass,
+    { nodeId: ctx.nodeId, graphKey: ctx.graphKey, cause: err },
+  );
+}
 
 /** Turn a contract into something the graph compiler can run. */
 export function toNodeImpl(contract: AnyNodeContract): NodeImpl {
@@ -113,12 +182,27 @@ export function toNodeImpl(contract: AnyNodeContract): NodeImpl {
        * finding it "in flight" for the fifteen-minute stale window.
        */
       await releaseQuietly(dedupe, contract, ctx, trigger);
-      throw err;
+      throw classifiedByContract(contract, ctx, err);
     }
 
     await completeQuietly(dedupe, contract, ctx, trigger);
 
     const checked = parseOrThrow(contract.key, 'output', contract.output, output);
+    /**
+     * Top level only: an input map names a field of a step, never a path
+     * inside one, so that is the level at which a dropped key costs something.
+     * A warning rather than a throw — the run is fine, the DECLARATION is
+     * wrong, and failing a live workflow over a field nobody was reading would
+     * be a worse trade than saying so.
+     */
+    const dropped = undeclaredFields(output, checked);
+    if (dropped.length > 0) {
+      ctx.logger?.error?.(
+        `${contract.key}: returned ${dropped.join(', ')} — not in its declared output, ` +
+          `so it was dropped and nothing downstream can be wired to it`,
+        { nodeId: ctx.nodeId, graphKey: ctx.graphKey, undeclared: dropped },
+      );
+    }
     /**
      * Filed under the STEP id, not the node key: the same implementation runs
      * at several ids across graphs, and a later step refers to the position it

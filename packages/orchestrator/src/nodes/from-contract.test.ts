@@ -10,6 +10,7 @@ import { describe, expect, it } from 'vitest';
 import { z } from 'zod';
 import { toNodeImpl } from './from-contract.js';
 import type { NodeCtx, SyntraGraphState } from './types.js';
+import { ClassifiedError } from '../workflow/errors.js';
 
 /** A contract shaped like a real one, without the ceremony. */
 const contract = {
@@ -192,5 +193,71 @@ describe('a node that runs out of time', () => {
     const controller = new AbortController();
     await toNodeImpl(looking)(state(), { ...ctxFor('process'), signal: controller.signal } as NodeCtx);
     expect(seen).toBe(controller.signal);
+  });
+});
+
+describe("the class a node declared about its own failures", () => {
+  /** A contract whose run always fails, judged by whatever it declares. */
+  const failing = (classifyError?: (e: unknown) => string) =>
+    ({
+      key: 'syntra.match.process',
+      input: z.object({ jobId: z.string() }),
+      output: z.object({ jobId: z.string() }),
+      config: z.object({}).passthrough(),
+      execution: classifyError ? { timeoutMs: 60_000, classifyError } : undefined,
+      run: async () => {
+        // What Node throws when nothing is listening on the port.
+        const err = new TypeError('fetch failed');
+        (err as { cause?: unknown }).cause = Object.assign(new Error('connect'), {
+          code: 'ECONNREFUSED',
+        });
+        throw err;
+      },
+    }) as unknown as Parameters<typeof toNodeImpl>[0];
+
+  it('reaches the runner, instead of being re-guessed from the message', async () => {
+    // Thirty-three contracts declared `execution.classifyError` and nothing
+    // called it; the engine classified from the message every time.
+    const err = await toNodeImpl(failing(() => 'transient'))(
+      state(),
+      ctxFor('process'),
+    ).catch((e: unknown) => e);
+
+    expect(err).toBeInstanceOf(ClassifiedError);
+    expect((err as ClassifiedError).errorClass).toBe('transient');
+    expect((err as ClassifiedError).nodeId).toBe('process');
+    // The original is kept, so nothing is lost by the wrapping.
+    expect((err as Error).message).toBe('fetch failed');
+    expect((err as ClassifiedError).cause).toBeInstanceOf(TypeError);
+  });
+
+  it('translates the contract vocabulary into the engine one', async () => {
+    for (const [declared, expected] of [
+      ['permanent_input', 'permanent-input'],
+      ['permanent_system', 'permanent-system'],
+    ] as const) {
+      const err = await toNodeImpl(failing(() => declared))(
+        state(),
+        ctxFor('process'),
+      ).catch((e: unknown) => e);
+      expect((err as ClassifiedError).errorClass, declared).toBe(expected);
+    }
+  });
+
+  it('leaves a node that declares nothing to the engine rules', async () => {
+    const err = await toNodeImpl(failing())(state(), ctxFor('process')).catch(
+      (e: unknown) => e,
+    );
+    expect(err).not.toBeInstanceOf(ClassifiedError);
+    expect(err).toBeInstanceOf(TypeError);
+  });
+
+  it('does not let a classifier that throws replace the real failure', async () => {
+    const err = await toNodeImpl(
+      failing(() => {
+        throw new Error('classifier is broken');
+      }),
+    )(state(), ctxFor('process')).catch((e: unknown) => e);
+    expect((err as Error).message).toBe('fetch failed');
   });
 });

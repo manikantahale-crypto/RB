@@ -43,6 +43,38 @@ export function classifyError(err: unknown): ErrorClass {
       ? String((err as { code?: string }).code)
       : undefined;
 
+  /**
+   * A SERVICE BEING DOWN IS NOT A CODE FAULT, AND USED TO BE READ AS ONE.
+   *
+   * Node's `fetch` rejects with `TypeError: fetch failed` when it cannot open
+   * the socket — DNS, connection refused, the process not started. The
+   * `instanceof TypeError` rule below was written for `undefined is not a
+   * function`, a genuine deployment fault, and predates fetch behaving this
+   * way. So every "node-api is not running" landed in the class this file's
+   * own table describes as "Fail job immediately, page on-call", and the run
+   * was never retried.
+   *
+   * It belongs in the row above it: "network blip — throw → pg-boss retry +
+   * checkpoint resume". Start the service and the same event succeeds.
+   *
+   * Checked BEFORE the TypeError rule, because it is a narrower case of it.
+   * `cause.code` is where undici puts the real reason; the message check
+   * catches the shapes that arrive without one.
+   */
+  const causeCode =
+    typeof err === 'object' && err !== null && 'cause' in err
+      ? String((err as { cause?: { code?: string } }).cause?.code ?? '')
+      : '';
+  if (
+    /^(ECONNREFUSED|ECONNRESET|ENOTFOUND|EAI_AGAIN|EHOSTUNREACH|ENETUNREACH|EPIPE|ETIMEDOUT|UND_ERR_SOCKET|UND_ERR_CONNECT_TIMEOUT)$/.test(
+      causeCode,
+    ) ||
+    /^(ECONNREFUSED|ECONNRESET|ENOTFOUND|EAI_AGAIN|EHOSTUNREACH|ENETUNREACH|EPIPE|ETIMEDOUT)$/.test(code ?? '') ||
+    /fetch failed|socket hang up|network(?:\s|-)?error|other side closed/i.test(message)
+  ) {
+    return 'transient';
+  }
+
   // Permanent-system: deployment/CI invariants violated
   if (
     err instanceof TypeError ||
