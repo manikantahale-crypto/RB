@@ -63,7 +63,7 @@ export const submissionOpen = defineNode({
   key: "prism.submission.open",
   version: "1.0.0",
   module: "prism",
-  shareable: false,
+  shareable: true, // SYNTRA's match and RELAY's consent flow both legitimately open one
 
   title: "Open a submission",
   description:

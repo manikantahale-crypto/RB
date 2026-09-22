@@ -39,7 +39,13 @@ export const duplicateMerge = defineNode({
   key: "syntra.duplicate.merge",
   version: "1.0.0",
   module: "syntra",
-  shareable: false, // only SYNTRA owns candidate records; nobody else merges them
+  /**
+   * DESTRUCTIVE, NOT LENT.
+   * Merging two people into one is hard to undo, and SYNTRA owns candidate
+   * records. Another module's flow deciding that two of them are the same
+   * person is exactly the call SYNTRA exists to make.
+   */
+  shareable: false,
 
   title: "Merge duplicate candidates",
   description:

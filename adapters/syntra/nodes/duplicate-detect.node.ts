@@ -55,7 +55,7 @@ export const duplicateDetect = defineNode({
   key: "syntra.duplicate.detect",
   version: "1.0.0",
   module: "syntra",
-  shareable: true,
+  shareable: true, // checking before acting is safe for anyone to do — it only reads
 
   title: "Check a candidate for duplicates",
   description:

@@ -76,6 +76,14 @@ export const submissionTransition = defineNode({
   key: "prism.submission.transition",
   version: "1.0.0",
   module: "prism",
+  /**
+   * PRISM'S OWN STATE MACHINE, NOT LENT.
+   * Seventeen statuses and a transition matrix PRISM enforces: consent before
+   * masking, masking before the vendor sees anything, RTR before ready. Another
+   * module driving arbitrary transitions is how that order gets corrupted, and
+   * the order is the whole reason PRISM exists. Other modules RECORD answers
+   * (the four `*.record` steps, all lent) and let PRISM sequence them.
+   */
   shareable: false,
 
   title: "Move a submission along",

@@ -40,7 +40,7 @@ export const profileMask = defineNode({
   key: "prism.profile.mask",
   version: "1.0.0",
   module: "prism",
-  shareable: false,
+  shareable: true, // masking happens before a send, and the sender may not be PRISM's own flow
 
   title: "Mask the profile for the vendor",
   description:

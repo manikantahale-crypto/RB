@@ -59,7 +59,7 @@ export const rtrRecord = defineNode({
   key: "prism.rtr.record",
   version: "1.0.0",
   module: "prism",
-  shareable: false,
+  shareable: true, // the answer arrives through RELAY, so RELAY's flow records it
 
   title: "Record the Right-To-Represent answer",
   description:

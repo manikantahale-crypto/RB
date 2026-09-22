@@ -57,7 +57,7 @@ export const placementConfirm = defineNode({
   key: "orbit.placement.confirm",
   version: "1.0.0",
   module: "orbit",
-  shareable: false,
+  shareable: true, // a placement is where the submission flow ends, and PRISM's flow reaches it
 
   title: "Confirm a placement",
   description:

@@ -57,7 +57,7 @@ export const requirementIntake = defineNode({
   key: "astra.requirement.intake",
   version: "1.0.0",
   module: "astra",
-  shareable: false,
+  shareable: true, // RELAY's inbox turns mail into requirements, so the door is open to it
 
   title: "Take a requirement in from an email",
   description:

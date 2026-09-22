@@ -67,7 +67,7 @@ export const continuousMatch = defineNode({
   key: "syntra.continuous.match",
   version: "1.0.0",
   module: "syntra",
-  shareable: true,
+  shareable: true, // matching the bench against a requirement is what the product sells
 
   title: "Match a requirement against the bench",
   description:

@@ -43,6 +43,13 @@ export const revenueArrange = defineNode({
   key: "orbit.revenue.arrange",
   version: "1.0.0",
   module: "orbit",
+  /**
+   * MONEY, NOT LENT.
+   * This records how the company earns on a placement — markup, fee, formula.
+   * The roadmap's governance rule 4 puts financial actions behind a person's
+   * authorisation, and setting a margin is ORBIT and finance's own act, not
+   * something another module's flow should reach.
+   */
   shareable: false,
 
   title: "Record how a placement earns",

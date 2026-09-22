@@ -50,7 +50,7 @@ export const shortlistNotify = defineNode({
   key: "syntra.shortlist.notify",
   version: "1.0.0",
   module: "syntra",
-  shareable: true,
+  shareable: true, // the handoff to RELAY, called from wherever the shortlist was made
 
   title: "Tell someone the shortlist is ready",
   description:

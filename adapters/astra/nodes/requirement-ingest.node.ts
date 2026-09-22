@@ -55,7 +55,7 @@ export const requirementIngest = defineNode({
   key: "astra.requirement.ingest",
   version: "1.0.0",
   module: "astra",
-  shareable: false,
+  shareable: true, // any module bringing a requirement in by API or form uses this door
 
   title: "Take a requirement in from any source",
   description:

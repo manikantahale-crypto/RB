@@ -62,7 +62,7 @@ export const consentRemind = defineNode({
   key: "relay.consent.remind",
   version: "1.0.0",
   module: "relay",
-  shareable: false,
+  shareable: true, // RELAY is the communication layer; whoever is waiting may chase
 
   title: "Remind a candidate who has not answered",
   description:

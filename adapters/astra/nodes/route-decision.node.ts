@@ -51,6 +51,11 @@ export const routeDecision = defineNode({
   key: "astra.route.decision",
   version: "1.0.0",
   module: "astra",
+  /**
+   * ASTRA'S OWN GATE, NOT LENT.
+   * It decides whether a requirement is actionable and publishes ASTRA's own
+   * two events. Outside ASTRA's intake it has nothing to decide about.
+   */
   shareable: false,
 
   title: "Send a requirement on, or reject it",

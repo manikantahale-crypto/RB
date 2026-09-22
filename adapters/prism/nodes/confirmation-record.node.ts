@@ -68,7 +68,7 @@ export const confirmationRecord = defineNode({
   key: "prism.confirmation.record",
   version: "1.0.0",
   module: "prism",
-  shareable: false,
+  shareable: true, // the answer arrives through RELAY; recording one is not setting a rate
 
   title: "Record a rate or availability confirmation",
   description:

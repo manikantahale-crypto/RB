@@ -43,7 +43,7 @@ export const benchAlert = defineNode({
   key: "syntra.bench.alert",
   version: "1.0.0",
   module: "syntra",
-  shareable: true,
+  shareable: true, // telling a recruiter about matches is not SYNTRA's alone to do
 
   title: "Alert on a bench candidate",
   description:

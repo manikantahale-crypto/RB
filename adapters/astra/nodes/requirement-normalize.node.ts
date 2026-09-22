@@ -53,7 +53,7 @@ export const requirementNormalize = defineNode({
   key: "astra.requirement.normalize",
   version: "1.0.0",
   module: "astra",
-  shareable: false,
+  shareable: true, // enrichment is a service ASTRA offers, not a private step
 
   title: "Enrich a requirement",
   description:

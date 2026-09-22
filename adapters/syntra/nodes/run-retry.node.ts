@@ -97,7 +97,14 @@ export const runRetry = defineNode({
   key: "syntra.run.retry",
   version: "1.0.0",
   module: "syntra",
-  shareable: false, // retry policy belongs to the platform, not to other modules
+  /**
+   * THE PLATFORM'S BUSINESS, NOT A MODULE'S.
+   * Re-running a failed run belongs to whoever operates the orchestrator. A
+   * module's workflow retrying another module's run is an operations action
+   * wearing a business step's clothes. (It lives under `syntra.` for
+   * historical reasons; the key is the only thing tying it there.)
+   */
+  shareable: false,
 
   title: "Retry a failed run",
   description:

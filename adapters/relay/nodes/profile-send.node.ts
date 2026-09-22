@@ -67,7 +67,7 @@ export const profileSend = defineNode({
   key: "relay.profile.send",
   version: "1.0.0",
   module: "relay",
-  shareable: false,
+  shareable: true, // RELAY is the communication layer; PRISM's submission ends here
 
   title: "Send a masked profile to the vendor",
   description:

@@ -301,7 +301,33 @@ export const NodeContractSchema = z
     key: NodeKey,
     version: SemVer,
     module: z.enum(MODULES),
-    /** May graphs outside `module` use this node? */
+    /**
+     * May graphs outside `module` use this node?
+     *
+     * The five modules are one product and one revenue flow — a requirement
+     * arrives, a candidate is matched, consent is asked, a profile is
+     * submitted, a placement is made — so a flow routinely needs another
+     * module's step. Two questions decide each one:
+     *
+     *   LEND IT   when another module's flow legitimately needs it to do its
+     *             own job. RELAY is the communication layer and exists to be
+     *             called; ORBIT's timeline belongs to everyone; ASTRA's intake
+     *             is the door RELAY's inbox comes through.
+     *
+     *   KEEP IT   when it advances this module's own state machine, or commits
+     *             money, or destroys data that only its owner should
+     *             authorise. PRISM sequences its own submission matrix;
+     *             ORBIT and finance set a margin; SYNTRA decides two people
+     *             are one person.
+     *
+     * 26 of 33 are lent today. Each file says which and why on this line.
+     *
+     * This is not access control. Who may CALL a workflow is a routing and
+     * permissions question about the caller, and that layer is still to come
+     * (product owner, 2026-09-22). This field is narrower and older: it says
+     * whether the OWNING module offers the step at all, and the go-live gate's
+     * check 8 refuses a workflow that borrows one that is not offered.
+     */
     shareable: z.boolean(),
 
     title: z.string().min(1),

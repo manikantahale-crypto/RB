@@ -47,7 +47,7 @@ export const lifecycleTransition = defineNode({
   key: "orbit.lifecycle.transition",
   version: "1.0.0",
   module: "orbit",
-  shareable: true,
+  shareable: true, // ASTRA and SYNTRA both move people between bench states
 
   title: "Move a person to a bench state",
   description:

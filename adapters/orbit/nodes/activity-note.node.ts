@@ -40,7 +40,7 @@ export const activityNote = defineNode({
   key: "orbit.activity.note",
   version: "1.0.0",
   module: "orbit",
-  shareable: true,
+  shareable: true, // the activity feed is everyone's (migration decision D2)
 
   title: "Note something on a person's timeline",
   description:

@@ -115,7 +115,7 @@ export const jdProcess = defineNode({
   version: "1.0.0",
   module: "syntra",
   /** Any module's graph may parse a JD; nothing about it is SYNTRA-private. */
-  shareable: true,
+  shareable: true, // parsing a requirement is a service any flow may need
 
   title: "Process a job description",
   description:

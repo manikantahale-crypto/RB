@@ -44,7 +44,7 @@ export const requirementQuality = defineNode({
   key: "astra.requirement.quality",
   version: "1.0.0",
   module: "astra",
-  shareable: false,
+  shareable: true, // read-only: any flow may ask how good a requirement is
 
   title: "Judge a requirement's quality",
   description:

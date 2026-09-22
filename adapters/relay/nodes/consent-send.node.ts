@@ -96,7 +96,7 @@ export const consentSend = defineNode({
   key: "relay.consent.send",
   version: "1.0.0",
   module: "relay",
-  shareable: false,
+  shareable: true, // RELAY is the communication layer; SYNTRA's shortlist asks it to send
 
   title: "Ask the shortlisted candidates for consent",
   description:

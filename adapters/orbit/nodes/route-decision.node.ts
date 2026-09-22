@@ -36,6 +36,11 @@ export const orbitRouteDecision = defineNode({
   key: "orbit.route.decision",
   version: "1.0.0",
   module: "orbit",
+  /**
+   * ORBIT'S OWN GATE, NOT LENT.
+   * placed / hold / active is a branch on ORBIT's lifecycle. Outside a bench
+   * move it has nothing to route.
+   */
   shareable: false,
 
   title: "Route after a bench move",

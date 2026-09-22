@@ -77,7 +77,7 @@ export const matchProcess = defineNode({
   key: "syntra.match.process",
   version: "1.0.0",
   module: "syntra",
-  shareable: true,
+  shareable: true, // PRISM may want a pair scored before it opens a submission
 
   title: "Score a job against a resume",
   description:

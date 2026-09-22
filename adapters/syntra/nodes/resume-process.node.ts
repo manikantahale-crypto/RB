@@ -95,7 +95,7 @@ export const resumeProcess = defineNode({
   key: "syntra.resume.process",
   version: "1.0.0",
   module: "syntra",
-  shareable: true,
+  shareable: true, // parsing and embedding a resume, likewise
 
   title: "Process a resume",
   description:

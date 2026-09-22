@@ -69,7 +69,7 @@ export const consentRecord = defineNode({
   key: "prism.consent.record",
   version: "1.0.0",
   module: "prism",
-  shareable: false,
+  shareable: true, // the answer arrives through RELAY, so RELAY's flow records it
 
   title: "Record the candidate's consent answer",
   description:

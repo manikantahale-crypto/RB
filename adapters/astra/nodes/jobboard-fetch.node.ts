@@ -55,6 +55,13 @@ export const jobboardFetch = defineNode({
   key: "astra.jobboard.fetch",
   version: "1.0.0",
   module: "astra",
+  /**
+   * ASTRA'S OWN ACQUISITION CHANNEL, NOT LENT.
+   * It sweeps third-party job boards on ASTRA's API quota and creates
+   * requirements in bulk. Nothing outside requirement discovery has a reason
+   * to start one, and a flow that could would be spending someone else's
+   * rate limit.
+   */
   shareable: false,
 
   title: "Fetch requirements from a job board",
