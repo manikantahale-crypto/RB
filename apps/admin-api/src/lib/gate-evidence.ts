@@ -27,6 +27,7 @@
 import { MODULES } from "@tekisho/node-contract";
 
 import { EVENT_SCHEMAS } from "./authoring-views.js";
+import { triggerEventFor } from "./trigger-event.js";
 export async function collectGateEvidence(
   client: { query: (t: string, p?: unknown[]) => Promise<{ rows: any[] }> },
   artifactSource: string,
@@ -65,7 +66,15 @@ export async function collectGateEvidence(
      * every workflow created through the current path — the ones most likely
      * to be going live.
      */
-    const trigger = def.triggerEventType ?? def.entryInput ?? null;
+    /**
+     * NOT `def.triggerEventType ?? def.entryInput`, which is what this read
+     * before. Eleven of the twelve live workflows declare neither, so both
+     * checks that depend on a trigger — 7, can every step get what it needs,
+     * and 9, does a step publish the event that starts this — reported "not
+     * checked" on everything in production. `triggerEventFor` asks the active
+     * binding, which is what actually decides.
+     */
+    const trigger = await triggerEventFor(client, { graphKey, definition: def });
     const impls = [
       ...new Set((def.nodes ?? []).map((n) => String(n.impl ?? ""))),
     ].filter(Boolean);
