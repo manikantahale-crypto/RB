@@ -6,7 +6,11 @@
  *     { "jobId": "trigger.requirement_id", "resumeId": "process.resumeId" }
  *
  * `trigger.<field>` reads the event that started the run. `<step>.<field>`
- * reads an earlier step's declared output out of `state.steps`.
+ * reads an earlier step's declared output out of `state.steps`. Either may be
+ * followed by a path into the value — `send.consent_threads.0.thread_id` —
+ * which is the only thing a map can do beyond naming a field, and deliberately
+ * so: the moment a map can transform, it is code, and the definition stops
+ * being readable and checkable, which is the whole reason it exists.
  *
  * MERGED INTO THE PAYLOAD, NOT SUBSTITUTED FOR IT.
  *
@@ -41,19 +45,40 @@ export type ResolvedInputs = {
   unresolved: string[];
 };
 
+/**
+ * Walk the segments after the field, if there are any.
+ *
+ * Array indices are the same syntax as keys — `consent_threads.0.thread_id` —
+ * because a JSON array indexed by a string works, and inventing a bracket
+ * syntax would mean a second thing to parse for no gain.
+ *
+ * Anything missing on the way down returns undefined, which the caller reports
+ * as unresolved rather than writing in. A step cannot tell the difference
+ * between a field nobody mapped and one mapped to nothing, and neither can its
+ * schema.
+ */
+function walk(value: unknown, path: readonly string[]): unknown {
+  let at = value;
+  for (const segment of path) {
+    if (at === null || typeof at !== 'object') return undefined;
+    at = (at as Record<string, unknown>)[segment];
+  }
+  return at;
+}
+
 /** Read one source path out of the run context. */
 function valueAt(state: SyntraGraphState, path: string): unknown {
   const parsed = parseInputSource(path);
   if (!parsed.ok) return undefined;
 
   if (parsed.source.kind === 'trigger') {
-    const payload = state.trigger_event?.payload ?? {};
-    return (payload as Record<string, unknown>)[parsed.source.field];
+    const payload = (state.trigger_event?.payload ?? {}) as Record<string, unknown>;
+    return walk(payload[parsed.source.field], parsed.source.path);
   }
 
   const step = (state.steps ?? {})[parsed.source.stepId];
   if (!step || typeof step !== 'object') return undefined;
-  return (step as Record<string, unknown>)[parsed.source.field];
+  return walk((step as Record<string, unknown>)[parsed.source.field], parsed.source.path);
 }
 
 /**

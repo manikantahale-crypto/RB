@@ -109,6 +109,47 @@ describe('withResolvedInputs', () => {
     expect(payloadOf(out).status).toBe('processed');
   });
 
+  it('reaches into a list in a step output, which is the case that forced it', () => {
+    // `relay.consent.send` returns one {candidate_id, thread_id} per candidate
+    // asked. Before a path could be written, the only way to get one thread id
+    // was for the reading node to take the whole list and search it itself.
+    const s = state({
+      steps: {
+        send: {
+          consent_threads: [
+            { candidate_id: 'c-1', thread_id: 't-1' },
+            { candidate_id: 'c-2', thread_id: 't-2' },
+          ],
+        },
+      },
+    });
+    const { state: out, unresolved } = withResolvedInputs(s, {
+      thread_id: 'send.consent_threads.1.thread_id',
+    });
+    expect(payloadOf(out).thread_id).toBe('t-2');
+    expect(unresolved).toEqual([]);
+  });
+
+  it('reports a path that runs out rather than writing undefined in', () => {
+    const s = state();
+    const { state: out, unresolved } = withResolvedInputs(s, {
+      deep: 'process.jobId.nope.nope',
+    });
+    expect(out).toBe(s);
+    expect(unresolved).toEqual(['deep ← process.jobId.nope.nope']);
+  });
+
+  it('reaches into the trigger payload too', () => {
+    const s = state();
+    (s.trigger_event as { payload: Record<string, unknown> }).payload.vendor = {
+      email: 'v@example.invalid',
+    };
+    const { state: out } = withResolvedInputs(s, {
+      vendor_email: 'trigger.vendor.email',
+    });
+    expect(payloadOf(out).vendor_email).toBe('v@example.invalid');
+  });
+
   it('does not mutate the state it was given', () => {
     // Mutating would leak one step's mapping into the next, which is the
     // opposite of what a per-step map is for.

@@ -96,33 +96,47 @@ export function checksumOf(definition: unknown): string {
 export const TRIGGER_ROOT = "trigger";
 
 export type InputSource =
-  | { kind: "trigger"; field: string }
-  | { kind: "step"; stepId: string; field: string };
+  | { kind: "trigger"; field: string; path: readonly string[] }
+  | { kind: "step"; stepId: string; field: string; path: readonly string[] };
 
 /**
  * Read a source path, or say why it is not one.
  *
- * Exactly two segments, deliberately. Allowing `process.syntra.status` would
- * mean reaching into a nested object in a step's output — and a step whose
- * output has nested objects is carrying a payload, which is the thing the run
- * context must not hold. The limit keeps resolution trivial AND keeps the
- * discipline; if two segments feels short, the fix belongs in the node's
- * output schema.
+ * Two segments is the ordinary case and the only one inference ever writes:
+ * `trigger.jobId`, `send.consent_threads`. Anything after the field is a path
+ * INTO that value — `send.consent_threads.0.thread_id`.
+ *
+ * WHY THIS WAS ONCE FORBIDDEN, AND WHAT CHANGED. The limit used to be exactly
+ * two, and the reason given was that reaching inside a step's output means the
+ * output is carrying a payload, which the run context must not hold: `steps`
+ * is checkpointed, and a resume blob in there sits outside the redaction rules
+ * each node declares.
+ *
+ * The discipline is right. The limit was the wrong place to enforce it. What
+ * may be stored is a rule about what a node DECLARES as output, and it is
+ * enforced there; how deep a later step may READ is a different question, and
+ * making the reader clumsy never stopped anybody storing a payload. The case
+ * that forced this is `relay.consent.send`, whose `consent_threads` is a list
+ * of `{candidate_id, thread_id}` — ids, small, exactly what the run context is
+ * for, and unreachable field-by-field before now.
+ *
+ * `field` stays the first segment either way, so everything that asks "which
+ * field of which step" keeps working and only the resolver walks the rest.
  */
 export function parseInputSource(
   path: string,
 ): { ok: true; source: InputSource } | { ok: false; why: string } {
   const parts = path.split(".");
-  if (parts.length !== 2 || parts.some((p) => p.length === 0)) {
+  if (parts.length < 2 || parts.some((p) => p.length === 0)) {
     return {
       ok: false,
-      why: `"${path}" is not a source — expected "${TRIGGER_ROOT}.<field>" or "<step>.<field>"`,
+      why: `"${path}" is not a source — expected "${TRIGGER_ROOT}.<field>" or "<step>.<field>", with an optional path into it`,
     };
   }
-  const [root, field] = parts as [string, string];
+  const [root, field, ...rest] = parts as [string, string, ...string[]];
   return root === TRIGGER_ROOT
-    ? { ok: true, source: { kind: "trigger", field } }
-    : { ok: true, source: { kind: "step", stepId: root, field } };
+    ? { ok: true, source: { kind: "trigger", field, path: rest } }
+    : { ok: true, source: { kind: "step", stepId: root, field, path: rest } };
 }
 
 /** Structural checks only — does not validate impl against nodeRegistry. */

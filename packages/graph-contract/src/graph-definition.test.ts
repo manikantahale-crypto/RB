@@ -39,20 +39,38 @@ describe("parseInputSource", () => {
   it("reads the two shapes it allows", () => {
     expect(parseInputSource("trigger.requirement_id")).toEqual({
       ok: true,
-      source: { kind: "trigger", field: "requirement_id" },
+      source: { kind: "trigger", field: "requirement_id", path: [] },
     });
     expect(parseInputSource("process.jobId")).toEqual({
       ok: true,
-      source: { kind: "step", stepId: "process", field: "jobId" },
+      source: { kind: "step", stepId: "process", field: "jobId", path: [] },
     });
   });
 
-  it("refuses anything deeper than two segments", () => {
-    // Reaching into a nested object means the step is carrying a payload,
-    // which is what the run context must not hold.
-    expect(parseInputSource("process.syntra.status").ok).toBe(false);
+  it("reads a path into the value, which is how a list is reached into", () => {
+    // `consent_threads` is a list of {candidate_id, thread_id} — ids, small,
+    // exactly what the run context is for, and unreachable field-by-field
+    // until this was allowed.
+    expect(parseInputSource("send.consent_threads.0.thread_id")).toEqual({
+      ok: true,
+      source: {
+        kind: "step",
+        stepId: "send",
+        field: "consent_threads",
+        path: ["0", "thread_id"],
+      },
+    });
+  });
+
+  it("keeps `field` as the first segment, so the checks that ask which field still work", () => {
+    const parsed = parseInputSource("trigger.candidate.email");
+    expect(parsed.ok && parsed.source.field).toBe("candidate");
+  });
+
+  it("still refuses what is not a source at all", () => {
     expect(parseInputSource("jobId").ok).toBe(false);
     expect(parseInputSource("process.").ok).toBe(false);
+    expect(parseInputSource("process..status").ok).toBe(false);
     expect(parseInputSource("").ok).toBe(false);
   });
 });
