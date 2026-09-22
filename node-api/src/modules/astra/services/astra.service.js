@@ -3,6 +3,7 @@ const astraRepo = require("../repositories/astra.repository");
 const { withTransaction, pool } = require("../../../config/db");
 const { getBoss } = require("../../../config/queue");
 const log = require("../../../utils/logger");
+const env = require("../../../config/env");
 
 /**
  * Normalizes text: converts to lowercase, collapses consecutive whitespace, and trims.
@@ -412,12 +413,24 @@ async function ingestRequirement(payload = {}) {
   let eventPublished = false;
   let eventError = null;
 
+  // Unless the orchestrator's ASTRA workflow owns enrichment, in which case
+  // the requirement is already announced (step 5) and the workflow takes it
+  // from there. Queueing here would enrich it twice. See config/env.js.
+  const delegated = env.ORCH_DELEGATE_ASTRA && env.PLATFORM_EVENTS_ENABLED;
+  if (delegated) {
+    log.info(
+      `[ASTRA] ORCH_DELEGATE_ASTRA=1 — enrichment left to the ASTRA workflow for ${newJob.id}`,
+    );
+  }
+
   try {
     const channelType = requirementData.sourceEmail || payload.sourceType === "email" || payload.source_type === "email"
       ? "EMAIL"
       : (payload.sourceType === "job_board" || payload.source_type === "job_board" ? "JOB_BOARD" : "API");
 
-    await getBoss().send("module.astra.requirement", {
+    // Nothing to enqueue when the workflow owns enrichment; the requirement
+    // has already been announced, which is what starts it.
+    if (!delegated) await getBoss().send("module.astra.requirement", {
       jobId: newJob.id,
       correlationId: newJob.correlationId,
       eventId: newJob.eventId,
@@ -430,7 +443,9 @@ async function ingestRequirement(payload = {}) {
       }
     });
     eventPublished = true;
-    log.info(`[ASTRA] Enqueued requirement ${newJob.id} to pg-boss queue 'module.astra.requirement'`);
+    if (!delegated) {
+      log.info(`[ASTRA] Enqueued requirement ${newJob.id} to pg-boss queue 'module.astra.requirement'`);
+    }
   } catch (err) {
     eventError = err.message;
     log.error(`[ASTRA] Failed to enqueue requirement ${newJob.id} to 'module.astra.requirement': ${err.message}`);

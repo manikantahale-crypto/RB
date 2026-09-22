@@ -48,6 +48,20 @@ module.exports = {
   ORCH_DELEGATE_MATCH: flag("ORCH_DELEGATE_MATCH", true),
   /** Route ORBIT UI actions through orchestrator graphs (module.orbit.bench). */
   ORCH_DELEGATE_ORBIT: flag("ORCH_DELEGATE_ORBIT", true),
+  /**
+   * Who enriches a requirement: this service's own worker, or the
+   * orchestrator's ASTRA workflow (quality -> normalize -> route).
+   *
+   * BOTH do the same work and both announce `astra.requirement.normalized`,
+   * so exactly one of them must run. Decided 2026-09-22: the workflow owns
+   * it — an authored graph, a threshold an admin can tune, and a run on the
+   * runs screen, instead of behaviour hardcoded in a worker.
+   *
+   * Default FALSE until that workflow is bound (stage 6). Turning this on
+   * before the binding exists means nothing enriches anything, so the flip
+   * belongs in the same change that creates the binding.
+   */
+  ORCH_DELEGATE_ASTRA: flag("ORCH_DELEGATE_ASTRA", false),
   /** Orchestrator HTTP API — used by admin runtime trace; Syntra writes outbox directly. */
   ORCH_API_URL: (process.env.ORCH_API_URL || "http://localhost:4100").replace(/\/$/, ""),
   SYNTRA_API_URL: (process.env.SYNTRA_API_URL || `http://localhost:${process.env.PORT || "4000"}`).replace(/\/$/, ""),

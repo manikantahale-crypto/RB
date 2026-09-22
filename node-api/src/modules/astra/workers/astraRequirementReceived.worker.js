@@ -3,6 +3,7 @@ const astraIntelligenceService = require("../services/astraIntelligence.service"
 const { getBoss } = require("../../../config/queue");
 const { withTransaction } = require("../../../config/db");
 const log = require("../../../utils/logger");
+const env = require("../../../config/env");
 
 /**
  * Core handler for the 'astra.requirement.received' event.
@@ -32,6 +33,21 @@ async function handleAstraRequirementReceived(job) {
 
   if (!jobId) {
     throw new Error("[astra.requirement.received] missing jobId in job data");
+  }
+
+  /**
+   * When the orchestrator's ASTRA workflow owns enrichment, this worker does
+   * nothing: it would run the same LLM call and announce the same
+   * `astra.requirement.normalized` a second time, which starts everything
+   * bound to that event twice. `astra.service.js` stops enqueueing under the
+   * same flag; this is the net that catches jobs already on the queue when
+   * the flag was flipped.
+   */
+  if (env.ORCH_DELEGATE_ASTRA && env.PLATFORM_EVENTS_ENABLED) {
+    log.info(
+      `[astra.requirement.received] ORCH_DELEGATE_ASTRA=1 — enrichment deferred to the ASTRA workflow (job ${jobId})`,
+    );
+    return { status: "skipped", reason: "delegated_to_orchestrator", jobId };
   }
 
   // 1. Load persisted requirement record
