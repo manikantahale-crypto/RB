@@ -332,19 +332,99 @@ async function bootstrapPgBoss(): Promise<void> {
   console.log("══════════════════════════════════════════════════════════════");
   console.log("");
 
-  const shutdown = async () => {
-    console.log("\nShutting down dispatcher...");
+  /**
+   * STOPPING WITHOUT LEAVING WORK IN LIMBO.
+   *
+   * `boss.stop()` is already the careful part: pg-boss waits up to 30s for
+   * handlers in flight and then calls `failWip()`, which fails whatever is
+   * still active with "pg-boss shut down while active" so the next start
+   * retries it rather than finding it stuck. None of that happens if this
+   * function is never reached, or never finishes, and there were three ways
+   * it was not:
+   *
+   *   1. ONLY SIGINT AND SIGTERM WERE HANDLED. On Windows, closing the console
+   *      window raises SIGHUP and Ctrl+Break raises SIGBREAK; neither was
+   *      listened for, so the process died with jobs held. Two are sitting in
+   *      `active` right now from exactly that, waiting for a supervisor that
+   *      only runs while a worker is up.
+   *   2. A SECOND Ctrl-C STARTED A SECOND SHUTDOWN, racing the first through
+   *      `boss.stop()` and `pool.end()`.
+   *   3. ANYTHING THROWING SKIPPED `process.exit`. `pool.end()` on a dropped
+   *      connection rejects; the handler rejected with it, the process stayed
+   *      up with its workers already stopped, and the next Ctrl-C was the one
+   *      that killed it — ungracefully.
+   *
+   * So: once only, every signal, always exits, never hangs. The hard timeout
+   * is longer than pg-boss's own 30s grace, so it is a backstop for a wedged
+   * shutdown rather than a shorter deadline competing with it.
+   */
+  const HARD_EXIT_MS = 45_000;
+  let stopping = false;
+
+  const shutdown = async (signal: string) => {
+    if (stopping) {
+      console.log(`\n${signal} again — exiting now.`);
+      process.exit(1);
+    }
+    stopping = true;
+    console.log(`\nShutting down dispatcher (${signal})…`);
+
+    const hardExit = setTimeout(() => {
+      console.error(
+        `Shutdown took longer than ${HARD_EXIT_MS / 1000}s — exiting anyway. ` +
+          `Anything still active is reclaimed by the next worker's supervisor.`,
+      );
+      process.exit(1);
+    }, HARD_EXIT_MS);
+    // Not itself a reason to stay alive if everything else finishes first.
+    hardExit.unref();
+
+    /** Reported and survived, so one failure cannot skip the steps after it. */
+    const step = async (what: string, fn: () => Promise<unknown> | unknown) => {
+      try {
+        await fn();
+      } catch (error) {
+        console.error(`  ${what} failed during shutdown:`, error);
+      }
+    };
+
     clearInterval(handlingRefresh);
     clearInterval(routingRefresh);
-    staleSweeper.stop();
-    await stopOutboxRelay();
-    await boss.stop();
-    await pool.end();
+    await step("stale-run sweeper", () => staleSweeper.stop());
+    await step("outbox relay", () => stopOutboxRelay());
+    // The one that matters: finishes or fails whatever is mid-flight.
+    await step("pg-boss", () => boss.stop());
+    await step("database pool", () => pool.end());
+
+    console.log("Stopped cleanly.");
     process.exit(0);
   };
 
-  process.on("SIGINT", shutdown);
-  process.on("SIGTERM", shutdown);
+  for (const signal of ["SIGINT", "SIGTERM", "SIGHUP", "SIGBREAK"] as const) {
+    // SIGBREAK exists only on Windows and SIGHUP only where there is a console
+    // to hang up; registering one the platform lacks throws.
+    try {
+      process.on(signal, () => void shutdown(signal));
+    } catch {
+      /* not available on this platform */
+    }
+  }
+
+  /**
+   * A worker meant to be left running must not die quietly.
+   *
+   * Without these an unhandled rejection takes the process down with a bare
+   * stack trace and no shutdown at all — jobs held, nothing said. Logged, and
+   * for a genuinely broken process, shut down properly, so the next start
+   * finds a queue it can reclaim rather than one it has to wait out.
+   */
+  process.on("unhandledRejection", (reason) => {
+    console.error("[Dispatcher] unhandled rejection:", reason);
+  });
+  process.on("uncaughtException", (error) => {
+    console.error("[Dispatcher] uncaught exception:", error);
+    void shutdown("uncaughtException");
+  });
 }
 
 bootstrapPgBoss().catch((error: unknown) => {
