@@ -1,4 +1,5 @@
 import type { Pool } from "pg";
+import { adminIdOf } from "../lib/admin-identity.js";
 import { randomUUID } from "node:crypto";
 import {
   getToolCatalog,
@@ -22,9 +23,12 @@ function readOrgId(headers: Record<string, unknown>): string | null {
   return String(raw);
 }
 
+/**
+ * Who is calling — the signed-in `platform.users` uuid, or the anonymous
+ * label when `ADMIN_ALLOW_ANONYMOUS` is on. See lib/admin-identity.ts.
+ */
 function readAdminId(headers: Record<string, unknown>): string {
-  const raw = headers["x-admin-id"];
-  return raw ? String(raw) : "admin-local";
+  return adminIdOf({ headers });
 }
 
 function slugify(name: string): string {

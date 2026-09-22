@@ -60,6 +60,7 @@
  * decision about a live shared table.
  */
 import type { Pool } from "pg";
+import { adminIdOf } from "../lib/admin-identity.js";
 import { withOrgScope } from "../with-org-scope.js";
 import {
   MODULE_REGISTRY,
@@ -109,8 +110,7 @@ function readOrgId(headers: Record<string, unknown>): string | null {
  * every request. Treated as an identifier to pass along, never as proof.
  */
 function readAdminId(headers: Record<string, unknown>): string | null {
-  const raw = headers["x-admin-id"];
-  return raw === undefined || raw === null || raw === "" ? null : String(raw);
+  return adminIdOf({ headers }) || null;
 }
 
 /**
@@ -2444,7 +2444,7 @@ export function registerProposeRoutes(
               orgId: null,
               definition,
               checksum: checksumOf(definition),
-              by: String(req.headers["x-admin-id"] ?? "admin-local"),
+              by: adminIdOf(req),
             });
             created.push({ graphKey, module: String(link.module ?? "") });
           }
@@ -2470,7 +2470,7 @@ export function registerProposeRoutes(
             authorModule: String(body.module ?? links[0]?.module ?? ""),
             links,
             createdKeys: new Set(created.map((c) => c.graphKey)),
-            by: String(req.headers["x-admin-id"] ?? "admin-local"),
+            by: adminIdOf(req),
           });
 
           await client.query("COMMIT");
@@ -2575,7 +2575,7 @@ export function registerProposeRoutes(
           orgId: null,
           definition,
           checksum: checksumOf(definition),
-          by: String(req.headers["x-admin-id"] ?? "admin-local"),
+          by: adminIdOf(req),
         });
 
         return {

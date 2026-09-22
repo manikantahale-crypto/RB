@@ -14,6 +14,7 @@ const jobRepo = require("../../../repositories/job.repository");
 const matchRepo = require("../../../repositories/match.repository");
 const activityRepo = require("../../../repositories/activity.repository");
 const { buildShortlistCandidates, isPlaceholderEmail } = require("../utils/shortlistCandidates");
+const { internalHeaders } = require("../../../utils/internalHeaders");
 
 const router = express.Router();
 
@@ -275,7 +276,7 @@ router.post("/internal/jobs/:jobId/shortlist/notify", async (req, res) => {
     if (relayThreadId && top_candidates.length) {
       try {
         await fetch(`${relayBase}/internal/shortlist/pending`, {
-          method: "POST", headers: { "Content-Type": "application/json" },
+          method: "POST", headers: internalHeaders(),
           body: JSON.stringify({
             jobId, requirement_id: jobId, relay_thread_id: relayThreadId,
             vendor_email: body.vendor_email ?? job?.source_email,
@@ -294,7 +295,7 @@ router.post("/internal/jobs/:jobId/shortlist/notify", async (req, res) => {
     if (candidatesForConsent.length) {
       try {
         const consentRes = await fetch(`${relayBase}/internal/consent/send`, {
-          method: "POST", headers: { "Content-Type": "application/json" },
+          method: "POST", headers: internalHeaders(),
           body: JSON.stringify({
             jobId, requirement_id: jobId, correlation_id: body.correlation_id,
             top_candidates: candidatesForConsent, vendor_thread_id: relayThreadId,
@@ -324,7 +325,7 @@ router.post("/internal/jobs/:jobId/shortlist/notify", async (req, res) => {
           if (relayThreadId && consentSent > 0) {
             try {
               await fetch(`${relayBase}/internal/shortlist/approved`, {
-                method: "POST", headers: { "Content-Type": "application/json" },
+                method: "POST", headers: internalHeaders(),
                 body: JSON.stringify({ jobId, relay_thread_id: relayThreadId, top_candidates, consent: consentData }),
               });
             } catch (err) {
@@ -375,7 +376,7 @@ router.post("/internal/jobs/:jobId/shortlist/approve", async (req, res) => {
     const relayThreadId = body.relay_thread_id ?? body.vendor_thread_id ?? job?.relay_thread_id ?? null;
     const relayBase = relayBaseUrl();
     const consentRes = await fetch(`${relayBase}/internal/consent/send`, {
-      method: "POST", headers: { "Content-Type": "application/json" },
+      method: "POST", headers: internalHeaders(),
       body: JSON.stringify({
         jobId, requirement_id: jobId, correlation_id: body.correlation_id, top_candidates,
         vendor_thread_id: relayThreadId, vendor_email: body.vendor_email ?? job?.source_email,
@@ -389,7 +390,7 @@ router.post("/internal/jobs/:jobId/shortlist/approve", async (req, res) => {
     if (relayThreadId) {
       try {
         await fetch(`${relayBase}/internal/shortlist/approved`, {
-          method: "POST", headers: { "Content-Type": "application/json" },
+          method: "POST", headers: internalHeaders(),
           body: JSON.stringify({ jobId, relay_thread_id: relayThreadId, top_candidates, consent: consentData }),
         });
       } catch (err) {

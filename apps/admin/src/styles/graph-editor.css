@@ -886,6 +886,6 @@
 .ge-rule-problems {
   margin: 0;
   padding-left: var(--space-5);
-  color: var(--text-danger, #b42318);
+  color: var(--text-danger);
   font-size: var(--font-size-sm);
 }

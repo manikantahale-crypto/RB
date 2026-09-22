@@ -50,23 +50,27 @@ app.use(require("./modules/relay/routes/relayProxy.routes"));
 
 app.get("/health", (req, res) => res.json({ status: "ok" }));
 
-app.get("/dump-schema", async (req, res) => {
-  const { pool } = require("./config/db");
-  try {
-    const { rows } = await pool.query(`SELECT table_schema, table_name, column_name FROM information_schema.columns WHERE table_schema IN ('public', 'syntra') ORDER BY table_schema, table_name, ordinal_position;`);
-    res.json(rows);
-  } catch (e) {
-    res.status(500).json({ error: e.message });
-  }
-});
+/*
+ * `/dump-schema` was here: every column of every table in `public` and
+ * `syntra`, to anyone who could reach the port, with no token. Removed
+ * 2026-09-22 — nothing in the repository called it, and `\d` does the same
+ * job for whoever has a right to ask.
+ */
 
 const { requireAuth } = require("./middleware/auth");
 
 app.use("/auth", require("./routes/auth.routes"));
-app.use(require("./modules/syntra/routes/internal.syntra.routes"));
-app.use(require("./modules/orbit/routes/internal.orbit.routes"));
-app.use(require("./modules/astra/routes/internal.astra.routes"));
-app.use(require("./modules/prism/routes/internal.prism.routes"));
+/*
+ * The orchestrator's door into each module. No session, organisation from the
+ * payload, full authority over that module's data — so it is gated on a shared
+ * secret rather than on nothing. See middleware/internalSecret.js; with
+ * INTERNAL_API_SECRET unset the gate passes everything and says so at boot.
+ */
+const { requireInternalSecret } = require("./middleware/internalSecret");
+app.use(requireInternalSecret, require("./modules/syntra/routes/internal.syntra.routes"));
+app.use(requireInternalSecret, require("./modules/orbit/routes/internal.orbit.routes"));
+app.use(requireInternalSecret, require("./modules/astra/routes/internal.astra.routes"));
+app.use(requireInternalSecret, require("./modules/prism/routes/internal.prism.routes"));
 app.use("/api/astra", require("./modules/astra/routes/astra.routes"));
 app.use("/astra", require("./modules/astra/routes/astra.routes"));
 app.use("/api/job-boards", require("./modules/astra/routes/jobBoards.routes"));

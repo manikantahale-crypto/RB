@@ -315,6 +315,9 @@
   --text-muted: var(--neutral-400);
   --text-inverse: var(--neutral-0);
   --text-link: var(--green-700);
+  /* Was living as a hard-coded fallback in graph-editor.css, which is the one
+     place a token is not allowed to live. Same value, now named. */
+  --text-danger: var(--red-alert);
 
   /* Borders */
   --border-subtle: var(--neutral-200);

@@ -12,6 +12,7 @@ import { findRegisteredCandidateByEmail } from './matching/candidateRegistry';
 import { listThreadsForInbox, getThreadDetail } from './inbox/threadsApi';
 import { classifyEmailMessage } from './classification/ruleClassifier';
 import { registerInternalRoutes } from './platform/internalRoutes';
+import { registerInternalSecret } from './platform/internalSecret';
 import { queueEmailForProcessing } from './jobs/worker';
 import { processEmail } from './agent/inboxAgent';
 import { EmailSenderFactory, type OutboundAttachment } from './connectors/sender';
@@ -136,6 +137,8 @@ async function pullMailboxOnce(log?: { info: (...args: unknown[]) => void; warn:
 
 /** Register all Smart Inbox HTTP routes on a Fastify instance. */
 export function registerRelayRoutes(app: FastifyInstance): void {
+  // Before the routes themselves, so a route added later is covered too.
+  registerInternalSecret(app as never);
   registerInternalRoutes(app);
 
   app.get('/health', async () => ({ status: 'ok', service: 'relay', timestamp: new Date().toISOString() }));

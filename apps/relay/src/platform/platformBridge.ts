@@ -1,4 +1,5 @@
 import { v4 as uuidv4 } from 'uuid';
+import { internalHeaders } from './internalSecret';
 import { buildToolResult } from './toolEnvelope';
 import { isPlatformUuid, relayThreadCorrelationId } from './relayIds';
 
@@ -216,7 +217,7 @@ export async function emitConsentDecided(args: {
     const base = (process.env.SYNTRA_API_URL || 'http://localhost:4000').replace(/\/$/, '');
     void fetch(`${base}/internal/pipeline/consent-decided`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: internalHeaders(),
       body: JSON.stringify({
         candidateId: args.candidateId,
         jobId: args.jobId,

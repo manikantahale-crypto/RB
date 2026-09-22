@@ -4854,7 +4854,7 @@ code {
 .wf-btn--primary {
   border-color: var(--action-primary-border, var(--border-focus));
   background: var(--action-primary-bg, var(--accent));
-  color: var(--action-primary-fg, #fff);
+  color: var(--action-primary-fg);
   font-weight: 600;
 }
 
@@ -4890,3 +4890,75 @@ code {
 .rd-flow { display: flex; flex-direction: column; gap: var(--space-3); }
 .rd-flow-warnings { margin: 0; padding-left: var(--space-5); font-size: var(--font-size-sm); }
 .wf-danger { color: var(--status-danger-fg); }
+
+/* ── Who is signed in ──────────────────────────────────────────────────────
+   Sits at the end of the brand bar. Small on purpose: the tool has no account
+   system of its own, it borrows node-api's, and the only thing worth showing
+   is which person the audit trail will name. */
+.signin {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  margin-left: 1rem;
+  font-size: 0.85rem;
+}
+
+.signin-who {
+  color: var(--ink-soft);
+  max-width: 18ch;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.signin-link {
+  background: none;
+  border: 0;
+  padding: 0;
+  color: var(--ink-soft);
+  font-size: 0.85rem;
+  font-weight: 600;
+  cursor: pointer;
+  text-decoration: underline;
+}
+
+.signin-link:hover {
+  color: var(--ink);
+}
+
+.signin-form {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  flex-wrap: wrap;
+}
+
+.signin-form input {
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  padding: 0.3rem 0.5rem;
+  font-size: 0.85rem;
+  min-width: 11rem;
+}
+
+.signin-form button[type="submit"] {
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  padding: 0.3rem 0.7rem;
+  font-size: 0.85rem;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.signin-error {
+  margin: 0;
+  color: var(--ink);
+  font-size: 0.8rem;
+  max-width: 28ch;
+}
+
+@media (max-width: 720px) {
+  .signin {
+    margin-left: 0;
+  }
+}

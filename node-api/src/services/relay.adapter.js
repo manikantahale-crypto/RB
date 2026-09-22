@@ -5,6 +5,7 @@
  * getRelayBaseUrl changed (see below).
  */
 const log = require("../utils/logger");
+const { internalHeaders } = require("../utils/internalHeaders");
 
 /**
  * Where RELAY is.
@@ -86,9 +87,7 @@ async function sendCandidateConsentEmail({ jobId, submissionId, candidate, subje
       // Use native fetch (Node 18+)
       const response = await fetch(targetUrl, {
         method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
+        headers: internalHeaders(),
         body: JSON.stringify(payload),
       });
 
@@ -191,9 +190,7 @@ async function sendCandidateProfileToVendor(
     try {
       const response = await fetch(targetUrl, {
         method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
+        headers: internalHeaders(),
         body: JSON.stringify(payload),
       });
 
@@ -267,9 +264,7 @@ async function sendVendorEmail({ submissionId, vendorEmail, subject, body }, opt
     try {
       const response = await fetch(targetUrl, {
         method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
+        headers: internalHeaders(),
         body: JSON.stringify(payload),
       });
 
@@ -329,7 +324,7 @@ async function sendConsultantConfirmationEmail({ submissionId, candidateEmail, s
     try {
       const response = await fetch(targetUrl, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: internalHeaders(),
         body: JSON.stringify(payload),
       });
 
@@ -392,7 +387,7 @@ async function sendRTREmail({ submissionId, vendorEmail, subject, body, attachme
     try {
       const response = await fetch(targetUrl, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: internalHeaders(),
         body: JSON.stringify(payload),
       });
 

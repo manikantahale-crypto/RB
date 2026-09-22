@@ -12,6 +12,7 @@
  * Router remount to authored keys is held — do not flip here.
  */
 import Fastify from "fastify";
+import { anonymousAllowed, registerAdminAuth } from "./lib/admin-identity.js";
 import pg from "pg";
 import { config as loadEnv } from "dotenv";
 import { resolve } from "node:path";
@@ -89,9 +90,31 @@ async function main(): Promise<void> {
 
   const app = Fastify({ logger: true });
 
+  /**
+   * CORS was `origin: true` — every origin. The admin tool is one page on one
+   * origin; anything else asking is not the admin tool.
+   */
+  const adminOrigin = (process.env.ADMIN_ORIGIN ?? "http://localhost:5173")
+    .split(",")
+    .map((o) => o.trim())
+    .filter(Boolean);
   await app.register(import("@fastify/cors"), {
-    origin: true,
+    origin: adminOrigin,
+    credentials: true,
   });
+
+  /**
+   * Every route below needs to know who is calling, and until 2026-09-22
+   * nothing did. See lib/admin-identity.ts for what changed, and why the
+   * two-person rule could never pass before it.
+   */
+  registerAdminAuth(app as never);
+  if (anonymousAllowed()) {
+    console.warn(
+      "[admin-api] ADMIN_ALLOW_ANONYMOUS is on — anyone who can reach this " +
+        "port can author and approve workflows. Development only.",
+    );
+  }
 
   app.get("/health", async () => ({
     ok: true,
@@ -123,6 +146,11 @@ async function main(): Promise<void> {
   process.on("SIGTERM", shutdown);
 
   await app.listen({ port, host: "0.0.0.0" });
+  console.log(
+    `Admin API identity: ${
+      anonymousAllowed() ? "ANONYMOUS ALLOWED (dev)" : "signed-in users only"
+    }; browser origin ${adminOrigin.join(", ")}`,
+  );
   console.log(
     `Admin API listening on :${port} (Stage 1 authoring; data role via ${
       process.env.DATABASE_RELAY_URL ? "DATABASE_RELAY_URL" : "migrator"

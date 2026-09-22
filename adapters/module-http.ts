@@ -79,7 +79,18 @@ export function modulePoster(
     try {
       res = await fetch(`${base}${path}`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: {
+          'Content-Type': 'application/json',
+          /*
+           * These endpoints are a module's internal door, not a public API.
+           * The secret says this call is a platform service; without it set,
+           * the module lets everything through and warns at boot, which is
+           * what lets the two sides be configured one at a time.
+           */
+          ...(process.env.INTERNAL_API_SECRET
+            ? { 'x-internal-secret': process.env.INTERNAL_API_SECRET }
+            : {}),
+        },
         body: body ? JSON.stringify(body) : undefined,
         // The node's time limit, from the runtime. Without it a timed-out node
         // would keep the service working on a request nobody is waiting for.

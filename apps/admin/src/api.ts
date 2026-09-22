@@ -1,3 +1,4 @@
+import { authHeader } from "./lib/session.js";
 /**
  * Shared API plumbing, and the calls that have not moved to their own file yet.
  *
@@ -50,9 +51,13 @@ export async function request<T>(
   path: string,
   init?: RequestInit,
 ): Promise<{ ok: true; data: T } | { ok: false; status: number; body: ApiErrorBody }> {
-  const headers: Record<string, string> = {
-    "x-admin-id": "admin-local",
-  };
+  /**
+   * Who is calling. This was the constant `admin-local`, which is why no
+   * go-live request could ever be approved — the two-person rule saw the same
+   * identity on both sides. It is now the signed-in person's token, verified
+   * by admin-api against the same secret node-api signs with (src/lib/session.ts).
+   */
+  const headers: Record<string, string> = { ...authHeader() };
   if (init?.headers) {
     for (const [key, value] of Object.entries(init.headers)) {
       if (value != null && value !== "") {

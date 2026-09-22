@@ -10,6 +10,7 @@ import { findRegisteredCandidateByEmail, findRegisteredCandidateById } from '../
 import { clearRegisteredVendorCache } from '../matching/vendorRegistry';
 import { buildConsentEmail, buildConsentReminderEmail, fetchJobContextForConsent } from './consentEmail';
 import { buildInterviewEmailContent, type InterviewEmailTemplate } from './interviewEmail';
+import { internalHeaders } from './internalSecret';
 
 const CONSENT_INTENT = 'Candidate Consent Request';
 const PROFILE_DRAFT_INTENT = 'Profile Submission Draft';
@@ -65,7 +66,7 @@ async function notifyConsentSent(args: {
   try {
     const res = await fetch(`${base}/internal/pipeline/consent-sent`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: internalHeaders(),
       body: JSON.stringify(args),
     });
     if (!res.ok) {

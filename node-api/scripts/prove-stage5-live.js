@@ -70,7 +70,9 @@ async function withApp(fn) {
   const post = async (p, body) => {
     const res = await fetch(base + p, {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      // The same header a platform service sends; without INTERNAL_API_SECRET
+      // set this is exactly what it was, and the endpoints are open anyway.
+      headers: require("../src/utils/internalHeaders").internalHeaders(),
       body: JSON.stringify(body ?? {}),
     });
     const text = await res.text();

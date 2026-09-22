@@ -1,4 +1,5 @@
 import type { Pool, PoolClient, QueryResultRow } from "pg";
+import { adminIdOf } from "../lib/admin-identity.js";
 import { runnableImpls } from "../lib/runnable-impls.js";
 import { createHash } from "node:crypto";
 import {
@@ -91,9 +92,12 @@ function readOrgId(headers: Record<string, unknown>): string | null {
   return String(raw);
 }
 
+/**
+ * Who is calling — the signed-in `platform.users` uuid, or the anonymous
+ * label when `ADMIN_ALLOW_ANONYMOUS` is on. See lib/admin-identity.ts.
+ */
 function readAdminId(headers: Record<string, unknown>): string {
-  const raw = headers["x-admin-id"];
-  return raw ? String(raw) : "admin-local";
+  return adminIdOf({ headers });
 }
 
 const AGENT_ID_RE =
@@ -1467,6 +1471,11 @@ export function registerAgentRoutes(
       "content-type": "application/json",
       "x-admin-id": adminId,
     };
+    // These steps are `app.inject()` back into this same service, so they pass
+    // through the auth hook like any other request. Forward the caller's
+    // token: the step acts as the person who asked for it, not as nobody.
+    const bearer = req.headers.authorization;
+    if (typeof bearer === "string" && bearer) headers.authorization = bearer;
     if (orgId) headers["x-org-id"] = orgId;
     const payload = { expectedVersion: body.expectedVersion ?? prep.version };
 
@@ -1860,6 +1869,11 @@ export function registerAgentRoutes(
       "content-type": "application/json",
       "x-admin-id": adminId,
     };
+    // These steps are `app.inject()` back into this same service, so they pass
+    // through the auth hook like any other request. Forward the caller's
+    // token: the step acts as the person who asked for it, not as nobody.
+    const bearer = req.headers.authorization;
+    if (typeof bearer === "string" && bearer) headers.authorization = bearer;
     if (orgId) headers["x-org-id"] = orgId;
 
     const payload = { expectedVersion: body.expectedVersion ?? prep.version };

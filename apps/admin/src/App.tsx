@@ -21,6 +21,7 @@
  * should land somewhere useful, not on a blank page that looks like an outage.
  */
 import { BrowserRouter, Link, Navigate, Route, Routes, useLocation } from "react-router-dom";
+import { SignIn } from "./components/SignIn.js";
 import { GoLiveRequestsPage } from "./pages/GoLiveRequests";
 import { RaiseRequestPage } from "./pages/RaiseRequest";
 import { ReleaseConsolePage } from "./pages/ReleaseConsole";
@@ -60,6 +61,7 @@ function AppShell() {
               one screen that reports faults nothing else does. */}
           <Link to="/platform/health">Health</Link>
         </nav>
+        <SignIn />
       </header>
       <Routes>
         {/* Screen 1 — the registry. The deck's step 1, and the home the rest

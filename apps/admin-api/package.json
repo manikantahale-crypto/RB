@@ -17,10 +17,12 @@
     "@tekisho/node-contract": "*",
     "dotenv": "^16.4.7",
     "fastify": "*",
+    "jsonwebtoken": "^9.0.3",
     "pg": "*",
     "zod": "*"
   },
   "devDependencies": {
+    "@types/jsonwebtoken": "^9.0.10",
     "@types/node": "*",
     "@types/pg": "^8.20.4",
     "tsx": "^4.23.5",

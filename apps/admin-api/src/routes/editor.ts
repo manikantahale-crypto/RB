@@ -14,6 +14,7 @@
  *   PUT  /workflows/:key/versions/:version    save a draft
  */
 import type { Pool } from "pg";
+import { adminIdOf } from "../lib/admin-identity.js";
 import { runnableImpls } from "../lib/runnable-impls.js";
 import {
   GraphDefinitionSchema,
@@ -244,7 +245,7 @@ export function registerEditorRoutes(app: FastifyLike, pool: Pool): void {
           orgId: null,
           definition,
           checksum: checksumOf(definition),
-          by: String(req.headers["x-admin-id"] ?? "admin-local"),
+          by: adminIdOf(req),
         });
 
         return {
@@ -505,7 +506,7 @@ export function registerEditorRoutes(app: FastifyLike, pool: Pool): void {
       const built = await compileDraft(pool, {
         graphKey,
         orgId: null,
-        by: String(req.headers["x-admin-id"] ?? "admin-local"),
+        by: adminIdOf(req),
       });
       if (!built) {
         return reply.code(409).send({ error: "no_draft" });
@@ -653,7 +654,7 @@ export function registerEditorRoutes(app: FastifyLike, pool: Pool): void {
     if (!graphKey) return reply.code(400).send({ error: "graph_key_required" });
 
     try {
-      const by = String(req.headers["x-admin-id"] ?? "admin-local");
+      const by = adminIdOf(req);
       const chosen = await versionForDraft(pool, {
         graphKey,
         orgId: null,
@@ -711,7 +712,7 @@ export function registerEditorRoutes(app: FastifyLike, pool: Pool): void {
         graphKey,
         orgId: null,
         version,
-        by: String(req.headers["x-admin-id"] ?? "admin-local"),
+        by: adminIdOf(req),
         note: req.body?.note ? String(req.body.note) : null,
       });
 
@@ -828,7 +829,7 @@ export function registerEditorRoutes(app: FastifyLike, pool: Pool): void {
         graphKey,
         orgId: null,
         version,
-        by: String(req.headers["x-admin-id"] ?? "admin-local"),
+        by: adminIdOf(req),
       });
 
       if (!promoted) {
@@ -1449,7 +1450,7 @@ export function registerEditorRoutes(app: FastifyLike, pool: Pool): void {
             orgId: null,
             definition,
             checksum,
-            by: String(req.headers["x-admin-id"] ?? "admin-local"),
+            by: adminIdOf(req),
           });
 
           return { graphKey, version, checksum, saved: true };

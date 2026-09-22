@@ -11,6 +11,7 @@
  */
 
 import type { Pool } from "pg";
+import { adminIdOf } from "../lib/admin-identity.js";
 import {
   approvePlan,
   approvePlanStep,
@@ -25,8 +26,7 @@ type FastifyLike = {
   post: (path: string, handler: any) => void;
 };
 
-const readAdminId = (headers: any): string =>
-  String(headers?.["x-admin-id"] ?? "admin-local");
+const readAdminId = (headers: any): string => adminIdOf({ headers });
 
 export function registerPlanRoutes(app: FastifyLike, pool: Pool): void {
   app.get("/plans/:id", async (req: any, reply: any) => {
