@@ -16,7 +16,7 @@
 import { z } from "zod";
 import { defineNode, type NodeRunCtx } from "@tekisho/node-contract";
 import { classifyPrismError, postPrism } from "../prism-http.js";
-import { candidateIdOf, jobIdOf, submissionIdOf } from "../fields.js";
+import { candidateIdOf, jobIdOf, messageIdOf, submissionIdOf, threadIdOf } from "../fields.js";
 
 const Input = z
   .object({
@@ -34,8 +34,12 @@ const Input = z
     senderEmail: z.string().optional(),
     thread_id: z.string().optional(),
     relay_thread_id: z.string().optional(),
+    /** What RELAY's own nodes return it as. */
+    threadId: z.string().optional(),
     body_snippet: z.string().optional(),
     message_id: z.string().optional(),
+    /** What RELAY's own nodes return it as. */
+    messageId: z.string().optional(),
   })
   .refine((v) => v.decision !== undefined || v.response !== undefined || v.approved !== undefined, {
     message: "needs the candidate's answer — decision, response or approved",
@@ -128,8 +132,8 @@ export const consentRecord = defineNode({
         senderEmail: input.sender_email ?? input.senderEmail,
         response,
         notes: input.body_snippet,
-        messageId: input.message_id,
-        threadId: input.thread_id ?? input.relay_thread_id,
+        messageId: messageIdOf(input),
+        threadId: threadIdOf(input),
       },
       { signal: ctx.signal },
     );

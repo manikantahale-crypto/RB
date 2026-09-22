@@ -72,3 +72,13 @@ export {
   type ModuleSpec,
   type ModuleEdge,
 } from "./module-registry.js";
+
+/**
+ * The fields a node returns that its own contract does not declare.
+ *
+ * In this package because both halves of the problem live outside it and must
+ * agree: the fixture runner in `adapters/` checks the worked examples, and the
+ * runtime bridge in the orchestrator checks what a node really returned. Two
+ * copies of this rule would be two rules.
+ */
+export { undeclaredFields } from "./undeclared-fields.js";

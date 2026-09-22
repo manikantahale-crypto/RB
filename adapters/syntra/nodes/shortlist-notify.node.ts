@@ -15,6 +15,9 @@ const Input = z
     requirement_id: z.string().min(1).optional(),
     match_job_id: z.string().min(1).optional(),
     result_count: z.number().int().min(0).optional(),
+    /** What `syntra.continuous.match` returns them as. */
+    matchJobId: z.string().min(1).optional(),
+    resultCount: z.number().int().min(0).optional(),
   })
   .refine((v) => Boolean(v.jobId ?? v.requirement_id), {
     message: "needs jobId or requirement_id",
@@ -166,14 +169,14 @@ export const shortlistNotify = defineNode({
 
   run: async (ctx: NodeRunCtx, input, _config) => {
     const jobId = input.jobId ?? input.requirement_id!;
-    const matchJobId = input.match_job_id ?? null;
+    const matchJobId = input.match_job_id ?? input.matchJobId ?? null;
 
     ctx.logger.info("calling Syntra shortlist notify", { jobId, orgId: ctx.orgId });
     const r = await postSyntra(`/internal/jobs/${jobId}/shortlist/notify`, {
       jobId,
       requirement_id: jobId,
       match_job_id: matchJobId,
-      result_count: input.result_count,
+      result_count: input.result_count ?? input.resultCount,
     }, { signal: ctx.signal });
 
     return {

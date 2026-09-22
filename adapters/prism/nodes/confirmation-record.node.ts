@@ -14,7 +14,7 @@
 import { z } from "zod";
 import { defineNode, type NodeRunCtx } from "@tekisho/node-contract";
 import { classifyPrismError, postPrism } from "../prism-http.js";
-import { candidateIdOf, jobIdOf, submissionIdOf } from "../fields.js";
+import { candidateIdOf, jobIdOf, messageIdOf, submissionIdOf } from "../fields.js";
 
 const Party = z.enum(["CONSULTANT", "VENDOR"]);
 
@@ -35,6 +35,8 @@ const Input = z
     senderEmail: z.string().optional(),
     body_snippet: z.string().optional(),
     message_id: z.string().optional(),
+    /** What RELAY's own nodes return it as. */
+    messageId: z.string().optional(),
   })
   .refine((v) => v.decision !== undefined || v.response !== undefined || v.confirmed !== undefined, {
     message: "needs the answer — decision, response or confirmed",
@@ -130,7 +132,7 @@ export const confirmationRecord = defineNode({
         party,
         response: confirmationStatus,
         notes: input.body_snippet,
-        messageId: input.message_id,
+        messageId: messageIdOf(input),
         senderEmail: input.sender_email ?? input.senderEmail,
       },
       { signal: ctx.signal },

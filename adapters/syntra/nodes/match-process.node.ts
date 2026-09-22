@@ -18,6 +18,8 @@ const Input = z
     /** Carried by the producer when it already scored a shortlist. */
     skillMatchScore: z.number().optional(),
     match_job_id: z.string().min(1).optional(),
+    /** What `syntra.continuous.match` returns it as. */
+    matchJobId: z.string().min(1).optional(),
   })
   .refine((v) => Boolean(v.jobId ?? v.requirement_id), {
     message: "needs jobId (or requirement_id until the binding maps it)",
@@ -268,7 +270,7 @@ export const matchProcess = defineNode({
         jobId,
         resumeId: input.resumeId,
         candidateId,
-        match_job_id: input.match_job_id ?? crypto.randomUUID(),
+        match_job_id: input.match_job_id ?? input.matchJobId ?? crypto.randomUUID(),
         requirement_id: jobId,
         skillMatchScore,
         result_count: 1,

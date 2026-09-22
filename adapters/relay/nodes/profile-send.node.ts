@@ -17,7 +17,7 @@
 import { z } from "zod";
 import { defineNode, type NodeRunCtx } from "@tekisho/node-contract";
 import { classifyRelayError, postRelay } from "../relay-http.js";
-import { candidateIdOf, jobIdOf, vendorThreadOf } from "../fields.js";
+import { candidateIdOf, jobIdOf, vendorEmailOf, vendorThreadOf } from "../fields.js";
 
 const Input = z
   .object({
@@ -34,16 +34,20 @@ const Input = z
     vendor_thread_id: z.string().optional(),
     relay_thread_id: z.string().optional(),
     vendor_email: z.string().optional(),
+    /** This node's own output name, so one send can follow another. */
+    vendorEmail: z.string().optional(),
     vendor_name: z.string().optional(),
     job_title: z.string().optional(),
     /** What PRISM masked. RELAY reads headline, totalExperience, skills, location, rate, availability, summary. */
     masked_profile: z.record(z.string(), z.unknown()).optional(),
+    /** What `prism.profile.mask` returns it as. */
+    maskedProfile: z.record(z.string(), z.unknown()).optional(),
     rate: z.union([z.number(), z.string()]).optional(),
     rate_type: z.string().optional(),
     availability: z.string().optional(),
   })
   .refine((v) => Boolean(candidateIdOf(v)), { message: "needs candidate_id" })
-  .refine((v) => Boolean(v.vendor_email || vendorThreadOf(v)), {
+  .refine((v) => Boolean(vendorEmailOf(v) || vendorThreadOf(v)), {
     message: "needs a vendor destination — vendor_email or vendor_thread_id",
   });
 
@@ -139,10 +143,10 @@ export const profileSend = defineNode({
         candidate_id: candidateId,
         submissionId: submissionId ?? undefined,
         vendor_thread_id: vendorThreadId,
-        vendor_email: input.vendor_email,
+        vendor_email: vendorEmailOf(input),
         vendor_name: input.vendor_name,
         job_title: input.job_title,
-        masked_profile: input.masked_profile,
+        masked_profile: input.masked_profile ?? input.maskedProfile,
         rate: input.rate,
         rate_type: input.rate_type,
         availability: input.availability,
@@ -152,7 +156,7 @@ export const profileSend = defineNode({
     );
 
     // The stub sends nothing; ids are invented so a local flow can continue.
-    const vendorEmail = String(r.vendor_email ?? input.vendor_email ?? (r.stub ? "stub@relay.local" : ""));
+    const vendorEmail = String(r.vendor_email ?? vendorEmailOf(input) ?? (r.stub ? "stub@relay.local" : ""));
     const threadId = String(r.thread_id ?? vendorThreadId ?? (r.stub ? crypto.randomUUID() : ""));
     const messageId = String(r.message_id ?? (r.stub ? crypto.randomUUID() : ""));
     if (!vendorEmail || !threadId || !messageId) {

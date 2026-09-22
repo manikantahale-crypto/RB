@@ -21,7 +21,7 @@
 import { z } from "zod";
 import { defineNode, type NodeRunCtx } from "@tekisho/node-contract";
 import { classifyRelayError, postRelay } from "../relay-http.js";
-import { jobIdOf, vendorThreadOf } from "../fields.js";
+import { jobIdOf, vendorEmailOf, vendorThreadOf } from "../fields.js";
 
 /** A candidate on the shortlist: an id, or an id with what RELAY can use. */
 const Candidate = z.union([
@@ -48,6 +48,8 @@ const Input = z
     vendor_thread_id: z.string().optional(),
     relay_thread_id: z.string().optional(),
     vendor_email: z.string().optional(),
+    /** What `relay.profile.send` returns it as. */
+    vendorEmail: z.string().optional(),
     /** One submission for all, when the shortlist is one PRISM submission. */
     submissionId: z.string().optional(),
     submission_id: z.string().optional(),
@@ -179,7 +181,7 @@ export const consentSend = defineNode({
         correlation_id: ctx.correlationId ?? undefined,
         top_candidates: topCandidates,
         vendor_thread_id: vendorThreadId,
-        vendor_email: input.vendor_email,
+        vendor_email: vendorEmailOf(input),
         ...(submissionId ? { submissionId } : {}),
         ...(input.subject ? { subject: input.subject } : {}),
         ...(input.body ? { body: input.body } : {}),
@@ -212,7 +214,7 @@ export const consentSend = defineNode({
         consent_threads: out.consent_threads,
         send_errors: out.send_errors,
         vendor_thread_id: vendorThreadId ?? null,
-        vendor_email: input.vendor_email ?? null,
+        vendor_email: vendorEmailOf(input) ?? null,
         correlation_id: out.correlation_id,
       },
     });

@@ -13,6 +13,12 @@ export function candidateIdOf(p: Record<string, unknown>): string | undefined {
   return id ? String(id) : undefined;
 }
 
+/** The vendor's address. `vendorEmail` is what `relay.profile.send` returns. */
+export function vendorEmailOf(p: Record<string, unknown>): string | undefined {
+  const e = p.vendor_email ?? p.vendorEmail;
+  return e ? String(e) : undefined;
+}
+
 /** The vendor's thread — the JD email the shortlist answers. */
 export function vendorThreadOf(p: Record<string, unknown>): string | undefined {
   const id = p.vendor_thread_id ?? p.relay_thread_id;

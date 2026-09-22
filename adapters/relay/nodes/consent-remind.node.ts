@@ -22,12 +22,16 @@ const Input = z
     /** The candidate's consent thread. */
     thread_id: z.string().optional(),
     relay_thread_id: z.string().optional(),
+    /** What this node returns it as, so a reminder can follow a reminder. */
+    threadId: z.string().optional(),
     candidate_id: z.string().optional(),
     candidateId: z.string().optional(),
     /** What the send step returned; the thread is looked up by candidate. */
     consent_threads: z.array(z.object({ candidate_id: z.string(), thread_id: z.string() })).optional(),
     /** Reminders already sent on this thread; this one is the next. */
     reminder_count: z.number().int().min(0).optional(),
+    /** Likewise: this node's own output name, for the second time round. */
+    reminderCount: z.number().int().min(0).optional(),
   })
   .refine((v) => Boolean(threadOf(v)), {
     message: "needs thread_id — or a candidate_id with the consent_threads to find it in",
@@ -36,12 +40,14 @@ const Input = z
 function threadOf(v: {
   thread_id?: string;
   relay_thread_id?: string;
+  threadId?: string;
   candidate_id?: string;
   candidateId?: string;
   consent_threads?: Array<{ candidate_id: string; thread_id: string }>;
 }): string | undefined {
   if (v.thread_id) return v.thread_id;
   if (v.relay_thread_id) return v.relay_thread_id;
+  if (v.threadId) return v.threadId;
   const cid = candidateIdOf(v);
   return cid ? v.consent_threads?.find((t) => t.candidate_id === cid)?.thread_id : undefined;
 }
