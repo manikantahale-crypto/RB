@@ -34,6 +34,7 @@
  * screen to evolve rather than replace. This is the queue it starts from.
  */
 import { Link } from "react-router-dom";
+import { AdminOnly } from "../lib/me.js";
 import { useCallback, useEffect, useState } from "react";
 import {
   approveGoLive,
@@ -265,14 +266,27 @@ export function GoLiveRequestsPage() {
                 >
                   Withdraw
                 </button>
-                <button
-                  type="button"
-                  className="btn btn--compact"
-                  disabled={busyKey === r.graphKey}
-                  onClick={() => void onApprove(r)}
+                {/*
+                  An operator sees the queue — including the request they
+                  raised, and what is holding it up — and does not see the one
+                  control they cannot press. Review and Withdraw stay: reading
+                  a release is not making one, and taking back your own request
+                  is yours to do.
+                */}
+                <AdminOnly
+                  instead={
+                    <span className="admin-note">an admin approves this</span>
+                  }
                 >
-                  {busyKey === r.graphKey ? "Approving…" : `Approve v${r.version}`}
-                </button>
+                  <button
+                    type="button"
+                    className="btn btn--compact"
+                    disabled={busyKey === r.graphKey}
+                    onClick={() => void onApprove(r)}
+                  >
+                    {busyKey === r.graphKey ? "Approving…" : `Approve v${r.version}`}
+                  </button>
+                </AdminOnly>
               </div>
             </li>
           ))}

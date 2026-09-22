@@ -30,6 +30,7 @@
 
 import { useCallback, useEffect, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
+import { AdminOnly } from "../lib/me.js";
 import {
   approveGoLive,
   cancelGoLiveRequest,
@@ -229,19 +230,33 @@ export function ReleaseConsolePage() {
           >
             Withdraw
           </button>
-          <button
-            type="button"
-            className="btn btn--compact"
-            disabled={busy || view.blocked}
-            onClick={() => void onApprove()}
-            title={
-              view.blocked
-                ? `Blocked by ${view.blockedBy.join(", ")}`
-                : "Put this version live"
+          {/*
+            The whole review stays readable to an operator — the checks, the
+            diff, what it replaces. That is the point of the screen, and the
+            person who raised the request is usually the one reading it. Only
+            the act at the end is somebody else's.
+          */}
+          <AdminOnly
+            instead={
+              <span className="admin-note">
+                an admin approves v{view.version}
+              </span>
             }
           >
-            {busy ? "Approving…" : `Approve v${view.version}`}
-          </button>
+            <button
+              type="button"
+              className="btn btn--compact"
+              disabled={busy || view.blocked}
+              onClick={() => void onApprove()}
+              title={
+                view.blocked
+                  ? `Blocked by ${view.blockedBy.join(", ")}`
+                  : "Put this version live"
+              }
+            >
+              {busy ? "Approving…" : `Approve v${view.version}`}
+            </button>
+          </AdminOnly>
         </div>
       </header>
 

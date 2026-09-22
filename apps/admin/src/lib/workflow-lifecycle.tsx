@@ -13,6 +13,7 @@
  */
 
 import type { WorkflowRegistryRow } from "../api";
+import { useIsAdmin } from "./me.js";
 import {
   approveGoLive,
   cancelGoLiveRequest,
@@ -188,8 +189,26 @@ export function LifecycleCell({
    */
   showWhy?: boolean;
 }) {
+  /**
+   * AN OPERATOR IS OFFERED THE SAME TWO STEPS EVERY SCREEN DECLINES.
+   *
+   * `approve` and `offline` are the verbs that change what is running, and
+   * admin-api refuses both from an operator (`lib/admin-only.ts`). Skipping
+   * them here is the same mechanism a screen already uses to decline a step,
+   * so the states below — "requested, somebody else approves it", with
+   * Withdraw still offered — are reached without inventing a second way of
+   * saying the same thing.
+   *
+   * The button is not disabled. A disabled control is a thing you press and
+   * learn nothing from; an absent one with a sentence beside it is an answer.
+   */
+  const isAdmin = useIsAdmin();
+  const declined = [
+    ...(skip ?? []),
+    ...(isAdmin ? [] : (["approve", "offline"] as const)),
+  ];
   const found = nextStep(row);
-  const step = found && skip?.includes(found.id) ? null : found;
+  const step = found && declined.includes(found.id) ? null : found;
 
   /**
    * SENT, AND WAITING FOR SOMEBODY ELSE.
@@ -218,6 +237,19 @@ export function LifecycleCell({
         >
           Withdraw
         </button>
+      </div>
+    );
+  }
+
+  /**
+   * Live, nothing waiting, and taking it off the air is not yours to do. Said
+   * rather than left blank, because an empty cell next to a live workflow
+   * reads as a screen that failed to load.
+   */
+  if (!step && !isAdmin && found?.id === "offline") {
+    return (
+      <div className="wf-lifecycle">
+        <span className="wf-muted">live — an admin takes it offline</span>
       </div>
     );
   }

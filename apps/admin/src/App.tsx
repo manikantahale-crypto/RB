@@ -22,6 +22,7 @@
  */
 import { BrowserRouter, Link, Navigate, Route, Routes, useLocation } from "react-router-dom";
 import { SignIn } from "./components/SignIn.js";
+import { MeProvider, useMe } from "./lib/me.js";
 import { GoLiveRequestsPage } from "./pages/GoLiveRequests";
 import { RaiseRequestPage } from "./pages/RaiseRequest";
 import { ReleaseConsolePage } from "./pages/ReleaseConsole";
@@ -61,6 +62,7 @@ function AppShell() {
               one screen that reports faults nothing else does. */}
           <Link to="/platform/health">Health</Link>
         </nav>
+        <RoleBadge />
         <SignIn />
       </header>
       <Routes>
@@ -106,10 +108,36 @@ function AppShell() {
   );
 }
 
+/**
+ * Which of the two you are, said once, where you can see it.
+ *
+ * Without this an operator meets the rule as a refusal — a button that is not
+ * there, or a sentence after pressing one. Saying it up front turns "why can
+ * I not do this" into something already answered.
+ */
+function RoleBadge() {
+  const { me, loading } = useMe();
+  if (loading || !me) return null;
+  return (
+    <span
+      className={`role-badge role-badge--${me.role}`}
+      title={
+        me.role === "admin"
+          ? `You can release: ${me.adminOnly.join(", ")}.`
+          : `You can author, edit and test anything. An admin does the rest: ${me.adminOnly.join(", ")}.`
+      }
+    >
+      {me.role}
+    </span>
+  );
+}
+
 export function App() {
   return (
     <BrowserRouter>
-      <AppShell />
+      <MeProvider>
+        <AppShell />
+      </MeProvider>
     </BrowserRouter>
   );
 }

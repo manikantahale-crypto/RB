@@ -13,6 +13,7 @@
  */
 import Fastify from "fastify";
 import { anonymousAllowed, registerAdminAuth } from "./lib/admin-identity.js";
+import { ADMIN_ONLY } from "./lib/admin-only.js";
 import pg from "pg";
 import { config as loadEnv } from "dotenv";
 import { resolve } from "node:path";
@@ -121,6 +122,27 @@ async function main(): Promise<void> {
     service: "admin-api",
     stage: "authoring-builder-v2",
     llmConfigured: Boolean(llm),
+  }));
+
+  /**
+   * WHO THE TOOL IS TALKING TO, AND WHAT THEY MAY DO.
+   *
+   * The UI needs the role to decide what to show, and it must not get it by
+   * unpacking the JWT itself: a token is signed, not readable-as-truth by a
+   * client, and a browser that decides its own permissions is deciding
+   * nothing. It asks, this answers, and the answer comes from the same
+   * `identify` every other route is gated by.
+   *
+   * `acts` is the list the UI hides controls from, sent rather than hard-coded
+   * on both sides so the policy has ONE home (`lib/admin-only.ts`).
+   */
+  app.get("/me", async (req: any) => ({
+    id: req.admin.id,
+    email: req.admin.email,
+    orgId: req.admin.orgId,
+    role: req.admin.role,
+    source: req.admin.source,
+    adminOnly: [...new Set(ADMIN_ONLY.map((r) => r.why))],
   }));
 
   registerCatalogAndCreateRoutes(app, pool, migratorPool);

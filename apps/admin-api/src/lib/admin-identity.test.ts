@@ -27,13 +27,53 @@ describe("identify — a signed-in caller", () => {
       { authorization: `Bearer ${token({ userId: ALICE, email: "a@x.test", orgId: "org-1" })}` },
       ENV,
     );
-    expect(who).toEqual({ id: ALICE, email: "a@x.test", orgId: "org-1", source: "token" });
+    expect(who).toEqual({
+      id: ALICE,
+      email: "a@x.test",
+      orgId: "org-1",
+      role: "operator",
+      source: "token",
+    });
   });
 
   it("is read from either spelling of the header", () => {
     const t = `Bearer ${token({ userId: ALICE })}`;
     expect(identify({ Authorization: t }, ENV).id).toBe(ALICE);
     expect(identify({ authorization: t }, ENV).id).toBe(ALICE);
+  });
+});
+
+describe("identify — what they may do", () => {
+  it("is admin when the token says so", () => {
+    const who = identify(
+      { authorization: `Bearer ${token({ userId: ALICE, role: "admin" })}` },
+      ENV,
+    );
+    expect(who.role).toBe("admin");
+  });
+
+  it("is operator for a token with no role — no membership is not permission", () => {
+    const who = identify({ authorization: `Bearer ${token({ userId: BOB })}` }, ENV);
+    expect(who.role).toBe("operator");
+  });
+
+  it("is operator for any role it does not recognise", () => {
+    // A future `owner` or `superuser` must not become admin here by accident;
+    // it becomes admin by being added to the type on purpose.
+    for (const role of ["owner", "superuser", "ADMIN", "", 7, null]) {
+      expect(
+        identify({ authorization: `Bearer ${token({ userId: BOB, role })}` }, ENV).role,
+        String(role),
+      ).toBe("operator");
+    }
+  });
+
+  it("is admin in anonymous mode, which already grants everything", () => {
+    expect(identify({}, ANON).role).toBe("admin");
+  });
+
+  it("can be asked for the smaller role in anonymous mode, to try both sides", () => {
+    expect(identify({ "x-admin-role": "operator" }, ANON).role).toBe("operator");
   });
 });
 
@@ -93,6 +133,7 @@ describe("identify — no token at all", () => {
       id: "admin-local",
       email: null,
       orgId: null,
+      role: "admin",
       source: "anonymous",
     });
     expect(identify({ "x-admin-id": "someone" }, ANON).id).toBe("someone");

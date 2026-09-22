@@ -4962,3 +4962,41 @@ code {
     margin-left: 0;
   }
 }
+
+/**
+ * Which of the two you are, in the brand bar.
+ *
+ * Quiet on purpose. It answers a question rather than announcing a status, and
+ * the operator badge must not read as a warning — most of the 57 accounts are
+ * operators and nothing is wrong with that.
+ */
+.role-badge {
+  margin-left: var(--space-3);
+  padding: 0.1rem 0.5rem;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-pill);
+  font-size: var(--font-size-xs);
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  color: var(--ink-muted);
+  background: var(--surface-subtle);
+  cursor: default;
+}
+
+.role-badge--admin {
+  color: var(--accent-deep);
+  border-color: var(--accent-border);
+  background: var(--accent-alpha-08);
+}
+
+/**
+ * Where a control an operator cannot use would have been.
+ *
+ * Reads as an explanation, never as an error: nothing has gone wrong, this is
+ * simply somebody else's step.
+ */
+.admin-note {
+  font-size: var(--font-size-xs);
+  color: var(--ink-muted);
+  line-height: 1.4;
+}
