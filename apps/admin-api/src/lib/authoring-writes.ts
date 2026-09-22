@@ -22,6 +22,9 @@
  */
 
 import { checksumOf } from "@tekisho/graph-contract";
+import type { WiredInput } from "@tekisho/authoring";
+
+import { inferInputsForGraph } from "./infer-inputs-for-graph.js";
 
 type Queryable = {
   query: <T = any>(
@@ -106,6 +109,27 @@ export async function ensureGraph(
  * One row per workflow, replaced in place. This is what the old
  * `status = 'draft'` row was, and the reason it never needed a version: a
  * draft is not a version, it is the thing you are editing before there is one.
+ *
+ * WHERE THE INPUT MAPS COME FROM. A step is handed the trigger payload and
+ * nothing else; a field an earlier step produced reaches it only through
+ * `inputs: { consent_threads: "send.consent_threads" }`. Until now the only
+ * way to get one was for a person to type it, which meant knowing the field
+ * names inside two nodes and the id of a step — the nodes' internals, from a
+ * tool whose promise is that you describe what you want. Both sides already
+ * declare themselves in `node_registry`, so the map is worked out here and
+ * saved with the draft.
+ *
+ * IT HAPPENS ON SAVE, NOT ON COMPILE, and that is deliberate. `versionForDraft`
+ * decides whether to mint a version by comparing the draft's checksum to the
+ * versions' — so a definition changed on the way into a version would never
+ * match, and every press of Send would mint a twin. Filling it in here keeps
+ * the working copy and the version identical, and the author SEES the wiring
+ * in the editor rather than finding out it happened.
+ *
+ * `inferInputsForGraph` never overwrites a map somebody wrote, and returns the
+ * definition untouched if it cannot read the registry. The returned checksum
+ * is the one that was stored — callers must use it rather than one they
+ * computed before calling.
  */
 export async function saveDraft(
   db: Queryable,
@@ -117,14 +141,25 @@ export async function saveDraft(
     by?: string | null;
     title?: string;
   },
-): Promise<{ graphId: string; checksum: string }> {
+): Promise<{ graphId: string; checksum: string; wired: WiredInput[] }> {
   const graphId = await ensureGraph(db, {
     graphKey: args.graphKey,
     orgId: args.orgId,
     title: args.title,
     by: args.by,
   });
-  const checksum = args.checksum ?? checksumOf(args.definition as any);
+
+  const inferred = await inferInputsForGraph(
+    db,
+    args.definition,
+    args.graphKey,
+    args.orgId,
+  );
+  const definition = inferred.definition;
+  const checksum =
+    inferred.wired.length > 0
+      ? checksumOf(definition as any)
+      : args.checksum ?? checksumOf(definition as any);
   const { userId } = await attribution(db, args.by);
 
   await db.query(
@@ -136,10 +171,10 @@ export async function saveDraft(
        checksum   = EXCLUDED.checksum,
        updated_by = EXCLUDED.updated_by,
        updated_at = now()`,
-    [graphId, JSON.stringify(args.definition), checksum, userId],
+    [graphId, JSON.stringify(definition), checksum, userId],
   );
 
-  return { graphId, checksum };
+  return { graphId, checksum, wired: inferred.wired };
 }
 
 /**

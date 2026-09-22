@@ -21,7 +21,7 @@ import {
   validateGraphTopology,
   checksumOf,
 } from "@tekisho/graph-contract";
-import { upsertActiveEventBinding } from "@tekisho/authoring";
+import { describeWiring, upsertActiveEventBinding } from "@tekisho/authoring";
 import { withOrgScope } from "../with-org-scope.js";
 import { deriveChain } from "../lib/derive-chain.js";
 import { collectGateEvidence } from "../lib/gate-evidence.js";
@@ -1444,16 +1444,29 @@ export function registerEditorRoutes(app: FastifyLike, pool: Pool): void {
           }
 
           const definition = parsed.data;
-          const checksum = checksumOf(definition);
-          await saveDraft(client, {
+          /**
+           * The checksum comes BACK from the save, not from here. `saveDraft`
+           * fills in each step's input map from what the nodes declare, so the
+           * definition it stores can differ from the one posted — and a screen
+           * told a checksum that is not the stored one would compare unequal
+           * against its own draft for ever.
+           */
+          const saved = await saveDraft(client, {
             graphKey,
             orgId: null,
             definition,
-            checksum,
+            checksum: checksumOf(definition),
             by: adminIdOf(req),
           });
 
-          return { graphKey, version, checksum, saved: true };
+          return {
+            graphKey,
+            version,
+            checksum: saved.checksum,
+            saved: true,
+            /** What was worked out, in the words the editor shows. */
+            wiring: describeWiring(saved.wired),
+          };
         });
       } catch (err) {
         req.log?.error?.(err);

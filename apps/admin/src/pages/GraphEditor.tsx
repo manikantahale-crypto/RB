@@ -41,6 +41,8 @@ import {
   WhatChangedRail,
   NodePicker,
   ValidationRail,
+  WiringRail,
+  propsOf,
   rankCandidates,
   validate,
 } from "./editor-parts";
@@ -416,6 +418,8 @@ export function GraphEditorPage() {
   const [error, setError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
   const [savedAt, setSavedAt] = useState<Date | null>(null);
+  /** Sentences from the last save: which step takes what from where. */
+  const [wiring, setWiring] = useState<string[]>([]);
   /**
    * Which edge the picker is inserting on, in definition space.
    *
@@ -743,8 +747,13 @@ export function GraphEditorPage() {
    * plus everything upstream steps have MAPPED — mapping being the thing that
    * makes an earlier step's output reachable at all.
    *
-   * Upstream outputs still count, but only as what COULD be mapped: they are
-   * offered further down as sources, not counted as arriving on their own.
+   * AND NOW THE UPSTREAM OUTPUTS THEMSELVES. They used to be "what could be
+   * mapped, if somebody typed it", which is why they were excluded. Saving a
+   * draft works the map out from these same declarations (`saveDraft` →
+   * `inferInputsForGraph`), so an upstream step's declared output WILL be
+   * mapped into any later step that reads a field of that name. Leaving them
+   * out now understates what a candidate can get and hides the steps that
+   * would slot in perfectly.
    */
   const upstreamOutputs = useMemo(() => {
     if (!draft || !insertAt) return [] as string[];
@@ -759,6 +768,9 @@ export function GraphEditorPage() {
       // What an upstream step MAPPED is available downstream, because mapping
       // merges it into the payload every later step reads.
       for (const field of Object.keys(node?.inputs ?? {})) out.add(field);
+      // And what it DECLARES it produces, which the save will map for you.
+      const impl = registry.find((r) => r.key === node?.impl);
+      for (const field of propsOf(impl?.outputSchema ?? null)) out.add(field);
       for (const [a, b] of draft.edges) if (b === id) walk(a);
       // A step reached only through a branch arm has upstream too — without
       // this the picker reports nothing usable anywhere after a decision.
@@ -768,7 +780,7 @@ export function GraphEditorPage() {
     };
     walk(insertAt.from);
     return [...out];
-  }, [draft, insertAt, loaded]);
+  }, [draft, insertAt, loaded, registry]);
 
   /** Insert a step on an edge — see `lib/graph-edit.ts` for both cases. */
   const insertNode = (chosen: RegistryNode) => {
@@ -830,6 +842,14 @@ export function GraphEditorPage() {
     if (res.ok) {
       setLoaded({ ...loaded, definition: structuredClone(draft) });
       setSavedAt(new Date());
+      /**
+       * What the save worked out. The canvas is NOT replaced with the stored
+       * definition: the author may already be typing again, and overwriting
+       * the thing under their hands to show them a map they never asked to see
+       * is a worse trade than telling them in words. The maps are in the draft
+       * on the server, and the next load brings them back on the steps.
+       */
+      setWiring(res.data.wiring ?? []);
     } else {
       setError(res.body.message ?? res.body.error ?? "Could not save");
     }
@@ -1556,6 +1576,7 @@ export function GraphEditorPage() {
               <p className="wf-empty">Select a step to edit it.</p>
             )}
             <ValidationRail findings={findings} />
+            <WiringRail wiring={wiring} />
             <GoLiveChecksRail checks={gateChecks} loading={gateLoading} />
             <WhatChangedRail diff={diff} loading={diffLoading} />
           </aside>

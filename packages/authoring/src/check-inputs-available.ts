@@ -49,8 +49,12 @@ export type CheckInputsArgs = {
  *
  * Graphs here are a handful of steps, so the simple version is the right one —
  * a proper dominator algorithm would be faster and harder to be sure of.
+ *
+ * Exported because `inferInputMaps` has to choose sources by the same rule
+ * this check judges them by. Two definitions of "earlier" would mean the
+ * inference could fill in a map that the gate then refuses.
  */
-function alwaysRunsBefore(def: GraphDefinition, target: string): Set<string> {
+export function alwaysRunsBefore(def: GraphDefinition, target: string): Set<string> {
   const edges: Array<[string, string]> = [
     ...def.edges.map(([a, b]) => [a, b] as [string, string]),
     ...(def.conditionalEdges ?? []).flatMap((ce) =>

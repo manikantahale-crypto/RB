@@ -135,7 +135,7 @@ export function InsertableEdge({
 
 /* ───────────────────────────── node picker ───────────────────────────── */
 
-function propsOf(schema: JsonSchema | null): string[] {
+export function propsOf(schema: JsonSchema | null): string[] {
   return Object.keys(schema?.properties ?? {});
 }
 
@@ -396,6 +396,42 @@ export function ValidationRail({ findings }: { findings: Finding[] }) {
                 <span className="ge-rail-detail">{f.detail}</span>
               ) : null}
             </span>
+          </li>
+        ))}
+      </ul>
+    </section>
+  );
+}
+
+/**
+ * Where each step's data was worked out to come from.
+ *
+ * A step is handed the trigger payload and nothing else; a field an earlier
+ * step produced reaches it only through an input map. Somebody used to have to
+ * type that map, which meant knowing the field names inside two nodes and the
+ * id of a step. The save works it out from what the nodes declare, and this is
+ * how the author finds out — READ ONLY, and deliberately so. It is a report of
+ * what happened, not a form: the moment it becomes something to fill in, the
+ * knowledge it exists to hide is back on the author's desk.
+ *
+ * Silent when nothing was wired, which is the common case: most workflows take
+ * everything from the trigger.
+ */
+export function WiringRail({ wiring }: { wiring: string[] }) {
+  if (wiring.length === 0) return null;
+  return (
+    <section className="ge-rail" aria-label="Where the data comes from">
+      <h3 className="ge-rail-title">
+        Where the data comes from
+        <span className="ge-muted">worked out for you</span>
+      </h3>
+      <ul className="ge-rail-list">
+        {wiring.map((line, i) => (
+          <li key={i} className="ge-rail-item ge-rail-item--ok">
+            <span className="ge-rail-mark" aria-hidden="true">
+              →
+            </span>
+            <span className="ge-rail-text">{line}</span>
           </li>
         ))}
       </ul>

@@ -168,7 +168,15 @@ export function saveDraft(
   version: number,
   definition: GraphDefinition,
 ) {
-  return request<{ graphKey: string; version: number; checksum: string; saved: true }>(
+  return request<{
+    graphKey: string;
+    version: number;
+    /** The STORED checksum — the save fills in input maps, so it can differ. */
+    checksum: string;
+    saved: true;
+    /** One sentence per step whose input map the save worked out. */
+    wiring?: string[];
+  }>(
     `/workflows/${encodeURIComponent(graphKey)}/versions/${version}`,
     { method: "PUT", body: JSON.stringify({ definition }) },
   );

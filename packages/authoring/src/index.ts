@@ -262,3 +262,15 @@ export {
   type InputProblem,
   type CheckInputsArgs,
 } from "./check-inputs-available.js";
+
+/**
+ * Working out each step's input map from what the nodes already declare, so
+ * the person authoring a workflow never has to name a field inside one.
+ */
+export {
+  inferInputMaps,
+  describeWiring,
+  type InferInputsArgs,
+  type InferInputsResult,
+  type WiredInput,
+} from "./infer-input-maps.js";
