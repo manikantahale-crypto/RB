@@ -408,8 +408,21 @@ router.post("/internal/jobs/:jobId/shortlist/approve", async (req, res) => {
 /** syntra.bench.alert — rank open requirements for a person's current resume. */
 router.post("/internal/candidates/:id/bench-alert", async (req, res) => {
   const candidateId = req.params.id;
+  /**
+   * When the caller hangs up, stop working for it.
+   *
+   * Express runs a handler to completion whether or not the client is still
+   * there. `syntra.bench.alert` times out at five minutes and retries, so
+   * without this the retry started a SECOND run of this work while the first
+   * was still going — six were running at once on 2026-09-22, each publishing
+   * its own fan-out. The funnel checks this between rows.
+   */
+  const hangUp = new AbortController();
+  req.on("close", () => hangUp.abort());
   try {
-    res.json(await internalOrch.benchAlert(candidateId, req.body || {}));
+    res.json(
+      await internalOrch.benchAlert(candidateId, req.body || {}, hangUp.signal),
+    );
   } catch (err) {
     const status = err.statusCode === 404 ? 404 : 500;
     log.error(`[internal] bench-alert ${candidateId} failed: ${err.message}`);

@@ -104,7 +104,23 @@ export const benchAlert = defineNode({
     // one fails the step every time. The fix that brings this down is in
     // SYNTRA: score asynchronously and answer with the shortlist.
     timeoutMs: 300_000,
-    retry: { limit: 2, backoff: "exponential", baseMs: 2_000 },
+    /**
+     * ONE RETRY, NOT TWO, AND THE REASON IS WHAT A TIMEOUT MEANS HERE.
+     *
+     * Retrying a call that timed out repeats the thing that was too big. On
+     * 2026-09-22 that compounded: node-api runs an Express handler to
+     * completion whether or not the caller is still listening, so each retry
+     * started a SECOND copy of this work beside the first rather than
+     * replacing it. Two node retries across three queue attempts put six
+     * concurrent runs of the same reconcile on one candidate, each publishing
+     * its own fan-out.
+     *
+     * Both halves are fixed — the reconcile no longer re-runs funnels, and the
+     * route now aborts when the caller hangs up — so a timeout here once again
+     * means something is genuinely stuck. One retry covers a blip; a second
+     * mostly buys another five minutes of the same answer.
+     */
+    retry: { limit: 1, backoff: "exponential", baseMs: 2_000 },
     classifyError: classifySyntraError,
     locks: [],
   },

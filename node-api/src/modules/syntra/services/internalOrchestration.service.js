@@ -33,7 +33,7 @@ async function resolveCurrentResumeId(candidateId, body) {
 }
 
 /** profile.prepared → bench alert: rank open jobs for this candidate's resume. */
-async function benchAlert(candidateId, body = {}) {
+async function benchAlert(candidateId, body = {}, signal) {
   const resumeId = await resolveCurrentResumeId(candidateId, body);
   if (!resumeId) {
     const err = new Error(`no current resume for candidate ${candidateId}`);
@@ -41,7 +41,7 @@ async function benchAlert(candidateId, body = {}) {
     throw err;
   }
 
-  const result = await runForResume(resumeId);
+  const result = await runForResume(resumeId, { signal });
   const best = result.created?.[0];
   log.info(
     `[internal] bench-alert candidate=${candidateId} resume=${resumeId} matches=${result.created?.length ?? 0}`,

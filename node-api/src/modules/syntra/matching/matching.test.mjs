@@ -185,3 +185,126 @@ describe("score caps — what the model's score may not exceed", () => {
     expect(r.score).toBe(50);
   });
 });
+
+/**
+ * The reconcile that brought the stack down, twice.
+ *
+ * It re-ran the FULL funnel for every surviving job — ~1,700 of them, nine
+ * seconds each, inline, inside a request that times out at five minutes.
+ * Moving those to the queue removed the timeout and kept the number: 4,300
+ * jobs climbing at 190 a minute against a drain of 30.
+ *
+ * Neither was necessary. `rankJobsForResume` has already scored this resume
+ * against every surviving job — `aboveFloor` holds them in score order — so
+ * the pairs wanted are simply the ones past `topN`. No funnel re-runs, no
+ * queue messages, no fan-out.
+ */
+const { pairsNeedingReconcile } = require("./funnel");
+
+const AT = (iso) => new Date(iso).toISOString();
+const RESUME_READY = AT("2026-09-22T12:00:00Z");
+const resume = { processed_at: RESUME_READY };
+const BEFORE = AT("2026-09-22T11:00:00Z");
+const AFTER = AT("2026-09-22T13:00:00Z");
+
+/** `aboveFloor` from rankJobsForResume — scored, sorted, best first. */
+const scoredJobs = (...ids) =>
+  ids.map((jobId, i) => ({ jobId, candidateId: "c-1", skillMatchScore: 90 - i }));
+const survivorsAt = (when, ...ids) =>
+  ids.map((job_id) => ({ job_id, job_processed_at: when }));
+
+describe("the pairs a resume still needs, beyond its own top N", () => {
+  it("skips the top N — those already have a row from the shortlist", () => {
+    const ids = ["a", "b", "c"];
+    const out = pairsNeedingReconcile(
+      scoredJobs(...ids), resume, survivorsAt(BEFORE, ...ids), 2, 25,
+    );
+    expect(out.map((p) => p.jobId)).toEqual(["c"]);
+  });
+
+  it("carries the score through, so no funnel has to rediscover it", () => {
+    // The whole point: the pair was scored moments ago. Re-running the job's
+    // funnel to learn it again was the original mistake.
+    const out = pairsNeedingReconcile(
+      scoredJobs("a", "b"), resume, survivorsAt(BEFORE, "a", "b"), 0, 25,
+    );
+    expect(out[0]).toMatchObject({ jobId: "a", skillMatchScore: 90, candidateId: "c-1" });
+  });
+
+  it("includes a job whose funnel ran before this resume was matchable", () => {
+    expect(
+      pairsNeedingReconcile(scoredJobs("j-old"), resume, survivorsAt(BEFORE, "j-old"), 0, 25)
+        .map((p) => p.jobId),
+    ).toEqual(["j-old"]);
+  });
+
+  it("skips a job whose funnel ran after — it already considered this resume", () => {
+    expect(
+      pairsNeedingReconcile(scoredJobs("j-new"), resume, survivorsAt(AFTER, "j-new"), 0, 25),
+    ).toEqual([]);
+  });
+
+  it("skips a job processed at the same instant, which saw it", () => {
+    expect(
+      pairsNeedingReconcile(scoredJobs("j-tie"), resume, survivorsAt(RESUME_READY, "j-tie"), 0, 25),
+    ).toEqual([]);
+  });
+
+  it("is conservative when either timestamp is missing", () => {
+    // No evidence the job's funnel saw this resume, and missing a pairing is
+    // worse than one extra row.
+    expect(
+      pairsNeedingReconcile(scoredJobs("j-1"), resume, [{ job_id: "j-1" }], 0, 25)
+        .map((p) => p.jobId),
+    ).toEqual(["j-1"]);
+    expect(
+      pairsNeedingReconcile(scoredJobs("j-2"), {}, survivorsAt(AFTER, "j-2"), 0, 25)
+        .map((p) => p.jobId),
+    ).toEqual(["j-2"]);
+  });
+
+  it("STOPS AT THE CAP — 3,416 requirements nearly all predate any new resume", () => {
+    const ids = Array.from({ length: 1700 }, (_, i) => `j-${i}`);
+    const out = pairsNeedingReconcile(
+      scoredJobs(...ids), resume, survivorsAt(BEFORE, ...ids), 15, 25,
+    );
+    expect(out).toHaveLength(25);
+  });
+
+  it("takes them in score order, because aboveFloor arrives sorted", () => {
+    const ids = ["best", "next", "third", "fourth"];
+    expect(
+      pairsNeedingReconcile(scoredJobs(...ids), resume, survivorsAt(BEFORE, ...ids), 0, 2)
+        .map((p) => p.jobId),
+    ).toEqual(["best", "next"]);
+  });
+
+  it("counts only what it keeps toward the cap, not what it skips", () => {
+    const survivors = [
+      ...survivorsAt(AFTER, "seen-1", "seen-2"),
+      ...survivorsAt(BEFORE, "stale-1", "stale-2"),
+    ];
+    expect(
+      pairsNeedingReconcile(
+        scoredJobs("seen-1", "seen-2", "stale-1", "stale-2"), resume, survivors, 0, 2,
+      ).map((p) => p.jobId),
+    ).toEqual(["stale-1", "stale-2"]);
+  });
+
+  it("returns each job once, however many rows it arrived on", () => {
+    // A job reaches the pool from both the role query and the vector query.
+    expect(
+      pairsNeedingReconcile(
+        scoredJobs("j-1", "j-1", "j-2"), resume, survivorsAt(BEFORE, "j-1", "j-1", "j-2"), 0, 25,
+      ).map((p) => p.jobId),
+    ).toEqual(["j-1", "j-2"]);
+  });
+
+  it("copes with nothing to reconcile at all", () => {
+    expect(pairsNeedingReconcile([], resume, [], 0, 25)).toEqual([]);
+    expect(pairsNeedingReconcile(undefined, resume, undefined, 0, 25)).toEqual([]);
+    expect(
+      pairsNeedingReconcile(scoredJobs("j-1"), resume, survivorsAt(BEFORE, "j-1"), 0, 0),
+    ).toEqual([]);
+  });
+});

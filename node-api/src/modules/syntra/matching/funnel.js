@@ -6,10 +6,93 @@ const env = require("../../../config/env");
 const log = require("../../../utils/logger");
 const { enqueueMatchRequest } = require("../services/matchEnqueue");
 
-async function shortlistFinalists(finalists) {
+/**
+ * The pairs this resume should have that its own top-N did not cover.
+ *
+ * WHAT THE RECONCILE IS FOR. Pairing is asymmetric. A row for (job J, resume R)
+ * appears if R is among J's best candidates OR J is among R's best jobs. A job
+ * processed before R existed built its candidate list without R in the pool, so
+ * R can only arrive by the second route — R's own top-N. That leaves a real
+ * gap: R may be the strongest candidate available for a job that is nowhere
+ * near R's own top 15, simply because few people on the bench suit it. Without
+ * this, a recruiter asking "who do we have for this requirement?" never sees
+ * them.
+ *
+ * WHAT IT USED TO DO ABOUT IT, TWICE. First it re-ran the FULL funnel for every
+ * surviving job — about 1,700 of them, nine seconds each, inline, inside a
+ * request that times out at five minutes. Then it published those 1,700 as
+ * queue messages instead: no timeout, same number, 4,300 jobs climbing at 190 a
+ * minute against a drain of 30.
+ *
+ * NEITHER WAS NECESSARY. `rankJobsForResume` has already scored this resume
+ * against every surviving job — that is how it picked the top 15 — and
+ * `aboveFloor` holds all of them in score order. The pairs we want are simply
+ * the ones past `topN`. Re-running a job's funnel to rediscover a score
+ * computed moments earlier was the whole mistake.
+ *
+ * So: no queue messages, no funnel re-runs, no fan-out. Just the rows, taken in
+ * score order and capped, because "every job that missed this resume" is very
+ * nearly "every job there is" — 3,416 requirements have finished extraction and
+ * almost all predate any new resume.
+ *
+ * Conservative on a missing timestamp: without both there is no evidence the
+ * job's funnel saw this resume, and missing a pairing is worse than one extra.
+ */
+function pairsNeedingReconcile(aboveFloor, resume, survivors, topN, limit) {
+  const resumeReadyAt = resume?.processed_at
+    ? new Date(resume.processed_at).getTime()
+    : null;
+
+  /** When each job last ran its own funnel, by job id. */
+  const ranAt = new Map();
+  for (const row of survivors ?? []) {
+    if (row?.job_id && !ranAt.has(row.job_id)) {
+      ranAt.set(
+        row.job_id,
+        row.job_processed_at ? new Date(row.job_processed_at).getTime() : null,
+      );
+    }
+  }
+
+  const out = [];
+  const seen = new Set();
+  // Past `topN`: everything before it already has a row from the shortlist.
+  for (const pair of (aboveFloor ?? []).slice(topN)) {
+    if (out.length >= limit) break;
+    const jobId = pair?.jobId;
+    if (!jobId || seen.has(jobId)) continue;
+    seen.add(jobId);
+
+    const jobRanAt = ranAt.has(jobId) ? ranAt.get(jobId) : null;
+    const sawThisResume =
+      resumeReadyAt !== null && jobRanAt !== null && jobRanAt >= resumeReadyAt;
+    if (!sawThisResume) out.push(pair);
+  }
+  return out;
+}
+
+async function shortlistFinalists(finalists, signal) {
   const created = [];
 
   for (const f of finalists) {
+    /**
+     * The caller gave up, so stop making work for it.
+     *
+     * Express does not abort a handler when the client disconnects, and
+     * nothing on this path used to look. So when `syntra.bench.alert` hit its
+     * five-minute timeout the orchestrator aborted its fetch, retried, and
+     * node-api carried on running the ORIGINAL request underneath — each retry
+     * stacking another copy rather than replacing one. Six ran at once.
+     *
+     * Checked between rows rather than mid-insert: what is already committed
+     * stays, and `created` reports honestly how far it got.
+     */
+    if (signal?.aborted) {
+      log.warn(
+        `[funnel] caller went away after ${created.length} of ${finalists.length} pair(s) — stopping`,
+      );
+      break;
+    }
     const row = await withTransaction(async (client) => {
       return matchRepo.insertShortlistRow(client, {
         jobId: f.jobId,
@@ -53,6 +136,7 @@ async function shortlistFinalists(finalists) {
  *   `skillMatchScore` returns.
  */
 async function runForJob(jobId, options = {}) {
+  const { signal } = options;
   const { job, pool, survivors } = await filterCandidatesForJob(jobId);
   if (!job) return { created: [] };
 
@@ -89,7 +173,8 @@ async function runForJob(jobId, options = {}) {
       candidateId: f.candidateId,
       resumeId: f.resumeId,
       skillMatchScore: f.skillMatchScore,
-    }))
+    })),
+    signal,
   );
 
   if (created.length > 0) {
@@ -114,6 +199,7 @@ async function runForJob(jobId, options = {}) {
  *   Per-run overrides from a workflow step's settings, same as `runForJob`.
  */
 async function runForResume(resumeId, options = {}) {
+  const { signal } = options;
   const { resume, pool, survivors } = await filterJobsForResume(resumeId);
   if (!resume) return { created: [] };
 
@@ -126,7 +212,7 @@ async function runForResume(resumeId, options = {}) {
       ? options.topN
       : env.MATCH_TOP_N;
 
-  const { finalists, gateCut } = rankJobsForResume({
+  const { finalists, gateCut, aboveFloor } = rankJobsForResume({
     resumeSkills: resume.skills,
     jobs: survivors,
     skillFloor,
@@ -144,17 +230,42 @@ async function runForResume(resumeId, options = {}) {
       candidateId: f.candidateId,
       resumeId,
       skillMatchScore: f.skillMatchScore,
-    }))
+    })),
+    signal,
   );
 
-  // Jobs that finished AI after this resume started may have missed pairing — re-run job funnel.
-  const jobIds = [...new Set(survivors.map((s) => s.job_id).filter(Boolean))];
-  for (const jid of jobIds) {
-    try {
-      await runForJob(jid);
-    } catch (err) {
-      log.warn(`[funnel] resume ${resumeId}: reconcile job ${jid} failed: ${err.message}`);
-    }
+  /**
+   * The same call that made the shortlist, for the pairs it did not cover.
+   *
+   * `shortlistFinalists` inserts with ON CONFLICT DO NOTHING and enqueues only
+   * what it actually created, so a pair that already exists costs nothing and
+   * emits nothing.
+   *
+   * A job's list may now hold more than `topN` candidates. That is fine —
+   * `topN` is a selection heuristic at the moment of creation, not an invariant
+   * on the table, and every other row arrives the same way.
+   */
+  const reconciled = await shortlistFinalists(
+    pairsNeedingReconcile(
+      aboveFloor,
+      resume,
+      survivors,
+      topN,
+      env.MATCH_RECONCILE_MAX,
+    ).map((p) => ({
+      jobId: p.jobId,
+      candidateId: p.candidateId,
+      resumeId,
+      skillMatchScore: p.skillMatchScore,
+    })),
+    signal,
+  );
+
+  if (reconciled.length > 0) {
+    log.info(
+      `[funnel] resume ${resumeId}: reconciled ${reconciled.length} pair(s) beyond ` +
+        `the top ${topN} (cap ${env.MATCH_RECONCILE_MAX})`,
+    );
   }
 
   return {
@@ -166,4 +277,4 @@ async function runForResume(resumeId, options = {}) {
   };
 }
 
-module.exports = { runForJob, runForResume };
+module.exports = { runForJob, runForResume, pairsNeedingReconcile };

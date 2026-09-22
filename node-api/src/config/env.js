@@ -25,6 +25,17 @@ module.exports = {
   MATCH_SKILL_FLOOR: parseInt(process.env.MATCH_SKILL_FLOOR || "0", 10),
   /** Max candidates/jobs shortlisted per funnel run */
   MATCH_TOP_N: parseInt(process.env.MATCH_TOP_N || "15", 10),
+  /**
+   * How many jobs one resume may send back for a funnel re-run.
+   *
+   * A job built its candidate shortlist when it was processed, so one
+   * processed before this resume existed never considered it. Nearly every
+   * requirement predates any new resume — 3,416 have finished extraction — so
+   * "all of them" is the honest answer and an impossible amount of work. This
+   * caps it at the jobs where the answer might actually change: the
+   * highest-scoring ones that missed this resume's own shortlist.
+   */
+  MATCH_RECONCILE_MAX: parseInt(process.env.MATCH_RECONCILE_MAX || "25", 10),
   AUTH_JWT_SECRET:
     process.env.AUTH_JWT_SECRET ||
     (process.env.NODE_ENV === "production"

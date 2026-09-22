@@ -156,6 +156,10 @@ async function findOpenJobsForResume(resumeId) {
             j.title AS job_title,
             j.primary_role,
             j.required_skills,
+            -- When this job's own funnel could first have run. Compared against
+            -- the resume's, it says whether that funnel already saw this
+            -- resume — see the reconcile in matching/funnel.js.
+            j.processed_at AS job_processed_at,
             r.id AS resume_id,
             r.candidate_id,
             r.primary_role AS resume_primary_role,
@@ -656,6 +660,10 @@ async function findTopJobsByVector(resumeId, limit = 50) {
             j.title AS job_title,
             j.primary_role,
             j.required_skills,
+            -- When this job's own funnel could first have run. Compared against
+            -- the resume's, it says whether that funnel already saw this
+            -- resume — see the reconcile in matching/funnel.js.
+            j.processed_at AS job_processed_at,
             r.id AS resume_id,
             r.candidate_id,
             r.primary_role AS resume_primary_role,

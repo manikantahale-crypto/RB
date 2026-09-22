@@ -143,6 +143,13 @@ function rankJobsForResume({ resumeSkills, jobs, skillFloor, topN }) {
     finalists,
     gateCut: belowFloor.length + Math.max(0, aboveFloor.length - finalists.length),
     scored,
+    /**
+     * Everything that cleared the floor, in score order — `finalists` is just
+     * its first `topN`. Returned because the reconcile needs the ones BEYOND
+     * topN and already has their scores; recomputing the floor predicate
+     * elsewhere is how two copies of a rule drift apart.
+     */
+    aboveFloor,
   };
 }
 
