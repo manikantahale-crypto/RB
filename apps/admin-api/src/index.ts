@@ -21,7 +21,7 @@ import {
   createLlmClientFromEnv,
   ensureAuthoringSchema,
   ensureEventBindingsSchema,
-  devPoolOpts,
+  canonicalPoolOpts,
   withPgRetry,
   type LLMClient,
 } from "@tekisho/authoring";
@@ -53,7 +53,7 @@ const dataUrl = process.env.DATABASE_RELAY_URL?.trim() || migratorUrl;
 const port = Number(process.env.ADMIN_API_PORT ?? 4200);
 
 function poolOpts(connectionString: string) {
-  return devPoolOpts(connectionString, 1);
+  return canonicalPoolOpts(connectionString, "admin-api", { max: 1 });
 }
 
 function tryCreateLlm(): LLMClient | undefined {

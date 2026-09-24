@@ -222,6 +222,9 @@ export {
   isPgPoolExhausted,
   withPgRetry,
   devPoolOpts,
+  canonicalPoolOpts,
+  type CanonicalPoolRole,
+  type CanonicalPoolOverrides,
   sslFor,
 } from "./pg-retry.js";
 export {

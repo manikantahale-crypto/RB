@@ -1,5 +1,5 @@
 const { PgBoss } = require("pg-boss");
-const { sslFor } = require("./ssl");
+const { resolveSsl } = require("./canonicalDb");
 const env = require("./env");
 const log = require("../utils/logger");
 const { withPgRetry } = require("../utils/pgRetry");
@@ -20,6 +20,11 @@ const QUEUES = [
   // work a queue nobody created; on the old project this one existed because
   // something else had created it first.
   "prism.consent.autoresend",
+  // RELAY (Smart Inbox): consolidated into node-api PgBoss
+  "process-email",
+  "sla-sweeper",
+  "consent-timeout-sweeper",
+  "mailbox-sync",
 ];
 
 let boss = null;
@@ -30,10 +35,11 @@ async function startBoss() {
   boss = new PgBoss({
     connectionString: env.DATABASE_URL,
     schema: "pgboss",
-    ssl: sslFor(env.DATABASE_URL),
+    ssl: resolveSsl(env.DATABASE_URL),
     // Session pooler allows ~15 clients total — share budget with Node + Python pools
-    max: 1,
-    connectionTimeoutMillis: 20000,
+    max: Math.max(1, parseInt(process.env.DB_BOSS_POOL_MAX || process.env.DEV_PG_POOL_MAX || "1", 10)),
+    connectionTimeoutMillis: parseInt(process.env.DB_CONNECTION_TIMEOUT_MS || "20000", 10),
+    application_name: process.env.DB_APPLICATION_NAME || "node-api-boss",
   });
 
   boss.on("error", (err) => {

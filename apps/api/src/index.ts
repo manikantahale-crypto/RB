@@ -6,7 +6,7 @@
  * Start worker first (`npm start` in repo root), then:
  *   npm run start -w @tekisho/api
  */
-import { sslFor } from "@tekisho/authoring";
+import { sslFor, canonicalPoolOpts } from "@tekisho/authoring";
 import Fastify from "fastify";
 import * as PgBossModule from "pg-boss";
 import pg from "pg";
@@ -38,11 +38,7 @@ async function main(): Promise<void> {
     );
   }
 
-  const pool = new pg.Pool({
-    connectionString: databaseUrl,
-    ssl: sslFor(databaseUrl),
-    max: 2,
-  });
+  const pool = new pg.Pool(canonicalPoolOpts(databaseUrl, "ingress", { max: 2 }));
   pool.on("error", (error: Error) => {
     console.error("[Ingress API] pg pool error:", error.message);
   });
@@ -51,7 +47,8 @@ async function main(): Promise<void> {
     connectionString: databaseUrl,
     schema: "pgboss",
     ssl: sslFor(databaseUrl),
-    max: 1,
+    max: Math.max(1, parseInt(process.env.DB_BOSS_POOL_MAX || process.env.DEV_PG_POOL_MAX || "1", 10)),
+    application_name: process.env.DB_APPLICATION_NAME || "tekisho-ingress-boss",
   });
   // Pool timeouts must not crash the process (same pattern as worker bootstrap).
   boss.on("error", (error: unknown) => {

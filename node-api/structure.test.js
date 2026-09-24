@@ -25,8 +25,9 @@
  * `config/db.js` builds its Pool lazily and only connects inside a function, so
  * a syntactically valid fake is enough to load the whole application.
  */
+import "tsx/cjs";
 import { createRequire } from "node:module";
-import { readdirSync, readFileSync, statSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { dirname, join, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
@@ -52,11 +53,17 @@ function sourceFiles(dir = SRC) {
 const FILES = sourceFiles();
 const known = new Set(FILES.map((f) => resolve(f)));
 
-/** Resolve a relative `require` the way Node does: exact, then `.js`, then `/index.js`. */
+/** Resolve a relative `require` the way Node does: exact, then `.js` / `.ts`, then `/index.js` / `/index.ts`. */
 function resolveRequire(fromFile, spec) {
   const base = resolve(dirname(fromFile), spec);
-  for (const candidate of [base, `${base}.js`, join(base, "index.js")]) {
-    if (known.has(candidate)) return candidate;
+  for (const candidate of [
+    base,
+    `${base}.js`,
+    `${base}.ts`,
+    join(base, "index.js"),
+    join(base, "index.ts"),
+  ]) {
+    if (known.has(candidate) || existsSync(candidate)) return candidate;
   }
   return null;
 }

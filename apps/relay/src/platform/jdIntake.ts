@@ -106,7 +106,7 @@ export async function tryDirectVendorJdIntake(args: {
       return { ok: false, reason: String(data.rejectReason || 'rejected') };
     }
 
-    const jobId = String(data.jobId || data.job?.id || data.requirement_id || '');
+    const jobId = String(data.jobId || (data.job as { id?: string } | undefined)?.id || data.requirement_id || '');
     const isDuplicate = Boolean(data.duplicate);
     if (jobId) {
       console.log(

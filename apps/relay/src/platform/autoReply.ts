@@ -1,6 +1,4 @@
-import { eq } from 'drizzle-orm';
-import { db } from '../db';
-import { emailThreads, followups } from '../db/schema';
+import { query } from '../db';
 import { EmailSenderFactory } from '../connectors/sender';
 import { draftReplyFromContext } from '../drafting/replyDrafter';
 import { buildToolResult } from './toolEnvelope';
@@ -101,15 +99,15 @@ export async function tryAutonomousReply(args: {
 
   if (ok) {
     const nextCtx = mergeAutoReplyContext(args.workflowContext || {}, args.messageId, args.replyIntent);
-    await db
-      .update(emailThreads)
-      .set({ workflowContext: nextCtx })
-      .where(eq(emailThreads.threadId, args.threadId));
+    await query(
+      `UPDATE relay.email_threads SET workflow_context = $1 WHERE thread_id = $2`,
+      [JSON.stringify(nextCtx), args.threadId]
+    );
 
-    await db
-      .update(followups)
-      .set({ status: 'Closed' })
-      .where(eq(followups.threadId, args.threadId));
+    await query(
+      `UPDATE relay.followups SET status = 'Closed' WHERE thread_id = $1`,
+      [args.threadId]
+    );
 
     const toolResult = buildToolResult(
       'relay.auto_reply.send',

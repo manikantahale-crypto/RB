@@ -39,7 +39,7 @@
     "dev:worker:watch": "npm run dev:watch -w @tekisho/worker",
     "dev:preflight": "node scripts/dev-preflight.mjs",
     "dev:all:log": "node scripts/tee.mjs logs/dev-all.log npm run dev:all",
-    "dev:all": "npm run dev:preflight && npx concurrently --kill-others-on-fail --handle-input -n syntra,relay,front,ingress,worker,authoring,ui -c yellow,red,white,magenta,cyan,blue,green \"npm run dev:syntra-api\" \"npm run dev:relay\" \"npx wait-on -t 120000 http-get://127.0.0.1:4000/health && npm run dev:syntra-ui\" \"npm run dev:orch-api\" \"npx wait-on -t 120000 http-get://127.0.0.1:4100/health && npm run dev:worker\" \"npm run dev:admin-api\" \"npx wait-on -t 120000 http-get://127.0.0.1:4200/health && npm run dev:admin-ui\""
+    "dev:all": "npm run dev:preflight && npx concurrently --kill-others-on-fail --handle-input -n syntra,front,ingress,worker,authoring,ui -c yellow,white,magenta,cyan,blue,green \"npm run dev:syntra-api\" \"npx wait-on -t 120000 http-get://127.0.0.1:4000/health && npm run dev:syntra-ui\" \"npm run dev:orch-api\" \"npx wait-on -t 120000 http-get://127.0.0.1:4100/health && npm run dev:worker\" \"npm run dev:admin-api\" \"npx wait-on -t 120000 http-get://127.0.0.1:4200/health && npm run dev:admin-ui\""
   },
   "dependencies": {
     "@langchain/langgraph": "^1.4.9",

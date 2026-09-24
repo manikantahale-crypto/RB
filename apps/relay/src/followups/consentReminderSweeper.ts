@@ -1,6 +1,4 @@
-import { db } from '../db';
-import { emailMessages, emailThreads } from '../db/schema';
-import { and, eq } from 'drizzle-orm';
+import { query, normalizeThread, normalizeMessage } from '../db';
 import { EmailSenderFactory } from '../connectors/sender';
 import { shouldSkipOutboundSend } from '../connectors/relayOutbound';
 import {
@@ -32,13 +30,15 @@ async function candidateRepliedAfterConsent(
   threadId: string,
   sentAt: Date,
 ): Promise<boolean> {
-  const msgs = await db
-    .select()
-    .from(emailMessages)
-    .where(eq(emailMessages.threadId, threadId));
+  const { rows } = await query(
+    `SELECT direction, date FROM relay.email_messages WHERE thread_id = $1`,
+    [threadId]
+  );
+  const msgs = rows.map(normalizeMessage).filter(Boolean);
 
   return msgs.some(
     (m) =>
+      m &&
       m.direction !== 'sent' &&
       m.date &&
       m.date.getTime() > sentAt.getTime(),
@@ -59,20 +59,17 @@ export async function sweepConsentReminders(): Promise<{
   const r2 = reminder2Hours();
   console.log(`[Consent Reminder] Scanning (1st @ ${r1}h, 2nd @ ${r2}h)...`);
 
-  const threads = await db
-    .select()
-    .from(emailThreads)
-    .where(
-      and(
-        eq(emailThreads.replyIntent, CONSENT_INTENT),
-        eq(emailThreads.status, 'Awaiting Consent'),
-      ),
-    );
+  const { rows: threadRows } = await query(
+    `SELECT * FROM relay.email_threads WHERE reply_intent = $1 AND status = 'Awaiting Consent'`,
+    [CONSENT_INTENT]
+  );
+  const threads = threadRows.map(normalizeThread).filter(Boolean);
 
   let sent = 0;
   let skipped = 0;
 
   for (const thread of threads) {
+    if (!thread) continue;
     try {
       const ctx = (thread.workflowContext as Record<string, unknown>) || {};
       if (ctx.kind !== 'candidate_consent') {
@@ -93,16 +90,17 @@ export async function sweepConsentReminders(): Promise<{
       }
 
       if (await candidateRepliedAfterConsent(thread.threadId, sentAt)) {
-        await db
-          .update(emailThreads)
-          .set({
-            workflowContext: {
-              ...ctx,
-              consent_responded_at: new Date().toISOString(),
-            },
-            status: 'Consent Received',
-          })
-          .where(eq(emailThreads.threadId, thread.threadId));
+        const nextWorkflowContext = {
+          ...ctx,
+          consent_responded_at: new Date().toISOString(),
+        };
+        await query(
+          `UPDATE relay.email_threads
+              SET workflow_context = $1,
+                  status = 'Consent Received'
+            WHERE thread_id = $2`,
+          [JSON.stringify(nextWorkflowContext), thread.threadId]
+        );
         skipped++;
         continue;
       }
@@ -150,17 +148,13 @@ export async function sweepConsentReminders(): Promise<{
         continue;
       }
 
-      const lastSent = await db
-        .select()
-        .from(emailMessages)
-        .where(
-          and(
-            eq(emailMessages.threadId, thread.threadId),
-            eq(emailMessages.direction, 'sent'),
-          ),
-        );
+      const { rows: sentRows } = await query(
+        `SELECT * FROM relay.email_messages WHERE thread_id = $1 AND direction = 'sent'`,
+        [thread.threadId]
+      );
+      const lastSent = sentRows.map(normalizeMessage).filter(Boolean);
       const lastMsg = lastSent.sort(
-        (a, b) => (b.date?.getTime() || 0) - (a.date?.getTime() || 0),
+        (a, b) => (b!.date?.getTime() || 0) - (a!.date?.getTime() || 0),
       )[0];
 
       const sender = EmailSenderFactory.getSender();
@@ -178,30 +172,37 @@ export async function sweepConsentReminders(): Promise<{
       }
 
       const messageId = uuidv4();
-      await db.insert(emailMessages).values({
-        id: messageId,
-        threadId: thread.threadId,
-        fromEmail: process.env.RELAY_SMTP_USER || process.env.GMAIL_USER || 'relay@local',
-        fromName: process.env.RELAY_RECRUITER_NAME || 'Bench Sales',
-        toEmail: candidateEmail,
-        subject,
-        rawBody: body,
-        cleanedBody: body,
-        direction: 'sent',
-        date: new Date(),
-      });
+      await query(
+        `INSERT INTO relay.email_messages
+           (id, thread_id, from_email, from_name, to_email, subject, raw_body, cleaned_body, direction, date)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`,
+        [
+          messageId,
+          thread.threadId,
+          process.env.RELAY_SMTP_USER || process.env.GMAIL_USER || 'relay@local',
+          process.env.RELAY_RECRUITER_NAME || 'Bench Sales',
+          candidateEmail,
+          subject,
+          body,
+          body,
+          'sent',
+          new Date(),
+        ]
+      );
 
-      await db
-        .update(emailThreads)
-        .set({
-          workflowContext: {
-            ...ctx,
-            reminder_count: nextReminder,
-            last_reminded_at: new Date().toISOString(),
-            last_reminder_number: nextReminder,
-          },
-        })
-        .where(eq(emailThreads.threadId, thread.threadId));
+      const nextWorkflowContext = {
+        ...ctx,
+        reminder_count: nextReminder,
+        last_reminded_at: new Date().toISOString(),
+        last_reminder_number: nextReminder,
+      };
+
+      await query(
+        `UPDATE relay.email_threads
+            SET workflow_context = $1
+          WHERE thread_id = $2`,
+        [JSON.stringify(nextWorkflowContext), thread.threadId]
+      );
 
       sent++;
       console.log(

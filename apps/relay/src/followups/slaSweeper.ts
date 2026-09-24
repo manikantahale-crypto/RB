@@ -1,6 +1,4 @@
-import { db } from '../db';
-import { followups, emailThreads, emailMessages } from '../db/schema';
-import { lte, and, eq, desc } from 'drizzle-orm';
+import { query, normalizeFollowup, normalizeThread, normalizeMessage } from '../db';
 import { autoDraftChaseEmail } from '../drafting/replyDrafter';
 import { EmailSenderFactory } from '../connectors/sender';
 import { isMarketingOrPortalEmail } from '../classification/staffingSignals';
@@ -33,10 +31,11 @@ export async function sweepSLA() {
 
   const now = new Date();
 
-  const overdueFollowups = await db
-    .select()
-    .from(followups)
-    .where(and(eq(followups.status, 'Open'), lte(followups.dueDate, now)));
+  const { rows: followupRows } = await query(
+    `SELECT * FROM relay.followups WHERE status = 'Open' AND due_date <= $1`,
+    [now]
+  );
+  const overdueFollowups = followupRows.map(normalizeFollowup).filter(Boolean);
 
   if (overdueFollowups.length === 0) {
     console.log('[SLA Sweeper] No overdue follow-ups found.');
@@ -48,12 +47,13 @@ export async function sweepSLA() {
   const sender = EmailSenderFactory.getSender();
 
   for (const followup of overdueFollowups) {
+    if (!followup) continue;
     try {
-      const [thread] = await db
-        .select()
-        .from(emailThreads)
-        .where(eq(emailThreads.threadId, followup.threadId!))
-        .limit(1);
+      const { rows: threadRows } = await query(
+        `SELECT * FROM relay.email_threads WHERE thread_id = $1 LIMIT 1`,
+        [followup.threadId]
+      );
+      const thread = normalizeThread(threadRows[0]);
 
       if (!thread) continue;
 
@@ -68,14 +68,11 @@ export async function sweepSLA() {
         continue;
       }
 
-      const lastMessages = await db
-        .select()
-        .from(emailMessages)
-        .where(eq(emailMessages.threadId, followup.threadId!))
-        .orderBy(desc(emailMessages.date))
-        .limit(1);
-
-      const lastMessage = lastMessages[0] || null;
+      const { rows: msgRows } = await query(
+        `SELECT * FROM relay.email_messages WHERE thread_id = $1 ORDER BY date DESC LIMIT 1`,
+        [followup.threadId]
+      );
+      const lastMessage = normalizeMessage(msgRows[0]);
       const lastBody = lastMessage?.cleanedBody || lastMessage?.rawBody || '';
       const inReplyTo = lastMessage?.providerMessageId || undefined;
 
@@ -90,10 +87,12 @@ export async function sweepSLA() {
 
       if (success) {
         const newDueDate = new Date(now.getTime() + 24 * 60 * 60 * 1000);
-        await db
-          .update(followups)
-          .set({ dueDate: newDueDate, followupReason: 'Agent auto-chased and pushed deadline 24h' })
-          .where(eq(followups.id, followup.id));
+        await query(
+          `UPDATE relay.followups
+              SET due_date = $1, followup_reason = 'Agent auto-chased and pushed deadline 24h'
+            WHERE id = $2`,
+          [newDueDate, followup.id]
+        );
       }
     } catch (error) {
       console.error(`[SLA Sweeper] Failed followup ${followup.id}:`, error);

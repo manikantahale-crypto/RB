@@ -14,7 +14,7 @@ import {
   ensureEventBindingsSchema,
   resolveActiveEventBinding,
   withPgRetry,
-  devPoolOpts,
+  canonicalPoolOpts,
   sslFor,
   type DbQueryable,
 } from "@tekisho/authoring";
@@ -54,7 +54,8 @@ async function bootstrapPgBoss(): Promise<void> {
     connectionString: env.DATABASE_MIGRATOR_URL,
     schema: "pgboss",
     ssl: sslFor(env.DATABASE_MIGRATOR_URL),
-    max: 1,
+    max: Math.max(1, parseInt(process.env.DB_BOSS_POOL_MAX || process.env.DEV_PG_POOL_MAX || "1", 10)),
+    application_name: process.env.DB_APPLICATION_NAME || "tekisho-worker-boss",
   });
 
   boss.on("error", (error: unknown) => {
@@ -64,7 +65,7 @@ async function bootstrapPgBoss(): Promise<void> {
   await withPgRetry("worker pg-boss", () => boss.start());
   console.log("pg-boss started (schema ready)");
 
-  const pool = new pg.Pool(devPoolOpts(env.DATABASE_MIGRATOR_URL, 1));
+  const pool = new pg.Pool(canonicalPoolOpts(env.DATABASE_MIGRATOR_URL, "worker", { max: 1 }));
   // Idle/dropped clients emit 'error' on Client; without this Node exits.
   pool.on("error", (error: Error) => {
     console.error("[Dispatcher] pg pool error:", error.message);

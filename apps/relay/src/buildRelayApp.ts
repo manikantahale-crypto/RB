@@ -1,12 +1,11 @@
 import { FastifyInstance } from 'fastify';
-import { db, sql } from './db';
-import { emailThreads, followups, emailMessages } from './db/schema';
+import { query, sql, normalizeFollowup, normalizeThread, normalizeMessage } from './db';
+import type { EmailMessage } from './db/schema';
 import { sweepSLA } from './followups/slaSweeper';
 import { sweepConsentTimeouts } from './followups/consentTimeoutSweeper';
 import { sweepConsentReminders } from './followups/consentReminderSweeper';
 import { EmailConnectorFactory } from './connectors/router';
 import { getTemplateDraft, draftReplyFromContext, rewriteReplyText } from './drafting/replyDrafter';
-import { eq, or, inArray } from 'drizzle-orm';
 import { pickDisplayBody, cleanEmailSubject } from './utils/htmlText';
 import { findRegisteredCandidateByEmail } from './matching/candidateRegistry';
 import { listThreadsForInbox, getThreadDetail } from './inbox/threadsApi';
@@ -71,24 +70,18 @@ async function pullMailboxOnce(log?: { info: (...args: unknown[]) => void; warn:
     const candidateIds = allEmails.map((e) => e.id).filter(Boolean);
     const candidateProviderIds = allEmails.map((e) => e.providerMessageId).filter(Boolean);
 
-    const conditions = [];
-    if (candidateIds.length) {
-      conditions.push(inArray(emailMessages.id, candidateIds));
-    }
-    if (candidateProviderIds.length) {
-      conditions.push(inArray(emailMessages.providerMessageId, candidateProviderIds));
-    }
-
     const existingIdSet = new Set<string>();
-    if (conditions.length) {
-      const existingMessages = await db
-        .select({ id: emailMessages.id, providerMessageId: emailMessages.providerMessageId })
-        .from(emailMessages)
-        .where(conditions.length === 1 ? conditions[0] : or(...conditions));
+    if (candidateIds.length || candidateProviderIds.length) {
+      const { rows: existingMessages } = await query(
+        `SELECT id, provider_message_id FROM relay.email_messages
+          WHERE ($1::text[] IS NOT NULL AND id = ANY($1))
+             OR ($2::text[] IS NOT NULL AND provider_message_id = ANY($2))`,
+        [candidateIds.length ? candidateIds : null, candidateProviderIds.length ? candidateProviderIds : null]
+      );
 
       for (const em of existingMessages) {
         if (em.id) existingIdSet.add(em.id);
-        if (em.providerMessageId) existingIdSet.add(em.providerMessageId);
+        if (em.provider_message_id) existingIdSet.add(em.provider_message_id);
       }
     }
 
@@ -159,9 +152,9 @@ export function registerRelayRoutes(app: FastifyInstance): void {
   });
 
   app.get('/followups/reminders', async () => {
-    const allFollowups = await db.select().from(followups);
-    const allThreads = await db.select().from(emailThreads);
-    const threadById = new Map(allThreads.map((t) => [t.threadId, t]));
+    const allFollowups = (await query('SELECT * FROM relay.followups')).rows.map(normalizeFollowup).filter(Boolean);
+    const allThreads = (await query('SELECT * FROM relay.email_threads')).rows.map(normalizeThread).filter(Boolean);
+    const threadById = new Map(allThreads.map((t) => [t?.threadId, t]));
 
     let open = 0;
     let dueToday = 0;
@@ -171,7 +164,7 @@ export function registerRelayRoutes(app: FastifyInstance): void {
     const actionItems: Record<string, unknown>[] = [];
 
     for (const f of allFollowups) {
-      if (f.status !== 'Open') continue;
+      if (!f || f.status !== 'Open') continue;
       open++;
       if (f.priority === 'High') highPriority++;
       const due = f.dueDate ? new Date(f.dueDate) : null;
@@ -195,7 +188,7 @@ export function registerRelayRoutes(app: FastifyInstance): void {
     }
 
     for (const thread of allThreads) {
-      if (!thread.requiresFollowup) continue;
+      if (!thread || !thread.requiresFollowup) continue;
       if (actionItems.some((a) => a.threadId === thread.threadId)) continue;
       open++;
       if (thread.priority === 'High') highPriority++;
@@ -224,10 +217,12 @@ export function registerRelayRoutes(app: FastifyInstance): void {
   app.get('/threads/:threadId/draft', async (request, reply) => {
     const { threadId } = request.params as { threadId: string };
     const force = (request.query as { force?: string })?.force === '1';
-    const [thread] = await db.select().from(emailThreads).where(eq(emailThreads.threadId, threadId)).limit(1);
+    const { rows: threadRows } = await query('SELECT * FROM relay.email_threads WHERE thread_id = $1 LIMIT 1', [threadId]);
+    const thread = normalizeThread(threadRows[0]);
     if (!thread) return reply.status(404).send({ error: 'Thread not found' });
 
-    const msgs = await db.select().from(emailMessages).where(eq(emailMessages.threadId, threadId));
+    const { rows: msgRows } = await query('SELECT * FROM relay.email_messages WHERE thread_id = $1', [threadId]);
+    const msgs = msgRows.map(normalizeMessage).filter((m): m is EmailMessage => Boolean(m));
     const sorted = msgs.sort((a, b) => (a.date?.getTime() || 0) - (b.date?.getTime() || 0));
     const latestInbound = [...sorted].reverse().find((m) => m.direction !== 'sent');
     const contextMsg = latestInbound || sorted[sorted.length - 1];
@@ -285,15 +280,12 @@ export function registerRelayRoutes(app: FastifyInstance): void {
       threadHistory,
     });
 
-    await db
-      .update(emailThreads)
-      .set({
-        draftBody: draft.body,
-        draftSubject: draft.subject,
-        draftSource: draft.source,
-        draftMessageId: inboundMessageId,
-      })
-      .where(eq(emailThreads.threadId, threadId));
+    await query(
+      `UPDATE relay.email_threads
+          SET draft_body = $1, draft_subject = $2, draft_source = $3, draft_message_id = $4
+        WHERE thread_id = $5`,
+      [draft.body, draft.subject, draft.source, inboundMessageId, threadId]
+    );
 
     return { ...draft, attachments: thread.draftAttachments || [] };
   });
@@ -305,18 +297,22 @@ export function registerRelayRoutes(app: FastifyInstance): void {
       subject?: string;
       attachments?: Array<{ filename: string; contentType: string; contentBase64: string; size?: number }>;
     };
-    const [thread] = await db.select().from(emailThreads).where(eq(emailThreads.threadId, threadId)).limit(1);
+
+    const { rows: threadRows } = await query('SELECT * FROM relay.email_threads WHERE thread_id = $1 LIMIT 1', [threadId]);
+    const thread = normalizeThread(threadRows[0]);
     if (!thread) return reply.status(404).send({ error: 'Thread not found' });
 
-    await db
-      .update(emailThreads)
-      .set({
-        draftBody: body.body ?? thread.draftBody,
-        draftSubject: body.subject ?? thread.draftSubject,
-        draftSource: 'user',
-        draftAttachments: body.attachments ?? thread.draftAttachments ?? [],
-      })
-      .where(eq(emailThreads.threadId, threadId));
+    await query(
+      `UPDATE relay.email_threads
+          SET draft_body = $1, draft_subject = $2, draft_source = 'user', draft_attachments = $3
+        WHERE thread_id = $4`,
+      [
+        body.body ?? thread.draftBody,
+        body.subject ?? thread.draftSubject,
+        JSON.stringify(body.attachments ?? thread.draftAttachments ?? []),
+        threadId,
+      ]
+    );
 
     return { status: 'saved', threadId };
   });
@@ -330,12 +326,14 @@ export function registerRelayRoutes(app: FastifyInstance): void {
       attachments?: Array<{ filename: string; contentType: string; contentBase64: string }>;
     };
 
-    const [thread] = await db.select().from(emailThreads).where(eq(emailThreads.threadId, threadId)).limit(1);
+    const { rows: threadRows } = await query('SELECT * FROM relay.email_threads WHERE thread_id = $1 LIMIT 1', [threadId]);
+    const thread = normalizeThread(threadRows[0]);
     if (!thread) return reply.status(404).send({ error: 'Thread not found' });
 
-    const msgs = await db.select().from(emailMessages).where(eq(emailMessages.threadId, threadId));
-    const sorted = msgs.sort((a, b) => (a.date?.getTime() || 0) - (b.date?.getTime() || 0));
-    const latestInbound = [...sorted].reverse().find((m) => m.direction !== 'sent');
+    const { rows: msgRows } = await query('SELECT * FROM relay.email_messages WHERE thread_id = $1', [threadId]);
+    const msgs = msgRows.map(normalizeMessage).filter(Boolean);
+    const sorted = msgs.sort((a, b) => (a!.date?.getTime() || 0) - (b!.date?.getTime() || 0));
+    const latestInbound = [...sorted].reverse().find((m) => m!.direction !== 'sent');
     const toAddress = body.to || thread.latestSenderEmail || latestInbound?.fromEmail;
     const subject =
       body.subject ||
@@ -366,34 +364,35 @@ export function registerRelayRoutes(app: FastifyInstance): void {
     if (!ok) return reply.status(502).send({ error: 'send failed' });
 
     const messageId = uuidv4();
-    await db.insert(emailMessages).values({
-      id: messageId,
-      threadId,
-      fromEmail: process.env.GMAIL_SENDER_EMAIL || process.env.RELAY_SMTP_USER || process.env.GMAIL_USER || 'relay@local',
-      fromName: process.env.RELAY_RECRUITER_NAME || 'Bench Sales',
-      toEmail: toAddress,
-      subject,
-      rawBody: textBody,
-      cleanedBody: textBody,
-      direction: 'sent',
-      date: new Date(),
-      attachments: (body.attachments || []).map((a) => ({
-        filename: a.filename,
-        contentType: a.contentType,
-        size: Buffer.from(a.contentBase64, 'base64').length,
-      })),
-    });
+    await query(
+      `INSERT INTO relay.email_messages
+         (id, thread_id, from_email, from_name, to_email, subject, raw_body, cleaned_body, direction, date, attachments)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)`,
+      [
+        messageId,
+        threadId,
+        process.env.GMAIL_SENDER_EMAIL || process.env.RELAY_SMTP_USER || process.env.GMAIL_USER || 'relay@local',
+        process.env.RELAY_RECRUITER_NAME || 'Bench Sales',
+        toAddress,
+        subject,
+        textBody,
+        textBody,
+        'sent',
+        new Date(),
+        JSON.stringify((body.attachments || []).map((a) => ({
+          filename: a.filename,
+          contentType: a.contentType,
+          size: Buffer.from(a.contentBase64, 'base64').length,
+        }))),
+      ]
+    );
 
-    await db
-      .update(emailThreads)
-      .set({
-        latestDate: new Date(),
-        draftBody: textBody,
-        draftSubject: subject,
-        draftSource: 'sent',
-        draftAttachments: body.attachments ?? [],
-      })
-      .where(eq(emailThreads.threadId, threadId));
+    await query(
+      `UPDATE relay.email_threads
+          SET latest_date = $1, draft_body = $2, draft_subject = $3, draft_source = 'sent', draft_attachments = $4
+        WHERE thread_id = $5`,
+      [new Date(), textBody, subject, JSON.stringify(body.attachments ?? []), threadId]
+    );
 
     return { status: 'sent', threadId, messageId };
   });
@@ -463,7 +462,8 @@ export function registerRelayRoutes(app: FastifyInstance): void {
     const { body: currentText } = request.body as { body?: string };
     if (!currentText?.trim()) return reply.status(400).send({ error: 'body required' });
 
-    const [thread] = await db.select().from(emailThreads).where(eq(emailThreads.threadId, threadId)).limit(1);
+    const { rows: threadRows } = await query('SELECT * FROM relay.email_threads WHERE thread_id = $1 LIMIT 1', [threadId]);
+    const thread = normalizeThread(threadRows[0]);
     if (!thread) return reply.status(404).send({ error: 'Thread not found' });
 
     const rewritten = await rewriteReplyText(currentText, {
@@ -477,15 +477,18 @@ export function registerRelayRoutes(app: FastifyInstance): void {
   /** Recruiter manually adds a Smart Inbox thread to the JD library (non-vendor allowed). */
   app.post('/threads/:threadId/promote-to-jd', async (request, reply) => {
     const { threadId } = request.params as { threadId: string };
-    const [thread] = await db.select().from(emailThreads).where(eq(emailThreads.threadId, threadId)).limit(1);
+    const { rows: threadRows } = await query('SELECT * FROM relay.email_threads WHERE thread_id = $1 LIMIT 1', [threadId]);
+    const thread = normalizeThread(threadRows[0]);
     if (!thread) return reply.status(404).send({ error: 'Thread not found' });
 
-    const msgs = await db.select().from(emailMessages).where(eq(emailMessages.threadId, threadId));
+    const { rows: msgRows } = await query('SELECT * FROM relay.email_messages WHERE thread_id = $1', [threadId]);
+    const msgs = msgRows.map(normalizeMessage).filter((m): m is EmailMessage => Boolean(m));
     if (!msgs.length) return reply.status(400).send({ error: 'No messages in thread' });
 
     const sorted = msgs.sort((a, b) => (a.date?.getTime() || 0) - (b.date?.getTime() || 0));
     const latestInbound = [...sorted].reverse().find((m) => m.direction !== 'sent');
     const contextMsg = latestInbound || sorted[sorted.length - 1];
+    if (!contextMsg) return reply.status(400).send({ error: 'No messages in thread' });
     const display = pickDisplayBody(
       contextMsg.cleanedBody || '',
       contextMsg.rawBody || '',
@@ -540,7 +543,7 @@ export function registerRelayRoutes(app: FastifyInstance): void {
   const handleFetchNow = async () => {
     if (mailboxSyncRunning) return { success: true, status: 'already_syncing' };
     pullMailbox(app.log)
-      .then((r) => app.log.info({ inbox: r.inbox, sent: r.sent, skipped: r.skipped }, 'Mailbox sync complete'))
+      .then((r) => app.log.info({ inbox: r.inbox, sent: r.sent, skipped: (r as any).skipped }, 'Mailbox sync complete'))
       .catch((err) => app.log.warn({ err }, 'Mailbox sync failed'));
     return { success: true, status: 'started' };
   };

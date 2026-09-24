@@ -61,13 +61,89 @@ export function sslFor(connectionString: string): { rejectUnauthorized: false } 
   return local ? false : { rejectUnauthorized: false };
 }
 
-/** Shared local-dev pool defaults — keep total connections under Supabase session cap. */
-export function devPoolOpts(connectionString: string, max = 1) {
+export type CanonicalPoolRole = "api" | "worker" | "ingress" | "admin-api" | "script";
+
+export interface CanonicalPoolOverrides {
+  max?: number;
+  min?: number;
+  idleTimeoutMillis?: number;
+  connectionTimeoutMillis?: number;
+  maxUses?: number;
+  applicationName?: string;
+  searchPath?: string[];
+}
+
+/**
+ * Centralized, configurable database pool configuration.
+ * Respects DB_POOL_MAX, DB_POOL_MIN, DB_IDLE_TIMEOUT_MS, DB_CONNECTION_TIMEOUT_MS,
+ * DB_SSL, and DB_APPLICATION_NAME with role-specific defaults.
+ */
+export function canonicalPoolOpts(
+  connectionString: string,
+  role: CanonicalPoolRole = "script",
+  overrides: CanonicalPoolOverrides = {},
+) {
+  const connStr = connectionString || process.env.DATABASE_URL || "";
+
+  let ssl: { rejectUnauthorized: false } | false;
+  const envSsl = (process.env.DB_SSL || "").toLowerCase();
+  if (envSsl === "false" || envSsl === "disable" || envSsl === "off") {
+    ssl = false;
+  } else if (envSsl === "true" || envSsl === "require") {
+    ssl = { rejectUnauthorized: false };
+  } else {
+    ssl = sslFor(connStr);
+  }
+
+  const defaultMaxForRole: Record<CanonicalPoolRole, number> = {
+    worker: 1,
+    "admin-api": 1,
+    ingress: 2,
+    api: 2,
+    script: 1,
+  };
+
+  const envMax = process.env.DB_POOL_MAX ? parseInt(process.env.DB_POOL_MAX, 10) : undefined;
+  const max = Math.max(
+    1,
+    overrides.max ?? envMax ?? defaultMaxForRole[role] ?? 1,
+  );
+
+  const envMin = process.env.DB_POOL_MIN ? parseInt(process.env.DB_POOL_MIN, 10) : 0;
+  const min = Math.max(0, overrides.min ?? envMin);
+
+  const idleTimeoutMillis =
+    overrides.idleTimeoutMillis ??
+    (process.env.DB_IDLE_TIMEOUT_MS ? parseInt(process.env.DB_IDLE_TIMEOUT_MS, 10) : 10_000);
+
+  const connectionTimeoutMillis =
+    overrides.connectionTimeoutMillis ??
+    (process.env.DB_CONNECTION_TIMEOUT_MS
+      ? parseInt(process.env.DB_CONNECTION_TIMEOUT_MS, 10)
+      : 20_000);
+
+  const applicationName =
+    overrides.applicationName ||
+    process.env.DB_APPLICATION_NAME ||
+    `tekisho-${role}`;
+
   return {
-    connectionString,
-    ssl: sslFor(connectionString),
+    connectionString: connStr,
+    ssl,
     max,
-    idleTimeoutMillis: 10_000,
-    connectionTimeoutMillis: 20_000,
+    min,
+    idleTimeoutMillis,
+    connectionTimeoutMillis,
+    keepAlive: true,
+    keepAliveInitialDelayMillis: 10_000,
+    application_name: applicationName,
+    ...(overrides.searchPath ? { searchPath: overrides.searchPath } : {}),
+    ...(overrides.maxUses ? { maxUses: overrides.maxUses } : {}),
   };
 }
+
+/** Shared local-dev pool defaults — delegates to canonicalPoolOpts. */
+export function devPoolOpts(connectionString: string, max = 1) {
+  return canonicalPoolOpts(connectionString, "script", { max });
+}
+

@@ -1,5 +1,5 @@
-import { db } from '../db';
-import { emailMessages, emailClassifications, emailThreads, followups } from '../db/schema';
+import { query, normalizeThread, normalizeMessage } from '../db';
+import type { EmailThread, EmailMessage } from '../db/schema';
 import { classify } from '../classification/classify';
 import { findCandidateForEmail } from '../matching/candidateMatcher';
 import { generateSuggestedReply } from '../drafting/replyDrafter';
@@ -19,13 +19,12 @@ import { relayThreadCorrelationId } from '../platform/relayIds';
 import { extractEmail, resolveThreadIdForEmail, subjectKey } from '../inbox/threadResolver';
 import { tryDirectVendorJdIntake } from '../platform/jdIntake';
 import { buildConversationSummary } from '../platform/conversationGuard';
-import { eq, desc } from 'drizzle-orm';
 
 async function findOpenConsentThread(opts: {
   fromEmail: string;
   candId: string | null;
   subject: string;
-  existing?: typeof emailThreads.$inferSelect | null;
+  existing?: EmailThread | null;
 }) {
   const existingCtx = (opts.existing?.workflowContext as Record<string, unknown>) || {};
   if (existingCtx.kind === 'candidate_consent' && opts.existing?.correlationId) {
@@ -37,12 +36,10 @@ async function findOpenConsentThread(opts: {
   const from = String(opts.fromEmail || '').trim().toLowerCase();
   const subj = subjectKey(opts.subject || '');
 
-  const open = await db
-    .select()
-    .from(emailThreads)
-    .where(eq(emailThreads.status, 'Awaiting Consent'))
-    .orderBy(desc(emailThreads.latestDate))
-    .limit(200);
+  const { rows } = await query(
+    `SELECT * FROM relay.email_threads WHERE status = 'Awaiting Consent' ORDER BY latest_date DESC LIMIT 200`
+  );
+  const open = rows.map(normalizeThread).filter(Boolean) as EmailThread[];
 
   const consents = open.filter((t) => {
     const ctx = (t.workflowContext as Record<string, unknown>) || {};
@@ -89,28 +86,29 @@ export async function processEmail(emailData: any): Promise<void> {
   const isSent = classification.direction === 'sent' || emailData.direction === 'sent';
   const isInbound = emailData.direction !== 'sent' && classification.direction !== 'sent';
 
-  let [existingThread] = await db
-    .select()
-    .from(emailThreads)
-    .where(eq(emailThreads.threadId, resolvedThreadId))
-    .limit(1);
+  let existingThread: EmailThread | null = null;
+  const { rows: existRows } = await query(
+    'SELECT * FROM relay.email_threads WHERE thread_id = $1 LIMIT 1',
+    [resolvedThreadId]
+  );
+  existingThread = (normalizeThread(existRows[0]) as EmailThread) || null;
 
   // If not found by direct threadId and message is inbound, correlate via headers / subject / job / sender
   if (!existingThread && isInbound) {
     // Strategy 1: Correlate via In-Reply-To / References against existing email_messages
     const refIds = [emailData.inReplyTo, emailData.references].filter(Boolean);
     for (const refId of refIds) {
-      const [parentMsg] = await db
-        .select({ threadId: emailMessages.threadId })
-        .from(emailMessages)
-        .where(eq(emailMessages.providerMessageId, refId))
-        .limit(1);
-      if (parentMsg?.threadId) {
-        const [t] = await db
-          .select()
-          .from(emailThreads)
-          .where(eq(emailThreads.threadId, parentMsg.threadId))
-          .limit(1);
+      const { rows: parentRows } = await query(
+        'SELECT thread_id FROM relay.email_messages WHERE provider_message_id = $1 LIMIT 1',
+        [refId]
+      );
+      const parentThreadId = parentRows[0]?.thread_id;
+      if (parentThreadId) {
+        const { rows: tRows } = await query(
+          'SELECT * FROM relay.email_threads WHERE thread_id = $1 LIMIT 1',
+          [parentThreadId]
+        );
+        const t = (normalizeThread(tRows[0]) as EmailThread) || null;
         if (t) {
           existingThread = t;
           break;
@@ -125,12 +123,11 @@ export async function processEmail(emailData: any): Promise<void> {
       const jobMatch = subjectText.match(/([0-9a-fA-F]{8})/);
       const jobPrefix = jobMatch ? jobMatch[1].toLowerCase() : null;
 
-      const candidateThreads = await db
-        .select()
-        .from(emailThreads)
-        .where(eq(emailThreads.latestSenderEmail, from))
-        .orderBy(desc(emailThreads.latestDate))
-        .limit(20);
+      const { rows: candRows } = await query(
+        'SELECT * FROM relay.email_threads WHERE latest_sender_email = $1 ORDER BY latest_date DESC LIMIT 20',
+        [from]
+      );
+      const candidateThreads = candRows.map(normalizeThread).filter(Boolean) as EmailThread[];
 
       if (jobPrefix) {
         existingThread =
@@ -143,7 +140,7 @@ export async function processEmail(emailData: any): Promise<void> {
               jId.startsWith(jobPrefix) ||
               subId.startsWith(jobPrefix) ||
               maskedId.includes(jobPrefix) ||
-              t.subject.toLowerCase().includes(jobPrefix)
+              (t.subject || '').toLowerCase().includes(jobPrefix)
             );
           }) || null;
       }
@@ -182,34 +179,37 @@ export async function processEmail(emailData: any): Promise<void> {
   const displayName = isSent ? (emailData.toName || emailData.toEmail || 'Recipient') : emailData.fromName;
   const displayEmail = isSent ? emailData.toEmail : emailData.fromEmail;
 
-  await db.insert(emailThreads).values({
-    threadId,
-    subject: cleanEmailSubject(emailData.subject || ''),
-    latestSender: displayName,
-    latestSenderEmail: displayEmail,
-    latestDate: new Date(emailData.date || Date.now()),
-    replyIntent: replyIntentToStore,
-    requiresFollowup: requiresFollowupToStore,
-    status: statusToStore,
-    priority: priorityToStore,
-    candidateId: candId ?? existingThread?.candidateId ?? null,
-    vendorId: vendorId ?? existingThread?.vendorId ?? null,
-    correlationId: orchCorrelationId,
-  }).onConflictDoUpdate({
-    target: emailThreads.threadId,
-    set: {
-      latestSender: displayName,
-      latestSenderEmail: displayEmail,
-      latestDate: new Date(emailData.date || Date.now()),
-      replyIntent: replyIntentToStore,
-      requiresFollowup: requiresFollowupToStore,
-      status: statusToStore,
-      priority: priorityToStore,
-      candidateId: candId ?? existingThread?.candidateId ?? undefined,
-      vendorId: vendorId ?? existingThread?.vendorId ?? undefined,
-      correlationId: orchCorrelationId,
-    },
-  });
+  await query(
+    `INSERT INTO relay.email_threads (
+      thread_id, subject, latest_sender, latest_sender_email, latest_date,
+      reply_intent, requires_followup, status, priority, candidate_id, vendor_id, correlation_id
+    ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+    ON CONFLICT (thread_id) DO UPDATE SET
+      latest_sender = EXCLUDED.latest_sender,
+      latest_sender_email = EXCLUDED.latest_sender_email,
+      latest_date = EXCLUDED.latest_date,
+      reply_intent = EXCLUDED.reply_intent,
+      requires_followup = EXCLUDED.requires_followup,
+      status = EXCLUDED.status,
+      priority = EXCLUDED.priority,
+      candidate_id = COALESCE(EXCLUDED.candidate_id, relay.email_threads.candidate_id),
+      vendor_id = COALESCE(EXCLUDED.vendor_id, relay.email_threads.vendor_id),
+      correlation_id = EXCLUDED.correlation_id`,
+    [
+      threadId,
+      cleanEmailSubject(emailData.subject || ''),
+      displayName,
+      displayEmail,
+      new Date(emailData.date || Date.now()),
+      replyIntentToStore,
+      requiresFollowupToStore,
+      statusToStore,
+      priorityToStore,
+      candId ?? existingThread?.candidateId ?? null,
+      vendorId ?? existingThread?.vendorId ?? null,
+      orchCorrelationId,
+    ]
+  );
 
   // 4. Upsert Message — store full body for sent mail (no quote stripping)
   const messageId = emailData.id || uuidv4();
@@ -219,46 +219,56 @@ export async function processEmail(emailData: any): Promise<void> {
         classification.latestBody || emailData.fullBodyText || htmlToPlainText(emailData.htmlBody || ''),
       );
   const rawStore = emailData.htmlBody || emailData.fullBodyText || '';
-  await db.insert(emailMessages).values({
-    id: messageId,
-    threadId,
-    fromEmail: emailData.fromEmail,
-    fromName: emailData.fromName,
-    toEmail: emailData.toEmail,
-    subject: emailData.subject,
-    rawBody: rawStore,
-    cleanedBody: plainBody,
-    htmlBody: emailData.htmlBody || null,
-    attachments: emailData.attachments || [],
-    direction: emailData.direction,
-    date: new Date(emailData.date || Date.now()),
-    providerMessageId: emailData.providerMessageId,
-    isBounce: classification.mainBucket === 'Bounces'
-  }).onConflictDoUpdate({
-    target: emailMessages.id,
-    set: {
+  await query(
+    `INSERT INTO relay.email_messages (
+      id, thread_id, from_email, from_name, to_email, subject,
+      raw_body, cleaned_body, html_body, attachments, direction, date, provider_message_id, is_bounce
+    ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
+    ON CONFLICT (id) DO UPDATE SET
+      thread_id = EXCLUDED.thread_id,
+      raw_body = EXCLUDED.raw_body,
+      cleaned_body = EXCLUDED.cleaned_body,
+      html_body = EXCLUDED.html_body,
+      attachments = EXCLUDED.attachments`,
+    [
+      messageId,
       threadId,
-      rawBody: rawStore,
-      cleanedBody: plainBody,
-      htmlBody: emailData.htmlBody || null,
-      attachments: emailData.attachments || [],
-    },
-  });
+      emailData.fromEmail || null,
+      emailData.fromName || null,
+      emailData.toEmail || null,
+      emailData.subject || null,
+      rawStore,
+      plainBody,
+      emailData.htmlBody || null,
+      JSON.stringify(emailData.attachments || []),
+      emailData.direction || 'received',
+      new Date(emailData.date || Date.now()),
+      emailData.providerMessageId || null,
+      classification.mainBucket === 'Bounces',
+    ]
+  );
 
   // 5. Upsert Classification
-  await db.insert(emailClassifications).values({
-    messageId,
-    threadId,
-    mainBucket: classification.mainBucket,
-    replyIntent: classification.replyIntent,
-    senderType: classification.senderType,
-    priority: classification.priority,
-    requiresFollowup: classification.requiresFollowup,
-    candidateId: candId,
-    vendorId: vendorId,
-    classificationReason: classification.classificationReason,
-    confidenceSource: classification.confidenceSource === 'llm' ? 'llm' : 'rule'
-  } as any).onConflictDoNothing();
+  await query(
+    `INSERT INTO relay.email_classifications (
+      message_id, thread_id, main_bucket, reply_intent, sender_type,
+      priority, requires_followup, candidate_id, vendor_id, classification_reason, confidence_source
+    ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+    ON CONFLICT (message_id) DO NOTHING`,
+    [
+      messageId,
+      threadId,
+      classification.mainBucket || null,
+      classification.replyIntent || null,
+      classification.senderType || null,
+      classification.priority || null,
+      Boolean(classification.requiresFollowup),
+      candId || null,
+      vendorId || null,
+      classification.classificationReason || null,
+      classification.confidenceSource === 'llm' ? 'llm' : 'rule',
+    ]
+  );
 
   // 6. Follow-up Tracking — never auto-chase portal/marketing mail
   const isPortalIntent =
@@ -269,20 +279,27 @@ export async function processEmail(emailData: any): Promise<void> {
     const dueDate = calculateDueDate(String(classification.replyIntent || ''));
     const draft = await generateSuggestedReply(String(classification.replyIntent || ''), candidate);
 
-    await db.insert(followups).values({
-      id: uuidv4(),
-      threadId,
-      messageId,
-      candidateId: candId,
-      vendorId: vendorId,
-      mainCategory: classification.mainBucket,
-      replyType: classification.replyIntent,
-      priority: classification.priority,
-      status: 'Open',
-      dueDate: dueDate,
-      suggestedReply: draft.body,
-      followupReason: classification.classificationReason
-    } as any).onConflictDoNothing();
+    await query(
+      `INSERT INTO relay.followups (
+        id, thread_id, message_id, candidate_id, vendor_id,
+        main_category, reply_type, priority, status, due_date, suggested_reply, followup_reason
+      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+      ON CONFLICT (id) DO NOTHING`,
+      [
+        uuidv4(),
+        threadId,
+        messageId,
+        candId,
+        vendorId,
+        classification.mainBucket || null,
+        classification.replyIntent || null,
+        classification.priority || null,
+        'Open',
+        dueDate,
+        draft.body,
+        classification.classificationReason || null,
+      ]
+    );
   }
 
   const replyIntent = replyIntentToStore;
@@ -345,23 +362,28 @@ export async function processEmail(emailData: any): Promise<void> {
       console.log(`[RELAY] Inbound email matched consultant consent thread: ${consentThread.threadId} (sender: ${emailData.fromEmail}, decision: ${decision})`);
       if (decision !== 'unknown' && resolvedCandidateId) {
         const cCtx = (consentThread.workflowContext as Record<string, unknown>) || {};
-        await db
-          .update(emailThreads)
-          .set({
-            status: decision === 'approved' ? 'Consent Received' : 'Consent Declined',
-            replyIntent: 'Candidate Response',
-            workflowContext: {
-              ...cCtx,
-              consent_responded_at: new Date().toISOString(),
-              consent_decision: decision,
-            },
-          })
-          .where(eq(emailThreads.threadId, consentThread.threadId));
+        const nextCtx = {
+          ...cCtx,
+          consent_responded_at: new Date().toISOString(),
+          consent_decision: decision,
+        };
+        await query(
+          `UPDATE relay.email_threads
+              SET status = $1, reply_intent = 'Candidate Response', workflow_context = $2
+            WHERE thread_id = $3`,
+          [
+            decision === 'approved' ? 'Consent Received' : 'Consent Declined',
+            JSON.stringify(nextCtx),
+            consentThread.threadId,
+          ]
+        );
 
-        await db
-          .update(followups)
-          .set({ status: 'Closed', followupReason: `Candidate replied: ${decision}` })
-          .where(eq(followups.threadId, consentThread.threadId));
+        await query(
+          `UPDATE relay.followups
+              SET status = 'Closed', followup_reason = $1
+            WHERE thread_id = $2`,
+          [`Candidate replied: ${decision}`, consentThread.threadId]
+        );
 
         await emitConsentDecided({
           threadId: consentThread.threadId,
@@ -391,16 +413,16 @@ export async function processEmail(emailData: any): Promise<void> {
 
   // --- Vendor submission reply detection & forwarding to PRISM ---
   if (isInbound && emailData.fromEmail) {
-    let vendorThread = null as typeof emailThreads.$inferSelect | null;
+    let vendorThread: EmailThread | null = null;
 
     if (existingThread?.workflowContext && (existingThread.workflowContext as any).kind === 'vendor_submission') {
       vendorThread = existingThread;
     } else {
-      const [byThread] = await db
-        .select()
-        .from(emailThreads)
-        .where(eq(emailThreads.threadId, threadId))
-        .limit(1);
+      const { rows: byRows } = await query(
+        'SELECT * FROM relay.email_threads WHERE thread_id = $1 LIMIT 1',
+        [threadId]
+      );
+      const byThread = (normalizeThread(byRows[0]) as EmailThread) || null;
       if (byThread?.workflowContext && (byThread.workflowContext as any).kind === 'vendor_submission') {
         vendorThread = byThread;
       }
@@ -428,10 +450,11 @@ export async function processEmail(emailData: any): Promise<void> {
 
   // --- Autonomous recruiter replies (JD ack, interview, candidate responses) ---
   if (isInbound && requiresFollowupToStore && !isPortalIntent) {
-    const priorMsgs = await db
-      .select()
-      .from(emailMessages)
-      .where(eq(emailMessages.threadId, threadId));
+    const { rows: priorRows } = await query(
+      'SELECT * FROM relay.email_messages WHERE thread_id = $1',
+      [threadId]
+    );
+    const priorMsgs = priorRows.map(normalizeMessage).filter((m): m is EmailMessage => Boolean(m));
     const sortedMsgs = priorMsgs.sort((a, b) => (a.date?.getTime() || 0) - (b.date?.getTime() || 0));
     const threadHistory = buildConversationSummary(sortedMsgs, 10);
     const workflowContext = (existingThread?.workflowContext || {}) as Record<string, unknown>;

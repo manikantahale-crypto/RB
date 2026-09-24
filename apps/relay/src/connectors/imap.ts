@@ -1,10 +1,8 @@
 import { connect, ImapSimple } from 'imap-simple';
 import { simpleParser } from 'mailparser';
-import { inArray } from 'drizzle-orm';
 import { IEmailConnector, EmailData } from './connector.interface';
 import { htmlToPlainText } from '../utils/htmlText';
-import { db } from '../db';
-import { emailMessages } from '../db/schema';
+import { query } from '../db';
 
 function sleep(ms: number) {
   return new Promise((r) => setTimeout(r, ms));
@@ -160,11 +158,11 @@ if (!uids.length) return [];
 const messageIds = uids.map((uid) => `${boxName}:${uid}`);
 let newUids = uids;
 try {
-  const existing = await db
-    .select({ id: emailMessages.id })
-    .from(emailMessages)
-    .where(inArray(emailMessages.id, messageIds));
-  const have = new Set(existing.map((r) => r.id));
+  const { rows: existing } = await query(
+    'SELECT id FROM relay.email_messages WHERE id = ANY($1)',
+    [messageIds]
+  );
+  const have = new Set(existing.map((r: { id: string }) => r.id));
   newUids = uids.filter((uid) => !have.has(`${boxName}:${uid}`));
 } catch (err) {
   console.warn(

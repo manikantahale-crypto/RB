@@ -1,83 +1,137 @@
-import { pgSchema, text, boolean, timestamp, varchar, uuid, jsonb } from 'drizzle-orm/pg-core';
+/**
+ * Relay Database Types and Schemas.
+ * Pure TypeScript interfaces matching the relay PostgreSQL schema.
+ * Zero ORM dependencies.
+ */
 
-const relay = pgSchema('relay');
+export interface EmailThread {
+  threadId: string;
+  thread_id?: string;
+  subject: string | null;
+  latestSender: string | null;
+  latest_sender?: string | null;
+  latestSenderEmail: string | null;
+  latest_sender_email?: string | null;
+  latestDate: Date | null;
+  latest_date?: Date | null;
+  replyIntent: string | null;
+  reply_intent?: string | null;
+  requiresFollowup: boolean;
+  requires_followup?: boolean;
+  status: string | null;
+  priority: string | null;
+  candidateId: string | null;
+  candidate_id?: string | null;
+  vendorId: string | null;
+  vendor_id?: string | null;
+  correlationId: string | null;
+  correlation_id?: string | null;
+  workflowContext: Record<string, unknown>;
+  workflow_context?: Record<string, unknown>;
+  draftBody?: string | null;
+  draft_body?: string | null;
+  draftSubject?: string | null;
+  draft_subject?: string | null;
+  draftSource?: string | null;
+  draft_source?: string | null;
+  draftMessageId?: string | null;
+  draft_message_id?: string | null;
+  draftAttachments?: Array<{ filename: string; contentType: string; contentBase64: string; size?: number }>;
+  draft_attachments?: Array<{ filename: string; contentType: string; contentBase64: string; size?: number }>;
+}
 
-export const emailThreads = relay.table('email_threads', {
-  threadId: varchar('thread_id', { length: 255 }).primaryKey(),
-  subject: text('subject'),
-  latestSender: text('latest_sender'),
-  latestSenderEmail: varchar('latest_sender_email', { length: 255 }),
-  latestDate: timestamp('latest_date', { withTimezone: true }),
-  replyIntent: varchar('reply_intent', { length: 100 }),
-  requiresFollowup: boolean('requires_followup').default(false),
-  status: varchar('status', { length: 50 }),
-  priority: varchar('priority', { length: 50 }),
-  candidateId: uuid('candidate_id'),
-  vendorId: uuid('vendor_id'),
-  correlationId: varchar('correlation_id', { length: 255 }),
-  workflowContext: jsonb('workflow_context').$type<Record<string, unknown>>().default({}),
-  draftBody: text('draft_body'),
-  draftSubject: text('draft_subject'),
-  draftSource: varchar('draft_source', { length: 50 }),
-  draftMessageId: varchar('draft_message_id', { length: 255 }),
-  draftAttachments: jsonb('draft_attachments')
-    .$type<Array<{ filename: string; contentType: string; contentBase64: string; size?: number }>>()
-    .default([]),
-});
+export interface EmailMessage {
+  id: string;
+  threadId: string;
+  thread_id?: string;
+  fromEmail: string | null;
+  from_email?: string | null;
+  fromName: string | null;
+  from_name?: string | null;
+  toEmail: string | null;
+  to_email?: string | null;
+  subject: string | null;
+  rawBody: string | null;
+  raw_body?: string | null;
+  cleanedBody: string | null;
+  cleaned_body?: string | null;
+  htmlBody: string | null;
+  html_body?: string | null;
+  attachments: Array<{ filename: string; contentType: string; size: number }>;
+  direction: string | null;
+  date: Date | null;
+  providerMessageId: string | null;
+  provider_message_id?: string | null;
+  isBounce: boolean;
+  is_bounce?: boolean;
+}
 
-export const emailMessages = relay.table('email_messages', {
-  id: varchar('id', { length: 255 }).primaryKey(),
-  threadId: varchar('thread_id', { length: 255 }).references(() => emailThreads.threadId),
-  fromEmail: varchar('from_email', { length: 255 }),
-  fromName: text('from_name'),
-  toEmail: varchar('to_email', { length: 255 }),
-  subject: text('subject'),
-  rawBody: text('raw_body'),
-  cleanedBody: text('cleaned_body'),
-  htmlBody: text('html_body'),
-  attachments: jsonb('attachments').$type<Array<{ filename: string; contentType: string; size: number }>>().default([]),
-  direction: varchar('direction', { length: 50 }),
-  date: timestamp('date', { withTimezone: true }),
-  providerMessageId: varchar('provider_message_id', { length: 255 }),
-  isBounce: boolean('is_bounce').default(false),
-});
+export interface EmailClassification {
+  messageId: string;
+  message_id?: string;
+  threadId: string;
+  thread_id?: string;
+  mainBucket: string | null;
+  main_bucket?: string | null;
+  replyIntent: string | null;
+  reply_intent?: string | null;
+  senderType: string | null;
+  sender_type?: string | null;
+  priority: string | null;
+  requiresFollowup: boolean;
+  requires_followup?: boolean;
+  candidateId: string | null;
+  candidate_id?: string | null;
+  vendorId: string | null;
+  vendor_id?: string | null;
+  classificationReason: string | null;
+  classification_reason?: string | null;
+  confidenceSource: string | null;
+  confidence_source?: string | null;
+}
 
-export const emailClassifications = relay.table('email_classifications', {
-  messageId: varchar('message_id', { length: 255 }).primaryKey().references(() => emailMessages.id),
-  threadId: varchar('thread_id', { length: 255 }).references(() => emailThreads.threadId),
-  mainBucket: varchar('main_bucket', { length: 100 }),
-  replyIntent: varchar('reply_intent', { length: 100 }),
-  senderType: varchar('sender_type', { length: 50 }),
-  priority: varchar('priority', { length: 50 }),
-  requiresFollowup: boolean('requires_followup').default(false),
-  candidateId: uuid('candidate_id'),
-  vendorId: uuid('vendor_id'),
-  classificationReason: text('classification_reason'),
-  confidenceSource: varchar('confidence_source', { length: 50 }),
-});
+export interface Followup {
+  id: string;
+  threadId: string;
+  thread_id?: string;
+  messageId: string | null;
+  message_id?: string | null;
+  candidateId: string | null;
+  candidate_id?: string | null;
+  vendorId: string | null;
+  vendor_id?: string | null;
+  mainCategory: string | null;
+  main_category?: string | null;
+  replyType: string | null;
+  reply_type?: string | null;
+  priority: string | null;
+  status: string | null;
+  dueDate: Date | null;
+  due_date?: Date | null;
+  suggestedReply: string | null;
+  suggested_reply?: string | null;
+  followupReason: string | null;
+  followup_reason?: string | null;
+}
 
-export const followups = relay.table('followups', {
-  id: varchar('id', { length: 255 }).primaryKey(),
-  threadId: varchar('thread_id', { length: 255 }).references(() => emailThreads.threadId),
-  messageId: varchar('message_id', { length: 255 }).references(() => emailMessages.id),
-  candidateId: uuid('candidate_id'),
-  vendorId: uuid('vendor_id'),
-  mainCategory: varchar('main_category', { length: 100 }),
-  replyType: varchar('reply_type', { length: 100 }),
-  priority: varchar('priority', { length: 50 }),
-  status: varchar('status', { length: 50 }),
-  dueDate: timestamp('due_date', { withTimezone: true }),
-  suggestedReply: text('suggested_reply'),
-  followupReason: text('followup_reason'),
-});
+export interface MlShadowLog {
+  id: string;
+  messageId: string;
+  message_id?: string;
+  ruleIntent: string | null;
+  rule_intent?: string | null;
+  mlIntent: string | null;
+  ml_intent?: string | null;
+  mlConfidence: string | null;
+  ml_confidence?: string | null;
+  llmIntent: string | null;
+  llm_intent?: string | null;
+  timestamp: Date | null;
+}
 
-/** Shadow-mode classifier comparison (rule vs ML vs LLM). */
-export const mlShadowLogs = relay.table('ml_shadow_logs', {
-  id: varchar('id', { length: 255 }).primaryKey(),
-  messageId: varchar('message_id', { length: 255 }).references(() => emailMessages.id),
-  ruleIntent: varchar('rule_intent', { length: 100 }),
-  mlIntent: varchar('ml_intent', { length: 100 }),
-  mlConfidence: varchar('ml_confidence', { length: 50 }),
-  llmIntent: varchar('llm_intent', { length: 100 }),
-  timestamp: timestamp('timestamp', { withTimezone: true }),
-});
+// Compatibility shims for legacy type inferences like `typeof emailThreads.$inferSelect`
+export const emailThreads = { $inferSelect: {} as EmailThread };
+export const emailMessages = { $inferSelect: {} as EmailMessage };
+export const followups = { $inferSelect: {} as Followup };
+export const emailClassifications = { $inferSelect: {} as EmailClassification };
+export const mlShadowLogs = { $inferSelect: {} as MlShadowLog };

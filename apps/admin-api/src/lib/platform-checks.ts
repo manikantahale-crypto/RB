@@ -62,7 +62,7 @@ export type RegistryRow = {
   module: string;
   shareable: boolean;
   /** Declared emits. Null means nobody has said, which is not the same as none. */
-  emits: readonly string[] | null;
+  emits: readonly (string | { fromConfig: string })[] | null;
 };
 
 export type PlatformFacts = {
@@ -344,7 +344,25 @@ export function checkEmittedEventsAnswered(facts: PlatformFacts): CheckFinding {
   const orphans: string[] = [];
   for (const r of declared) {
     for (const ev of r.emits!) {
-      if (!bound.has(ev)) orphans.push(`${r.key} publishes ${ev} — nothing answers it`);
+      if (typeof ev === "string") {
+        if (!bound.has(ev)) orphans.push(`${r.key} publishes ${ev} — nothing answers it`);
+      } else if (typeof ev === "object" && ev !== null && "fromConfig" in ev) {
+        const configKey = (ev as { fromConfig: string }).fromConfig;
+        const knownDefaults: Record<string, string> = {
+          onActionable: "syntra.jd.normalized",
+          onRejected: "astra.requirement.rejected",
+        };
+        const resolved = knownDefaults[configKey];
+        const eventLabel = resolved
+          ? `${resolved} (fromConfig: "${configKey}")`
+          : `{ fromConfig: "${configKey}" }`;
+        const targetEvent = resolved ?? null;
+        if (!targetEvent || !bound.has(targetEvent)) {
+          orphans.push(`${r.key} publishes ${eventLabel} — nothing answers it`);
+        }
+      } else {
+        orphans.push(`${r.key} publishes ${String(ev)} — nothing answers it`);
+      }
     }
   }
 

@@ -16,7 +16,7 @@ export const postRelay = modulePoster(
       process.env.RELAY_INTERNAL_URL ||
       process.env.RELAY_SERVICE_URL ||
       process.env.RELAY_API_URL ||
-      'http://127.0.0.1:3005'
+      'http://127.0.0.1:4000'
     ).replace(/\/$/, ''),
   { stubEnv: 'ORCH_STUB_RELAY' },
 );

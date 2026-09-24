@@ -182,14 +182,18 @@ export const AIWorkspace: React.FC<AIWorkspaceProps> = ({
   );
 
   // Keep selectedJob in sync with job updates (e.g., threshold changes)
+  const prevJobIdRef = useRef<string | undefined>(selectedJob?.id);
   useEffect(() => {
     if (selectedJob?.id) {
       const updatedJob = jobs.find((j) => j.id === selectedJob.id);
       if (updatedJob) {
         // Update selectedJob if any fields changed (including scoreThreshold)
         setSelectedJob(updatedJob);
-        // Sync local match threshold to job's scoreThreshold or default 50
-        setLocalMatchThreshold(updatedJob.scoreThreshold ?? 50);
+        // Sync local match threshold only when a different job is selected
+        if (selectedJob.id !== prevJobIdRef.current) {
+          prevJobIdRef.current = selectedJob.id;
+          setLocalMatchThreshold(updatedJob.scoreThreshold ?? 50);
+        }
       }
     }
   }, [jobs, selectedJob?.id]);
@@ -356,11 +360,8 @@ export const AIWorkspace: React.FC<AIWorkspaceProps> = ({
       setLoadingMatches(true);
       setMatchesError(null);
       try {
-        const minScore = Number.isFinite(Number(localMatchThreshold))
-          ? Number(localMatchThreshold)
-          : 0;
         const res = await apiFetch(
-          `/jobs/${selectedJob.id}/matches?status=completed&minScore=${encodeURIComponent(String(minScore))}`,
+          `/jobs/${selectedJob.id}/matches?status=completed&minScore=0`,
         );
         if (!res.ok) {
           let detail = `HTTP ${res.status}`;
@@ -406,7 +407,7 @@ export const AIWorkspace: React.FC<AIWorkspaceProps> = ({
     return () => {
       isMounted = false;
     };
-  }, [selectedJob, matchMode, localMatchThreshold]);
+  }, [selectedJob?.id, matchMode]);
 
   // Fetch job matches for selectedResumeCandidate
   useEffect(() => {
@@ -425,9 +426,8 @@ export const AIWorkspace: React.FC<AIWorkspaceProps> = ({
       setLoadingMatches(true);
       setMatchesError(null);
       try {
-        const minScore = localMatchThreshold ?? 50;
         const res = await apiFetch(
-          `/candidates/${selectedResumeCandidate.id}/matches?status=completed&minScore=${encodeURIComponent(String(minScore))}`,
+          `/candidates/${selectedResumeCandidate.id}/matches?status=completed&minScore=0`,
         );
         if (!res.ok) {
           throw new Error("Failed to fetch matching jobs for this candidate.");
@@ -454,7 +454,7 @@ export const AIWorkspace: React.FC<AIWorkspaceProps> = ({
     return () => {
       isMounted = false;
     };
-  }, [selectedResumeCandidate, matchMode, localMatchThreshold]);
+  }, [selectedResumeCandidate?.id, matchMode]);
 
   // Split Panel Divider Width state (default 50% left, 50% right)
   const [leftWidthPercent, setLeftWidthPercent] = useState<number>(50);
@@ -641,6 +641,10 @@ export const AIWorkspace: React.FC<AIWorkspaceProps> = ({
     const status = (m.matchStatus || "").toLowerCase();
     const isCompleted = status === "completed";
     const hasScore = isCompleted && m.score != null && !Number.isNaN(Number(m.score));
+    const rawScore = Number(m.score);
+    const normalizedScore = hasScore
+      ? (rawScore > 0 && rawScore < 1 ? Math.round(rawScore * 100) : Math.round(rawScore))
+      : null;
     return {
       id: m.jobId,
       title: cleanJobTitle(m.jobTitle || j?.title || "Untitled Job"),
@@ -651,9 +655,7 @@ export const AIWorkspace: React.FC<AIWorkspaceProps> = ({
       visa: j?.visa || "Any",
       skills: Array.isArray(m.strengths) ? m.strengths : [],
       matchCount: j?.matchCount || 0,
-      avgMatchScore: hasScore
-        ? Math.round(Number(m.score))
-        : null,
+      avgMatchScore: normalizedScore,
       isCompleted,
       hasValidScore: hasScore,
       responsibilities: j?.responsibilities || [],
@@ -774,7 +776,7 @@ export const AIWorkspace: React.FC<AIWorkspaceProps> = ({
             <div className="relative w-full">
               <input
                 type="text"
-                value={isJobDropdownOpen ? jobSearchQuery : selectedJob ? `${cleanJobTitle(selectedJob.title)} — ${selectedJob.company}` : ''}
+                value={isJobDropdownOpen ? jobSearchQuery : selectedJob ? `${cleanJobTitle(selectedJob.title)}${selectedJob.company ? ` — ${selectedJob.company}` : ''}` : ''}
                 onFocus={() => {
                   setIsJobDropdownOpen(true);
                   setJobSearchQuery('');
@@ -935,22 +937,20 @@ export const AIWorkspace: React.FC<AIWorkspaceProps> = ({
         </div>
 
         <div className="flex items-center gap-3">
-          {matchMode === 'job' && (
-            <div className="flex flex-col gap-1 w-32 shrink-0">
-              <div className="flex justify-between items-center px-1">
-                <span className="text-[10px] font-bold text-slate-400 uppercase">Threshold</span>
-                <span className="text-[10px] font-bold text-purple-400">{localMatchThreshold}%</span>
-              </div>
-              <input
-                type="range"
-                min="0"
-                max="100"
-                value={localMatchThreshold}
-                onChange={(e) => setLocalMatchThreshold(Number(e.target.value))}
-                className="w-full accent-purple-500 cursor-pointer h-1.5 bg-purple-950 rounded-full appearance-none outline-none"
-              />
+          <div className="flex flex-col gap-1 w-32 shrink-0">
+            <div className="flex justify-between items-center px-1">
+              <span className="text-[10px] font-bold text-slate-400 uppercase">Threshold</span>
+              <span className="text-[10px] font-bold text-purple-400">{localMatchThreshold}%</span>
             </div>
-          )}
+            <input
+              type="range"
+              min="0"
+              max="100"
+              value={localMatchThreshold}
+              onChange={(e) => setLocalMatchThreshold(Number(e.target.value))}
+              className="w-full accent-purple-500 cursor-pointer h-1.5 bg-purple-950 rounded-full appearance-none outline-none"
+            />
+          </div>
         </div>
       </div>
 

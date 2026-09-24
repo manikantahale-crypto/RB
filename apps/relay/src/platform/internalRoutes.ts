@@ -1,7 +1,5 @@
 import { FastifyInstance } from 'fastify';
-import { db, sql } from '../db';
-import { emailThreads, emailMessages, followups } from '../db/schema';
-import { eq, desc, and, sql as dsql } from 'drizzle-orm';
+import { query, sql, normalizeThread, normalizeMessage } from '../db';
 import { v4 as uuidv4 } from 'uuid';
 import { EmailSenderFactory } from '../connectors/sender';
 import { draftReplyFromContext } from '../drafting/replyDrafter';
@@ -40,18 +38,14 @@ async function candidateBelongsToJobOwner(candidateId: string, jobId: string): P
 }
 
 async function hasConsentThreadForJob(candidateId: string, jobId: string): Promise<boolean> {
-  const rows = await db
-    .select({ threadId: emailThreads.threadId })
-    .from(emailThreads)
-    .where(
-      and(
-        eq(emailThreads.candidateId, candidateId as any),
-        // drizzle's sql, not postgres.js's: this is inside a drizzle where()
-        dsql`${emailThreads.workflowContext}->>'kind' = 'candidate_consent'`,
-        dsql`${emailThreads.workflowContext}->>'jobId' = ${jobId}`,
-      ),
-    )
-    .limit(1);
+  const { rows } = await query(
+    `SELECT thread_id FROM relay.email_threads
+      WHERE candidate_id = $1
+        AND workflow_context->>'kind' = 'candidate_consent'
+        AND workflow_context->>'jobId' = $2
+      LIMIT 1`,
+    [candidateId, jobId]
+  );
   return rows.length > 0;
 }
 
@@ -101,28 +95,29 @@ export function registerInternalRoutes(app: FastifyInstance) {
       return reply.status(400).send({ error: 'relay_thread_id and jobId required' });
     }
 
-    const [thread] = await db.select().from(emailThreads).where(eq(emailThreads.threadId, threadId)).limit(1);
+    const { rows: threadRows } = await query('SELECT * FROM relay.email_threads WHERE thread_id = $1 LIMIT 1', [threadId]);
+    const thread = normalizeThread(threadRows[0]);
     if (!thread) {
       return reply.status(404).send({ error: 'thread not found', relay_thread_id: threadId });
     }
 
     const ctx = (thread.workflowContext as Record<string, unknown>) || {};
-    await db
-      .update(emailThreads)
-      .set({
-        workflowContext: {
-          ...ctx,
-          kind: 'vendor_jd_shortlist',
-          jobId,
-          shortlist_status: 'pending_approval',
-          match_job_id: body.match_job_id ?? ctx.match_job_id,
-          result_count: body.result_count ?? body.top_candidates?.length ?? 0,
-          top_candidates: body.top_candidates ?? [],
-          vendor_email: body.vendor_email ?? thread.latestSenderEmail,
-          updated_at: new Date().toISOString(),
-        },
-      })
-      .where(eq(emailThreads.threadId, threadId));
+    const nextCtx = {
+      ...ctx,
+      kind: 'vendor_jd_shortlist',
+      jobId,
+      shortlist_status: 'pending_approval',
+      match_job_id: body.match_job_id ?? ctx.match_job_id,
+      result_count: body.result_count ?? body.top_candidates?.length ?? 0,
+      top_candidates: body.top_candidates ?? [],
+      vendor_email: body.vendor_email ?? thread.latestSenderEmail,
+      updated_at: new Date().toISOString(),
+    };
+
+    await query(
+      'UPDATE relay.email_threads SET workflow_context = $1 WHERE thread_id = $2',
+      [JSON.stringify(nextCtx), threadId]
+    );
 
     return {
       status: 'pending_approval',
@@ -143,22 +138,23 @@ export function registerInternalRoutes(app: FastifyInstance) {
     const threadId = body.relay_thread_id;
     if (!threadId) return reply.status(400).send({ error: 'relay_thread_id required' });
 
-    const [thread] = await db.select().from(emailThreads).where(eq(emailThreads.threadId, threadId)).limit(1);
+    const { rows: threadRows } = await query('SELECT * FROM relay.email_threads WHERE thread_id = $1 LIMIT 1', [threadId]);
+    const thread = normalizeThread(threadRows[0]);
     if (!thread) return reply.status(404).send({ error: 'thread not found' });
 
     const ctx = (thread.workflowContext as Record<string, unknown>) || {};
-    await db
-      .update(emailThreads)
-      .set({
-        workflowContext: {
-          ...ctx,
-          shortlist_status: 'approved',
-          consent_sent_at: new Date().toISOString(),
-          consent: body.consent ?? ctx.consent,
-          top_candidates: body.top_candidates ?? ctx.top_candidates,
-        },
-      })
-      .where(eq(emailThreads.threadId, threadId));
+    const nextCtx = {
+      ...ctx,
+      shortlist_status: 'approved',
+      consent_sent_at: new Date().toISOString(),
+      consent: body.consent ?? ctx.consent,
+      top_candidates: body.top_candidates ?? ctx.top_candidates,
+    };
+
+    await query(
+      'UPDATE relay.email_threads SET workflow_context = $1 WHERE thread_id = $2',
+      [JSON.stringify(nextCtx), threadId]
+    );
 
     return { status: 'approved', relay_thread_id: threadId, jobId: body.jobId ?? ctx.jobId };
   });
@@ -187,11 +183,8 @@ export function registerInternalRoutes(app: FastifyInstance) {
     }
 
     if (body.vendor_thread_id && !force) {
-      const [vendorThread] = await db
-        .select()
-        .from(emailThreads)
-        .where(eq(emailThreads.threadId, body.vendor_thread_id))
-        .limit(1);
+      const { rows: vRows } = await query('SELECT * FROM relay.email_threads WHERE thread_id = $1 LIMIT 1', [body.vendor_thread_id]);
+      const vendorThread = normalizeThread(vRows[0]);
       const vCtx = (vendorThread?.workflowContext as Record<string, unknown>) || {};
       const priorIds = new Set(
         (
@@ -316,86 +309,98 @@ export function registerInternalRoutes(app: FastifyInstance) {
         submission_id: subId || undefined,
       });
 
-      await db.insert(emailThreads).values({
-        threadId,
-        subject,
-        latestSender: candidateName || email,
-        latestSenderEmail: email,
-        latestDate: new Date(),
-        replyIntent: CONSENT_INTENT,
-        requiresFollowup: true,
-        status: 'Awaiting Consent',
-        priority: 'High',
-        candidateId: candidateId as any,
-        correlationId,
-        workflowContext: {
-          kind: 'candidate_consent',
-          jobId,
-          submissionId: subId || null,
-          vendor_thread_id: body.vendor_thread_id,
-          vendor_email: body.vendor_email,
-          correlation_id: correlationId,
-          consent_sent_at: new Date().toISOString(),
-          reminder_count: 0,
-        },
-      });
+      await query(
+        `INSERT INTO relay.email_threads (
+          thread_id, subject, latest_sender, latest_sender_email, latest_date,
+          reply_intent, requires_followup, status, priority, candidate_id, correlation_id, workflow_context
+        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)`,
+        [
+          threadId,
+          subject,
+          candidateName || email,
+          email,
+          new Date(),
+          CONSENT_INTENT,
+          true,
+          'Awaiting Consent',
+          'High',
+          candidateId,
+          correlationId,
+          JSON.stringify({
+            kind: 'candidate_consent',
+            jobId,
+            submissionId: subId || null,
+            vendor_thread_id: body.vendor_thread_id,
+            vendor_email: body.vendor_email,
+            correlation_id: correlationId,
+            consent_sent_at: new Date().toISOString(),
+            reminder_count: 0,
+          }),
+        ]
+      );
 
-      await db.insert(emailMessages).values({
-        id: messageId,
-        threadId,
-        fromEmail: process.env.GMAIL_SENDER_EMAIL || process.env.SMTP_USERNAME || process.env.RELAY_SMTP_USER || 'relay@local',
-        fromName: process.env.RELAY_RECRUITER_NAME || 'Bench Sales',
-        toEmail: email,
-        subject,
-        rawBody: bodyText,
-        cleanedBody: bodyText,
-        direction: 'sent',
-        date: new Date(),
-      });
+      await query(
+        `INSERT INTO relay.email_messages (
+          id, thread_id, from_email, from_name, to_email, subject, raw_body, cleaned_body, direction, date
+        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`,
+        [
+          messageId,
+          threadId,
+          process.env.GMAIL_SENDER_EMAIL || process.env.SMTP_USERNAME || process.env.RELAY_SMTP_USER || 'relay@local',
+          process.env.RELAY_RECRUITER_NAME || 'Bench Sales',
+          email,
+          subject,
+          bodyText,
+          bodyText,
+          'sent',
+          new Date(),
+        ]
+      );
 
-      await db.insert(followups).values({
-        id: uuidv4(),
-        threadId,
-        messageId,
-        candidateId: candidateId as any,
-        replyType: CONSENT_INTENT,
-        priority: 'High',
-        status: 'Open',
-        dueDate: new Date(Date.now() + 48 * 60 * 60 * 1000),
-        suggestedReply: bodyText,
-        followupReason: `Consent request for job ${jobId}`,
-      });
+      await query(
+        `INSERT INTO relay.followups (
+          id, thread_id, message_id, candidate_id, reply_type, priority, status, due_date, suggested_reply, followup_reason
+        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`,
+        [
+          uuidv4(),
+          threadId,
+          messageId,
+          candidateId,
+          CONSENT_INTENT,
+          'High',
+          'Open',
+          new Date(Date.now() + 48 * 60 * 60 * 1000),
+          bodyText,
+          `Consent request for job ${jobId}`,
+        ]
+      );
     }
 
     if (sentCount > 0 && body.vendor_thread_id) {
-      const [vendorThread] = await db
-        .select()
-        .from(emailThreads)
-        .where(eq(emailThreads.threadId, body.vendor_thread_id))
-        .limit(1);
+      const { rows: vRows } = await query('SELECT * FROM relay.email_threads WHERE thread_id = $1 LIMIT 1', [body.vendor_thread_id]);
+      const vendorThread = normalizeThread(vRows[0]);
       if (vendorThread) {
         const vCtx = (vendorThread.workflowContext as Record<string, unknown>) || {};
         const prevCount = Number(vCtx.consent_sent_count ?? 0);
         const prevThreads =
           (vCtx.consent as { consent_threads?: typeof consentThreads })?.consent_threads || [];
-        await db
-          .update(emailThreads)
-          .set({
-            workflowContext: {
-              ...vCtx,
-              shortlist_status: 'consent_sent',
-              consent_sent_at: new Date().toISOString(),
-              consent_sent_count: prevCount + sentCount,
-              consent: {
-                status: 'sent',
-                sent_count: prevCount + sentCount,
-                consent_threads: [...prevThreads, ...consentThreads],
-                correlation_id: correlationId,
-                send_errors: sendErrors,
-              },
-            },
-          })
-          .where(eq(emailThreads.threadId, body.vendor_thread_id));
+        const nextCtx = {
+          ...vCtx,
+          shortlist_status: 'consent_sent',
+          consent_sent_at: new Date().toISOString(),
+          consent_sent_count: prevCount + sentCount,
+          consent: {
+            status: 'sent',
+            sent_count: prevCount + sentCount,
+            consent_threads: [...prevThreads, ...consentThreads],
+            correlation_id: correlationId,
+            send_errors: sendErrors,
+          },
+        };
+        await query(
+          'UPDATE relay.email_threads SET workflow_context = $1 WHERE thread_id = $2',
+          [JSON.stringify(nextCtx), body.vendor_thread_id]
+        );
       }
     }
 
@@ -417,7 +422,8 @@ export function registerInternalRoutes(app: FastifyInstance) {
     };
     if (!body.thread_id) return reply.status(400).send({ error: 'thread_id required' });
 
-    const [thread] = await db.select().from(emailThreads).where(eq(emailThreads.threadId, body.thread_id)).limit(1);
+    const { rows: threadRows } = await query('SELECT * FROM relay.email_threads WHERE thread_id = $1 LIMIT 1', [body.thread_id]);
+    const thread = normalizeThread(threadRows[0]);
     if (!thread?.latestSenderEmail) return reply.status(404).send({ error: 'thread not found' });
 
     const ctx = (thread.workflowContext as Record<string, unknown>) || {};
@@ -433,13 +439,11 @@ export function registerInternalRoutes(app: FastifyInstance) {
 
     const { subject, body: reminderBody } = buildConsentReminderEmail(candidateName, jobContext, reminderNum);
 
-    const lastMessages = await db
-      .select()
-      .from(emailMessages)
-      .where(eq(emailMessages.threadId, body.thread_id))
-      .orderBy(desc(emailMessages.date))
-      .limit(1);
-    const lastMessage = lastMessages[0];
+    const { rows: msgRows } = await query(
+      'SELECT * FROM relay.email_messages WHERE thread_id = $1 ORDER BY date DESC LIMIT 1',
+      [body.thread_id]
+    );
+    const lastMessage = normalizeMessage(msgRows[0]);
 
     const sender = EmailSenderFactory.getSender();
     const ok = await sender.sendEmail(
@@ -450,17 +454,16 @@ export function registerInternalRoutes(app: FastifyInstance) {
     );
 
     if (ok) {
-      await db
-        .update(emailThreads)
-        .set({
-          workflowContext: {
-            ...ctx,
-            reminder_count: reminderNum,
-            last_reminded_at: new Date().toISOString(),
-            last_reminder_number: reminderNum,
-          },
-        })
-        .where(eq(emailThreads.threadId, body.thread_id));
+      const nextCtx = {
+        ...ctx,
+        reminder_count: reminderNum,
+        last_reminded_at: new Date().toISOString(),
+        last_reminder_number: reminderNum,
+      };
+      await query(
+        'UPDATE relay.email_threads SET workflow_context = $1 WHERE thread_id = $2',
+        [JSON.stringify(nextCtx), body.thread_id]
+      );
     }
 
     return {
@@ -489,21 +492,17 @@ export function registerInternalRoutes(app: FastifyInstance) {
     let inReplyTo: string | undefined;
 
     if (body.vendor_thread_id) {
-      const [vendorThread] = await db
-        .select()
-        .from(emailThreads)
-        .where(eq(emailThreads.threadId, body.vendor_thread_id))
-        .limit(1);
+      const { rows: vRows } = await query('SELECT * FROM relay.email_threads WHERE thread_id = $1 LIMIT 1', [body.vendor_thread_id]);
+      const vendorThread = normalizeThread(vRows[0]);
       if (vendorThread) {
         toEmail = toEmail || vendorThread.latestSenderEmail || '';
         subject = `RE: ${vendorThread.subject || subject}`;
       }
-      const msgs = await db
-        .select()
-        .from(emailMessages)
-        .where(eq(emailMessages.threadId, body.vendor_thread_id))
-        .orderBy(desc(emailMessages.date))
-        .limit(1);
+      const { rows: msgRows } = await query(
+        'SELECT * FROM relay.email_messages WHERE thread_id = $1 ORDER BY date DESC LIMIT 1',
+        [body.vendor_thread_id]
+      );
+      const msgs = msgRows.map(normalizeMessage).filter(Boolean);
       inReplyTo = msgs[0]?.providerMessageId || undefined;
     }
 
@@ -526,42 +525,53 @@ export function registerInternalRoutes(app: FastifyInstance) {
     const threadId = uuidv4();
     const messageId = uuidv4();
 
-    await db.insert(emailThreads).values({
-      threadId,
-      subject: draft.subject,
-      latestSender: toEmail,
-      latestSenderEmail: toEmail,
-      latestDate: new Date(),
-      replyIntent: PROFILE_DRAFT_INTENT,
-      requiresFollowup: false,
-      status: 'Draft — Recruiter Review',
-      priority: 'High',
-      candidateId: body.candidate_id as any,
-      correlationId: body.correlation_id || null,
-      workflowContext: {
-        kind: 'profile_submission_draft',
-        draft_id: draftId,
-        jobId: body.jobId,
-        candidate_id: body.candidate_id,
-        vendor_thread_id: body.vendor_thread_id,
-        vendor_email: toEmail,
-        in_reply_to: inReplyTo,
-        status: 'pending_recruiter_review',
-      },
-    });
+    await query(
+      `INSERT INTO relay.email_threads (
+        thread_id, subject, latest_sender, latest_sender_email, latest_date,
+        reply_intent, requires_followup, status, priority, candidate_id, correlation_id, workflow_context
+      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)`,
+      [
+        threadId,
+        draft.subject,
+        toEmail,
+        toEmail,
+        new Date(),
+        PROFILE_DRAFT_INTENT,
+        false,
+        'Draft — Recruiter Review',
+        'High',
+        body.candidate_id,
+        body.correlation_id || null,
+        JSON.stringify({
+          kind: 'profile_submission_draft',
+          draft_id: draftId,
+          jobId: body.jobId,
+          candidate_id: body.candidate_id,
+          vendor_thread_id: body.vendor_thread_id,
+          vendor_email: toEmail,
+          in_reply_to: inReplyTo,
+          status: 'pending_recruiter_review',
+        }),
+      ]
+    );
 
-    await db.insert(emailMessages).values({
-      id: messageId,
-      threadId,
-      fromEmail: process.env.GMAIL_SENDER_EMAIL || process.env.EMAIL_FROM || 'relay@local',
-      fromName: process.env.RELAY_RECRUITER_NAME || 'Bench Sales',
-      toEmail,
-      subject: draft.subject,
-      rawBody: draft.body,
-      cleanedBody: draft.body,
-      direction: 'draft',
-      date: new Date(),
-    });
+    await query(
+      `INSERT INTO relay.email_messages (
+        id, thread_id, from_email, from_name, to_email, subject, raw_body, cleaned_body, direction, date
+      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`,
+      [
+        messageId,
+        threadId,
+        process.env.GMAIL_SENDER_EMAIL || process.env.EMAIL_FROM || 'relay@local',
+        process.env.RELAY_RECRUITER_NAME || 'Bench Sales',
+        toEmail,
+        draft.subject,
+        draft.body,
+        draft.body,
+        'draft',
+        new Date(),
+      ]
+    );
 
     return {
       status: 'draft_ready',
@@ -606,20 +616,16 @@ export function registerInternalRoutes(app: FastifyInstance) {
     let inReplyTo: string | undefined;
 
     if (body.vendor_thread_id) {
-      const [vendorThread] = await db
-        .select()
-        .from(emailThreads)
-        .where(eq(emailThreads.threadId, body.vendor_thread_id))
-        .limit(1);
+      const { rows: vRows } = await query('SELECT * FROM relay.email_threads WHERE thread_id = $1 LIMIT 1', [body.vendor_thread_id]);
+      const vendorThread = normalizeThread(vRows[0]);
       if (vendorThread) {
         toEmail = toEmail || vendorThread.latestSenderEmail || '';
       }
-      const msgs = await db
-        .select()
-        .from(emailMessages)
-        .where(eq(emailMessages.threadId, body.vendor_thread_id))
-        .orderBy(desc(emailMessages.date))
-        .limit(1);
+      const { rows: msgRows } = await query(
+        'SELECT * FROM relay.email_messages WHERE thread_id = $1 ORDER BY date DESC LIMIT 1',
+        [body.vendor_thread_id]
+      );
+      const msgs = msgRows.map(normalizeMessage).filter(Boolean);
       inReplyTo = msgs[0]?.providerMessageId || undefined;
     }
 
@@ -669,62 +675,59 @@ Recruiting Team`;
     const threadId = body.vendor_thread_id || uuidv4();
     const messageId = uuidv4();
 
-    await db
-      .insert(emailThreads)
-      .values({
+    const wfCtx = {
+      kind: 'vendor_submission',
+      submissionId: submissionId || null,
+      submission_id: submissionId || null,
+      jobId: jobId,
+      job_id: jobId,
+      candidateId: candidateId,
+      vendorEmail: toEmail,
+      vendorName: vendorName,
+      jobTitle: jobTitle,
+    };
+
+    await query(
+      `INSERT INTO relay.email_threads (
+        thread_id, subject, latest_sender, latest_sender_email, latest_date,
+        reply_intent, requires_followup, status, priority, candidate_id, correlation_id, workflow_context
+      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+      ON CONFLICT (thread_id) DO UPDATE SET
+        workflow_context = EXCLUDED.workflow_context,
+        status = 'Submitted to Vendor'`,
+      [
         threadId,
         subject,
-        latestSender: vendorName,
-        latestSenderEmail: toEmail,
-        latestDate: new Date(),
-        replyIntent: 'Vendor Profile Submission',
-        requiresFollowup: true,
-        status: 'Submitted to Vendor',
-        priority: 'High',
-        candidateId: (candidateId.length === 36 ? candidateId : null) as any,
-        correlationId: submissionId || candidateId,
-        workflowContext: {
-          kind: 'vendor_submission',
-          submissionId: submissionId || null,
-          submission_id: submissionId || null,
-          jobId: jobId,
-          job_id: jobId,
-          candidateId: candidateId,
-          vendorEmail: toEmail,
-          vendorName: vendorName,
-          jobTitle: jobTitle,
-        },
-      } as any)
-      .onConflictDoUpdate({
-        target: emailThreads.threadId,
-        set: {
-          workflowContext: {
-            kind: 'vendor_submission',
-            submissionId: submissionId || null,
-            submission_id: submissionId || null,
-            jobId: jobId,
-            job_id: jobId,
-            candidateId: candidateId,
-            vendorEmail: toEmail,
-            vendorName: vendorName,
-            jobTitle: jobTitle,
-          },
-          status: 'Submitted to Vendor',
-        },
-      });
+        vendorName,
+        toEmail,
+        new Date(),
+        'Vendor Profile Submission',
+        true,
+        'Submitted to Vendor',
+        'High',
+        candidateId.length === 36 ? candidateId : null,
+        submissionId || candidateId,
+        JSON.stringify(wfCtx),
+      ]
+    );
 
-    await db.insert(emailMessages).values({
-      id: messageId,
-      threadId,
-      fromEmail: process.env.RELAY_SMTP_USER || process.env.GMAIL_USER || 'relay@local',
-      fromName: process.env.RELAY_RECRUITER_NAME || 'Bench Sales',
-      toEmail: toEmail,
-      subject,
-      rawBody: bodyText,
-      cleanedBody: bodyText,
-      direction: 'sent',
-      date: new Date(),
-    });
+    await query(
+      `INSERT INTO relay.email_messages (
+        id, thread_id, from_email, from_name, to_email, subject, raw_body, cleaned_body, direction, date
+      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`,
+      [
+        messageId,
+        threadId,
+        process.env.RELAY_SMTP_USER || process.env.GMAIL_USER || 'relay@local',
+        process.env.RELAY_RECRUITER_NAME || 'Bench Sales',
+        toEmail,
+        subject,
+        bodyText,
+        bodyText,
+        'sent',
+        new Date(),
+      ]
+    );
 
     return {
       status: 'sent',

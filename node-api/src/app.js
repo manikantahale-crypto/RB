@@ -43,10 +43,10 @@ app.use((req, res, next) => {
   next();
 });
 
-app.use(express.json());
+/** RELAY (Smart Inbox): consolidated in-process Express router. */
+app.use(require("./modules/relay/routes/relay.routes"));
 
-/** RELAY (Smart Inbox): its paths are served by the RELAY process; node-api forwards. */
-app.use(require("./modules/relay/routes/relayProxy.routes"));
+app.use(express.json());
 
 app.get("/health", (req, res) => res.json({ status: "ok" }));
 

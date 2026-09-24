@@ -267,6 +267,27 @@ describe("emitted_events_answered", () => {
     );
     expect(out.status).toBe("pass");
   });
+
+  it("understands structured event declarations ({ fromConfig }) and formats them properly without [object Object]", () => {
+    const out = checkEmittedEventsAnswered(
+      facts({
+        registry: [
+          {
+            key: "astra.route.decision",
+            module: "astra",
+            shareable: false,
+            emits: [{ fromConfig: "onActionable" }, { fromConfig: "onRejected" }] as any,
+          },
+        ],
+      }),
+    );
+    expect(out.status).toBe("fail");
+    expect(out.detail).toHaveLength(2);
+    expect(out.detail[0]).toContain("astra.route.decision publishes syntra.jd.normalized (fromConfig: \"onActionable\")");
+    expect(out.detail[0]).not.toContain("[object Object]");
+    expect(out.detail[1]).toContain("astra.route.decision publishes astra.requirement.rejected (fromConfig: \"onRejected\")");
+    expect(out.detail[1]).not.toContain("[object Object]");
+  });
 });
 
 describe("routing_hazards", () => {

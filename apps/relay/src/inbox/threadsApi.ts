@@ -1,6 +1,5 @@
-import { db, sql } from '../db';
-import { emailThreads, followups, emailMessages } from '../db/schema';
-import { eq, inArray } from 'drizzle-orm';
+import { query, sql, normalizeFollowup, normalizeThread } from '../db';
+import type { EmailThread, Followup, EmailMessage } from '../db/schema';
 import { pickDisplayBody, cleanEmailSubject } from '../utils/htmlText';
 import { isMarketingOrPortalEmail } from '../classification/staffingSignals';
 import { getTemplateDraft } from '../drafting/replyDrafter';
@@ -8,13 +7,13 @@ import { loadRegisteredCandidateMap } from '../matching/candidateRegistry';
 import { loadRegisteredVendorMap } from '../matching/vendorRegistry';
 import { getOwnMailbox, isSelfMessage } from '../utils/mailbox';
 
-type FollowupRow = typeof followups.$inferSelect;
+type FollowupRow = Followup;
 
-/** postgres.js returns snake_case; drizzle returns camelCase — normalize before body reads. */
-function normalizeMessageRow(raw: any): typeof emailMessages.$inferSelect {
+/** Normalizes snake_case SQL columns to camelCase properties for compatibility. */
+function normalizeMessageRow(raw: any): EmailMessage {
   if (!raw || typeof raw !== 'object') return raw;
   if (raw.cleanedBody != null || raw.rawBody != null || raw.htmlBody != null || raw.fromEmail != null) {
-    return raw as typeof emailMessages.$inferSelect;
+    return raw as EmailMessage;
   }
   return {
     id: raw.id,
@@ -31,10 +30,10 @@ function normalizeMessageRow(raw: any): typeof emailMessages.$inferSelect {
     date: raw.date,
     providerMessageId: raw.provider_message_id ?? raw.providerMessageId,
     isBounce: raw.is_bounce ?? raw.isBounce ?? false,
-  } as typeof emailMessages.$inferSelect;
+  } as EmailMessage;
 }
 
-function messagePlainSources(m: typeof emailMessages.$inferSelect | any) {
+function messagePlainSources(m: EmailMessage | any) {
   const n = normalizeMessageRow(m);
   return {
     cleaned: n.cleanedBody || '',
@@ -79,7 +78,7 @@ function formatTimestamp(date?: Date | null) {
 }
 
 function formatThreadMessage(
-  m: typeof emailMessages.$inferSelect,
+  m: EmailMessage,
   ownEmail: string,
   display?: { plain: string; html: string | null },
 ) {
@@ -108,7 +107,7 @@ function formatThreadMessage(
 }
 
 async function findRelatedInboundForSent(
-  sentMessages: Array<typeof emailMessages.$inferSelect>,
+  sentMessages: Array<EmailMessage>,
   threadSubject: string,
   fallbackRecipient?: string | null,
 ) {
@@ -121,29 +120,33 @@ async function findRelatedInboundForSent(
   const subjectNorm = subjectKey(latestSent.subject || threadSubject);
   if (!subjectNorm) return null;
 
-const domain = toEmail.includes('@') ? toEmail.split('@')[1] : '';
-// Scoped lookup — never pull the entire inbound mailbox into memory.
-const candidates = await sql<Array<typeof emailMessages.$inferSelect>>`
-  SELECT id, thread_id, from_email, from_name, to_email, subject, cleaned_body, raw_body, html_body, direction, date, provider_message_id, attachments
-  FROM relay.email_messages
-  WHERE COALESCE(direction, 'received') <> 'sent'
-    AND (
-      ${toEmail ? sql`lower(COALESCE(from_email, '')) = ${toEmail}` : sql`false`}
-      OR ${domain ? sql`lower(COALESCE(from_email, '')) LIKE ${'%@' + domain}` : sql`false`}
-      OR lower(COALESCE(subject, '')) LIKE ${'%' + subjectNorm.slice(0, 48) + '%'}
-    )
-  ORDER BY date DESC NULLS LAST
-  LIMIT 80
-`;
+  const domain = toEmail.includes('@') ? toEmail.split('@')[1] : '';
+  const domainPattern = domain ? `%@${domain}` : null;
+  const subjectPattern = `%${subjectNorm.slice(0, 48)}%`;
+  // Scoped lookup — never pull the entire inbound mailbox into memory.
+  const { rows: candidateRows } = await query(
+    `SELECT id, thread_id, from_email, from_name, to_email, subject, cleaned_body, raw_body, html_body, direction, date, provider_message_id, attachments
+       FROM relay.email_messages
+      WHERE COALESCE(direction, 'received') <> 'sent'
+        AND (
+          ($1::text IS NOT NULL AND lower(COALESCE(from_email, '')) = $1)
+          OR ($2::text IS NOT NULL AND lower(COALESCE(from_email, '')) LIKE $2)
+          OR lower(COALESCE(subject, '')) LIKE $3
+        )
+      ORDER BY date DESC NULLS LAST
+      LIMIT 80`,
+    [toEmail || null, domainPattern, subjectPattern]
+  );
+  const candidates = candidateRows.map(normalizeMessageRow);
 
-  const subjectMatches = (m: typeof emailMessages.$inferSelect) => {
+  const subjectMatches = (m: EmailMessage) => {
     const mKey = subjectKey(m.subject || '');
     if (mKey === subjectNorm) return true;
     const core = subjectNorm.slice(0, 40);
     return core.length > 12 && (mKey.includes(core) || subjectNorm.includes(mKey.slice(0, 40)));
   };
 
-  const partyMatches = (m: typeof emailMessages.$inferSelect) => {
+  const partyMatches = (m: EmailMessage) => {
     if (!toEmail) return true;
     const from = extractEmail(m.fromEmail || '');
     if (from === toEmail) return true;
@@ -487,54 +490,56 @@ export async function listThreadsForInbox() {
 
 /** Full thread detail — loads html; merges sibling threads (same counterparty + subject). */
 export async function getThreadDetail(threadId: string) {
-  const [thread] = await db
-    .select({
-      threadId: emailThreads.threadId,
-      subject: emailThreads.subject,
-      latestSender: emailThreads.latestSender,
-      latestSenderEmail: emailThreads.latestSenderEmail,
-      latestDate: emailThreads.latestDate,
-      replyIntent: emailThreads.replyIntent,
-      requiresFollowup: emailThreads.requiresFollowup,
-      status: emailThreads.status,
-      priority: emailThreads.priority,
-      candidateId: emailThreads.candidateId,
-      vendorId: emailThreads.vendorId,
-      correlationId: emailThreads.correlationId,
-      workflowContext: emailThreads.workflowContext,
-    })
-    .from(emailThreads)
-    .where(eq(emailThreads.threadId, threadId))
-    .limit(1);
+  const { rows: threadRows } = await query(
+    `SELECT thread_id, subject, latest_sender, latest_sender_email, latest_date,
+            reply_intent, requires_followup, status, priority, candidate_id, vendor_id,
+            correlation_id, workflow_context
+       FROM relay.email_threads
+      WHERE thread_id = $1
+      LIMIT 1`,
+    [threadId]
+  );
+  const thread = normalizeThread(threadRows[0]);
   if (!thread) return null;
 
   const partyEmail = extractEmail(thread.latestSenderEmail || '');
-  const nearbyThreads = partyEmail
-    ? await db
-        .select({
-          threadId: emailThreads.threadId,
-          subject: emailThreads.subject,
-          latestSenderEmail: emailThreads.latestSenderEmail,
-          replyIntent: emailThreads.replyIntent,
-        })
-        .from(emailThreads)
-        .where(eq(emailThreads.latestSenderEmail, thread.latestSenderEmail || ''))
-    : [
-        {
-          threadId: thread.threadId,
-          subject: thread.subject,
-          latestSenderEmail: thread.latestSenderEmail,
-          replyIntent: thread.replyIntent,
-        },
-      ];
+  let nearbyThreads: Array<{ threadId: string; subject: string | null; latestSenderEmail: string | null; replyIntent: string | null }> = [];
+  if (partyEmail) {
+    const { rows: nearbyRows } = await query(
+      `SELECT thread_id, subject, latest_sender_email, reply_intent
+         FROM relay.email_threads
+        WHERE latest_sender_email = $1`,
+      [thread.latestSenderEmail || '']
+    );
+    nearbyThreads = nearbyRows.map((r: any) => ({
+      threadId: r.thread_id,
+      subject: r.subject ?? null,
+      latestSenderEmail: r.latest_sender_email ?? null,
+      replyIntent: r.reply_intent ?? null,
+    }));
+  } else {
+    nearbyThreads = [
+      {
+        threadId: thread.threadId,
+        subject: thread.subject,
+        latestSenderEmail: thread.latestSenderEmail,
+        replyIntent: thread.replyIntent,
+      },
+    ];
+  }
 
   const nearbyIds = nearbyThreads.map((t) => t.threadId);
-  const inboundThreadRows = nearbyIds.length
-    ? await db
-        .select({ threadId: emailMessages.threadId, direction: emailMessages.direction })
-        .from(emailMessages)
-        .where(inArray(emailMessages.threadId, nearbyIds))
-    : [];
+  let inboundThreadRows: Array<{ threadId: string; direction: string | null }> = [];
+  if (nearbyIds.length) {
+    const { rows } = await query(
+      `SELECT thread_id, direction FROM relay.email_messages WHERE thread_id = ANY($1)`,
+      [nearbyIds]
+    );
+    inboundThreadRows = rows.map((r: any) => ({
+      threadId: r.thread_id,
+      direction: r.direction ?? null,
+    }));
+  }
   const hasInboundByThread = new Set(
     inboundThreadRows
       .filter((r) => (r.direction || 'received') !== 'sent')
@@ -553,12 +558,18 @@ export async function getThreadDetail(threadId: string) {
   const siblingIds = nearbyThreads.filter((t) => keyFor(t) === key).map((t) => t.threadId);
   const loadIds = siblingIds.length > 1 ? siblingIds : [threadId];
 
-  const [allFollowups, candidateMap, vendorMap, threadMsgs] = await Promise.all([
-    db.select().from(followups).where(inArray(followups.threadId, loadIds)),
+  const [followupRes, candidateMap, vendorMap, msgRes] = await Promise.all([
+    loadIds.length
+      ? query(`SELECT * FROM relay.followups WHERE thread_id = ANY($1)`, [loadIds])
+      : Promise.resolve({ rows: [] }),
     loadRegisteredCandidateMap(),
     thread.vendorId ? loadRegisteredVendorMap() : Promise.resolve(new Map()),
-    db.select().from(emailMessages).where(inArray(emailMessages.threadId, loadIds)),
+    loadIds.length
+      ? query(`SELECT * FROM relay.email_messages WHERE thread_id = ANY($1)`, [loadIds])
+      : Promise.resolve({ rows: [] }),
   ]);
+  const allFollowups = followupRes.rows.map(normalizeFollowup).filter(Boolean) as FollowupRow[];
+  const threadMsgs = msgRes.rows.map(normalizeMessageRow);
 
   const sorted = threadMsgs.sort((a, b) => dateMs(a.date) - dateMs(b.date));
   const ownEmail = getOwnMailbox();

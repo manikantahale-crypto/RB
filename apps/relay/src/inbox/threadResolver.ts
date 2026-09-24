@@ -1,6 +1,4 @@
-import { db } from '../db';
-import { emailMessages, emailThreads } from '../db/schema';
-import { eq, or, sql } from 'drizzle-orm';
+import { query, normalizeThread } from '../db';
 import { v4 as uuidv4 } from 'uuid';
 import type { EmailData } from '../connectors/connector.interface';
 import { cleanEmailSubject } from '../utils/htmlText';
@@ -57,18 +55,15 @@ export async function resolveThreadIdForEmail(emailData: EmailData): Promise<str
 
   if (refs.length) {
     for (const ref of refs) {
-      const [byProvider] = await db
-        .select({ threadId: emailMessages.threadId })
-        .from(emailMessages)
-        .where(
-          or(
-            sql`lower(${emailMessages.providerMessageId}) = ${ref}`,
-            sql`lower(${emailMessages.id}) = ${ref}`,
-            sql`lower(${emailMessages.providerMessageId}) = ${ref.replace(/^<|>$/g, '')}`,
-          ),
-        )
-        .limit(1);
-      if (byProvider?.threadId) return byProvider.threadId;
+      const { rows } = await query(
+        `SELECT thread_id FROM relay.email_messages
+          WHERE lower(provider_message_id) = $1
+             OR lower(id) = $1
+             OR lower(provider_message_id) = $2
+          LIMIT 1`,
+        [ref, ref.replace(/^<|>$/g, '')]
+      );
+      if (rows[0]?.thread_id) return rows[0].thread_id;
     }
   }
 
@@ -76,13 +71,15 @@ export async function resolveThreadIdForEmail(emailData: EmailData): Promise<str
   const subj = subjectKey(emailData.subject || '');
 
   if (party && subj) {
-    const threads = await db.select().from(emailThreads);
+    const { rows: threadRows } = await query(`SELECT * FROM relay.email_threads`);
+    const threads = threadRows.map(normalizeThread).filter(Boolean);
     const sameConversation = threads.filter((t) => {
+      if (!t) return false;
       if (subjectKey(t.subject || '') !== subj) return false;
       return extractEmail(t.latestSenderEmail || '') === party;
     });
     const consentHit = sameConversation.find((t) => {
-      const ctx = (t.workflowContext as Record<string, unknown>) || {};
+      const ctx = (t?.workflowContext as Record<string, unknown>) || {};
       return ctx.kind === 'candidate_consent';
     });
     if (consentHit) return consentHit.threadId;
@@ -91,12 +88,11 @@ export async function resolveThreadIdForEmail(emailData: EmailData): Promise<str
 
   // Gmail native thread id (hex) — stable across messages in one Gmail thread
   if (emailData.threadId && !emailData.threadId.includes('@')) {
-    const [existing] = await db
-      .select({ threadId: emailThreads.threadId })
-      .from(emailThreads)
-      .where(eq(emailThreads.threadId, emailData.threadId))
-      .limit(1);
-    if (existing?.threadId) return existing.threadId;
+    const { rows } = await query(
+      `SELECT thread_id FROM relay.email_threads WHERE thread_id = $1 LIMIT 1`,
+      [emailData.threadId]
+    );
+    if (rows[0]?.thread_id) return rows[0].thread_id;
     return emailData.threadId;
   }
 

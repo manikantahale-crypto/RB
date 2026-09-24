@@ -201,17 +201,14 @@ export async function emitConsentDecided(args: {
     aggregateId: args.candidateId,
     correlationId: args.correlationId,
     payload: {
+      ...decisionPayload,
       ...(args.orchThreadId ? { thread_id: args.orchThreadId } : {}),
-      relay_thread_id: args.threadId,
-      candidate_id: args.candidateId,
       jobId: args.jobId,
       requirement_id: args.jobId,
-      decision: args.decision,
       body_snippet: args.bodySnippet,
       graph_key: args.graphKey ?? 'relay.consent.workflow',
       graph_version: args.graphVersion ?? 2,
       tool_result: toolResult,
-      ...decisionPayload,
     },
   }).then((eventId) => {
     const base = (process.env.SYNTRA_API_URL || 'http://localhost:4000').replace(/\/$/, '');

@@ -1,6 +1,4 @@
-import { db } from '../db';
-import { followups, emailThreads } from '../db/schema';
-import { and, eq, lte } from 'drizzle-orm';
+import { query, normalizeFollowup, normalizeThread } from '../db';
 import { emitConsentDecided } from '../platform/platformBridge';
 
 const CONSENT_INTENT = 'Candidate Consent Request';
@@ -23,13 +21,14 @@ export async function sweepConsentTimeouts() {
   const now = new Date();
   console.log('[Consent Timeout] Scanning overdue consent follow-ups...');
 
-  const overdue = await db
-    .select()
-    .from(followups)
-    .where(and(eq(followups.status, 'Open'), lte(followups.dueDate, now)));
+  const { rows: followupRows } = await query(
+    `SELECT * FROM relay.followups WHERE status = 'Open' AND due_date <= $1`,
+    [now]
+  );
+  const overdue = followupRows.map(normalizeFollowup).filter(Boolean);
 
   const consentFollowups = overdue.filter(
-    (f) => f.replyType === CONSENT_INTENT,
+    (f) => f && f.replyType === CONSENT_INTENT,
   );
   if (!consentFollowups.length) {
     console.log('[Consent Timeout] No overdue consent follow-ups.');
@@ -39,14 +38,15 @@ export async function sweepConsentTimeouts() {
   let emitted = 0;
 
   for (const followup of consentFollowups) {
+    if (!followup) continue;
     try {
       if (!followup.threadId || !followup.candidateId) continue;
 
-      const [thread] = await db
-        .select()
-        .from(emailThreads)
-        .where(eq(emailThreads.threadId, followup.threadId))
-        .limit(1);
+      const { rows: threadRows } = await query(
+        `SELECT * FROM relay.email_threads WHERE thread_id = $1 LIMIT 1`,
+        [followup.threadId]
+      );
+      const thread = normalizeThread(threadRows[0]);
 
       if (!thread) continue;
 
@@ -66,25 +66,27 @@ export async function sweepConsentTimeouts() {
         bodySnippet: 'consent_sla_timeout',
       });
 
-      await db
-        .update(emailThreads)
-        .set({
-          workflowContext: {
-            ...ctx,
-            consent_timeout_emitted: true,
-            consent_timed_out_at: now.toISOString(),
-          },
-          status: 'Consent Timed Out',
-        })
-        .where(eq(emailThreads.threadId, followup.threadId));
+      const nextWorkflowContext = {
+        ...ctx,
+        consent_timeout_emitted: true,
+        consent_timed_out_at: now.toISOString(),
+      };
 
-      await db
-        .update(followups)
-        .set({
-          status: 'Timed Out',
-          followupReason: 'Consent SLA exceeded — relay.consent.decided timeout emitted',
-        })
-        .where(eq(followups.id, followup.id));
+      await query(
+        `UPDATE relay.email_threads
+            SET workflow_context = $1,
+                status = 'Consent Timed Out'
+          WHERE thread_id = $2`,
+        [JSON.stringify(nextWorkflowContext), followup.threadId]
+      );
+
+      await query(
+        `UPDATE relay.followups
+            SET status = 'Timed Out',
+                followup_reason = 'Consent SLA exceeded — relay.consent.decided timeout emitted'
+          WHERE id = $1`,
+        [followup.id]
+      );
 
       emitted += 1;
       console.log(

@@ -9,19 +9,7 @@
  * The same rule as sslFor() in packages/authoring, restated because node-api is
  * CommonJS and cannot import the ESM package. If you change one, change both.
  */
-function sslFor(connectionString) {
-  let host = "";
-  try {
-    const u = new URL(connectionString);
-    if (u.searchParams.get("sslmode") === "disable") return false;
-    host = u.hostname;
-  } catch {
-    return { rejectUnauthorized: false };
-  }
-  const local =
-    host === "localhost" || host === "127.0.0.1" || host === "::1" ||
-    host === "[::1]" || host === "host.docker.internal";
-  return local ? false : { rejectUnauthorized: false };
-}
+const { sslFor, resolveSsl } = require("./canonicalDb");
 
-module.exports = { sslFor };
+module.exports = { sslFor, resolveSsl };
+

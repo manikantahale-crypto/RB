@@ -1,15 +1,16 @@
-import { db } from '../db';
-import { emailMessages } from '../db/schema';
+import { query, normalizeMessage } from '../db';
 import { processEmail } from '../agent/inboxAgent';
 import { clearRegisteredVendorCache } from '../matching/vendorRegistry';
 
 /** Re-run classification on stored messages (fixes category drift after rule updates). */
 export async function reclassifyStoredMessages(limit = 500): Promise<number> {
   clearRegisteredVendorCache();
-  const messages = await db.select().from(emailMessages).limit(limit);
+  const { rows } = await query('SELECT * FROM relay.email_messages LIMIT $1', [limit]);
+  const messages = rows.map(normalizeMessage).filter(Boolean);
   let processed = 0;
 
   for (const msg of messages) {
+    if (!msg) continue;
     await processEmail({
       id: msg.id,
       threadId: msg.threadId,

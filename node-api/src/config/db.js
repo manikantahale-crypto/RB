@@ -1,19 +1,15 @@
 const { Pool } = require("pg");
-const { sslFor } = require("./ssl");
+const { canonicalPoolOpts } = require("./canonicalDb");
 const env = require("./env");
 
-// Supabase session pooler caps ~15 clients TOTAL across all apps/processes.
-// Keep this small: Node HTTP pool + pg-boss pool + Python must fit under the cap.
-const pool = new Pool({
-  connectionString: env.DATABASE_URL,
-  ssl: sslFor(env.DATABASE_URL), // Supabase requires SSL
+const poolConfig = canonicalPoolOpts(env.DATABASE_URL, "node-api", {
   max: 2,
   idleTimeoutMillis: 8000,
   connectionTimeoutMillis: 15000,
-  keepAlive: true,
-  keepAliveInitialDelayMillis: 10000,
-  searchPath: ["syntra", "public"], // Officially supported pg property
+  searchPath: ["syntra", "public"],
 });
+
+const pool = new Pool(poolConfig);
 
 
 // Idle clients can drop (Supabase/proxy). Log and let the pool replace them —
