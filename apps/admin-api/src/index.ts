@@ -167,7 +167,7 @@ async function main(): Promise<void> {
   process.on("SIGINT", shutdown);
   process.on("SIGTERM", shutdown);
 
-  await app.listen({ port, host: "0.0.0.0" });
+  await app.listen({ port, host: "127.0.0.1" });
   console.log(
     `Admin API identity: ${
       anonymousAllowed() ? "ANONYMOUS ALLOWED (dev)" : "signed-in users only"

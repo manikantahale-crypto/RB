@@ -185,7 +185,7 @@ async function main(): Promise<void> {
   process.on("SIGINT", shutdown);
   process.on("SIGTERM", shutdown);
 
-  await app.listen({ port, host: "0.0.0.0" });
+  await app.listen({ port, host: "127.0.0.1" });
   console.log(`Ingress API listening on :${port} (POST /v1/events)`);
 }
 

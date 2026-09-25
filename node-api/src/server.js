@@ -90,7 +90,7 @@ async function start() {
   }
 
   // Listen first so wait-on /health succeeds even if pg-boss is waiting on a DB slot.
-  server = app.listen(env.PORT, () => {
+  server = app.listen(env.PORT, "127.0.0.1", () => {
     log.info(`HTTP server listening on http://127.0.0.1:${env.PORT}`);
   });
 
