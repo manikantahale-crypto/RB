@@ -1,0 +1,8 @@
+{
+  "$schema": "https://openapi.vercel.sh/vercel.json",
+  "framework": null,
+  "installCommand": "npm install --prefix Front",
+  "buildCommand": "npm run build --prefix Front",
+  "outputDirectory": "Front/dist",
+  "rewrites": [{ "source": "/(.*)", "destination": "/index.html" }]
+}
