@@ -40,7 +40,10 @@ export type ApiErrorBody = {
   existingGraphKey?: string | null;
 };
 
-const API_BASE = import.meta.env.VITE_ADMIN_API_URL ?? "/api";
+const rawBaseUrl = import.meta.env.VITE_API_BASE_URL as string | undefined;
+const API_BASE = rawBaseUrl
+  ? `${rawBaseUrl.replace(/\/$/, "")}/admin-api`
+  : (import.meta.env.VITE_ADMIN_API_URL ?? "/api");
 
 /**
  * Exported so each screen can keep its own API file (see src/api/) instead of
@@ -83,7 +86,7 @@ export async function request<T>(
       body: {
         error: "NETWORK_ERROR",
         message:
-          "Cannot reach the admin API on port 4200. Start it with: npm run dev:admin",
+          "Cannot reach the admin API. Please ensure the backend service is running and accessible.",
       },
     };
   }

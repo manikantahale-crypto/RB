@@ -56,7 +56,7 @@ async function notifyConsentSent(args: {
   correlationId?: string;
   matchScore?: number;
 }) {
-  const base = (process.env.SYNTRA_API_URL || 'http://localhost:4000').replace(/\/$/, '');
+  const base = (process.env.SYNTRA_API_URL || `http://127.0.0.1:${process.env.SYNTRA_PORT || '4000'}`).replace(/\/$/, '');
   try {
     const res = await fetch(`${base}/internal/pipeline/consent-sent`, {
       method: 'POST',

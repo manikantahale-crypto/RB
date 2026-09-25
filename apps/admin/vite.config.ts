@@ -20,7 +20,7 @@ export default defineConfig({
     strictPort: true,
     proxy: {
       "/api": {
-        target: "http://localhost:4200",
+        target: process.env.ADMIN_API_URL || `http://127.0.0.1:${process.env.ADMIN_API_PORT || 4200}`,
         changeOrigin: true,
         rewrite: (path) => path.replace(/^\/api/, ""),
       },

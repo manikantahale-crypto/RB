@@ -104,12 +104,11 @@ async function updateSubmissionStatus(submissionId, status, userId, metadata = {
 // -----------------------------------------------------------------------------
 // Rate & Availability
 // -----------------------------------------------------------------------------
-async function updateSubmissionRateAvailability(submissionId, userId, { rate, rateType, rate_type, availability }) {
-  const finalRateType = rateType || rate_type;
+async function updateSubmissionRateAvailability(submissionId, userId, payload = {}) {
+  const finalRateType = payload.rateType || payload.rate_type;
   return await prismWorkflow.confirmRateAndAvailability(submissionId, userId, {
-    rate,
+    ...payload,
     rateType: finalRateType,
-    availability,
   });
 }
 
@@ -124,8 +123,8 @@ async function getConsentPreview(submissionId, userId, payload = {}) {
   return await prismWorkflow.getConsentPreview(submissionId, userId, payload);
 }
 
-async function getVendorPreview(submissionId, userId) {
-  return await prismWorkflow.getVendorPreview(submissionId, userId);
+async function getVendorPreview(submissionId, userId, options = {}) {
+  return await prismWorkflow.getVendorPreview(submissionId, userId, options);
 }
 
 async function getConsultantConfirmationPreview(submissionId, userId) {
@@ -181,8 +180,8 @@ async function maskCandidateDetails(submissionId, userId, payload = {}) {
 // -----------------------------------------------------------------------------
 // Vendor Workflow Endpoints
 // -----------------------------------------------------------------------------
-async function sendToVendor(submissionId, userId) {
-  return await prismWorkflow.sendToVendor(submissionId, userId);
+async function sendToVendor(submissionId, userId, options = {}) {
+  return await prismWorkflow.sendToVendor(submissionId, userId, options);
 }
 
 async function recordVendorResponse(submissionId, userId, payload = {}) {

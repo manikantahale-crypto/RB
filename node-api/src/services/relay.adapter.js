@@ -6,6 +6,7 @@
  */
 const log = require("../utils/logger");
 const { internalHeaders } = require("../utils/internalHeaders");
+const env = require("../config/env");
 
 /**
  * Where RELAY is.
@@ -22,7 +23,7 @@ function getRelayBaseUrl() {
     process.env.RELAY_INTERNAL_URL ||
     process.env.RELAY_SERVICE_URL ||
     process.env.RELAY_API_URL ||
-    `http://127.0.0.1:${process.env.PORT || 4000}`
+    `http://127.0.0.1:${env.PORT}`
   ).replace(/\/$/, "");
 }
 
@@ -57,9 +58,14 @@ function isRelayStartingError(status, bodyText) {
  * @param {number[]} [options.retryDelays=[1000, 2000]]
  * @returns {Promise<Object>}
  */
-async function sendCandidateConsentEmail({ jobId, submissionId, candidate, subject, body }, options = {}) {
+async function sendCandidateConsentEmail({ jobId, submissionId, candidate, subject, body, requestId }, options = {}) {
   const isTest = process.env.NODE_ENV === "test" || process.env.JEST_WORKER_ID !== undefined;
   const defaultDelays = isTest ? [10, 20] : [1000, 2000];
+  const reqId = requestId || "relay-adapter";
+
+  log.debug(
+    `[request=${reqId}] [relay.adapter.consent] Preparing candidate consent dispatch submissionId=${submissionId} candidateId=${candidate?.id} jobId=${jobId}`
+  );
 
   const maxAttempts = options.maxAttempts || 3;
   const retryDelays = options.retryDelays || defaultDelays;
@@ -82,12 +88,17 @@ async function sendCandidateConsentEmail({ jobId, submissionId, candidate, subje
   for (let attempt = 1; attempt <= maxAttempts; attempt++) {
     const relayBase = getRelayBaseUrl();
     const targetUrl = `${relayBase}/internal/consent/send`;
+    const tStart = Date.now();
 
     try {
+      log.debug(`[request=${reqId}] [relay.adapter.consent] POST ${targetUrl} attempt=${attempt}/${maxAttempts}`);
       // Use native fetch (Node 18+)
       const response = await fetch(targetUrl, {
         method: "POST",
-        headers: internalHeaders(),
+        headers: {
+          ...internalHeaders(),
+          ...(reqId ? { "x-request-id": reqId } : {}),
+        },
         body: JSON.stringify(payload),
       });
 
@@ -119,10 +130,16 @@ async function sendCandidateConsentEmail({ jobId, submissionId, candidate, subje
         throw new Error("RELAY service failed to dispatch the email to the provider.");
       }
 
-      log.success(`[RELAY] candidate consent email dispatched candidate=${candidate.email}`);
+      log.debug(
+        `[request=${reqId}] [relay.adapter.consent] Relay responded status=200 sentCount=${data.sent_count} duration=${Date.now() - tStart}ms`
+      );
+      log.info(`[RELAY] candidate consent email dispatched candidate=${candidate.email}`);
       return data;
     } catch (error) {
       const relayBase = getRelayBaseUrl();
+      log.debug(
+        `[request=${reqId}] [relay.adapter.consent] Dispatch error duration=${Date.now() - tStart}ms error=${error.message}`
+      );
       log.error(`[RELAY] consent dispatch failed url=${relayBase}/internal/consent/send reason="${error.message}"`);
       throw new Error(`Failed to dispatch consent email via Relay service (${relayBase}). ` + error.message);
     }
@@ -284,7 +301,7 @@ async function sendVendorEmail({ submissionId, vendorEmail, subject, body }, opt
       }
 
       const data = await response.json();
-      log.success(`[RELAY] vendor submission email dispatched vendor=${vendorEmail}`);
+      log.info(`[RELAY] vendor submission email dispatched vendor=${vendorEmail}`);
       return data;
     } catch (error) {
       const relayBase = getRelayBaseUrl();
@@ -344,7 +361,7 @@ async function sendConsultantConfirmationEmail({ submissionId, candidateEmail, s
       }
 
       const data = await response.json();
-      log.success(`[RELAY] consultant confirmation email dispatched candidate=${candidateEmail}`);
+      log.info(`[RELAY] consultant confirmation email dispatched candidate=${candidateEmail}`);
       return data;
     } catch (error) {
       const relayBase = getRelayBaseUrl();
@@ -407,7 +424,7 @@ async function sendRTREmail({ submissionId, vendorEmail, subject, body, attachme
       }
 
       const data = await response.json();
-      log.success(`[RELAY] RTR email package dispatched vendor=${vendorEmail}`);
+      log.info(`[RELAY] RTR email package dispatched vendor=${vendorEmail}`);
       return data;
     } catch (error) {
       const relayBase = getRelayBaseUrl();

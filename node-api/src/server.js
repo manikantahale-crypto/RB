@@ -91,11 +91,11 @@ async function start() {
 
   // Listen first so wait-on /health succeeds even if pg-boss is waiting on a DB slot.
   server = app.listen(env.PORT, () => {
-    log.info(`HTTP server listening on http://localhost:${env.PORT}`);
+    log.info(`HTTP server listening on http://127.0.0.1:${env.PORT}`);
   });
 
   bootstrapPgBossWorkers().catch((err) => {
-    log.error("[pg-boss] background bootstrap failed (API still up on :4000):", err.message);
+    log.error(`[pg-boss] background bootstrap failed (API still up on :${env.PORT}):`, err.message);
     log.error(
       "[pg-boss] If EMAXCONN: stop other dev processes, wait 30s, restart. " +
         "Start terminal 1 (npm run dev) before terminal 2 (dev:orch-admin).",

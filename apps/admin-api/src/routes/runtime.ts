@@ -20,7 +20,7 @@ type FastifyLike = {
   post: (path: string, handler: any) => void;
 };
 
-const ORCH_API = process.env.ORCH_API_URL ?? "http://localhost:4100";
+const ORCH_API = process.env.ORCH_API_URL ?? `http://127.0.0.1:${process.env.API_PORT ?? 4100}`;
 
 async function loadTrace(pool: Pool, eventId: string) {
   const outbox = await pool.query(

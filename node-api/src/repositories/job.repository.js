@@ -74,7 +74,7 @@ async function getJobById(...args) {
             location, created_by,
             company_name, source_email, source_url, message_id,
             employment_type, visa_requirement, remote_policy,
-            min_experience, max_experience
+            min_experience, max_experience, vendor_id
        FROM ${CORE_REQUIREMENTS}
       WHERE id = $1${extraWhere}`,
     params
@@ -200,6 +200,7 @@ async function listJobs({ userId = null, limit = 50 } = {}) {
            j.remote_policy,
            j.min_experience,
            j.max_experience,
+           j.vendor_id,
            j.processing_status,
            COALESCE(mc.match_count, 0)::int AS match_count,
            mc.match_scores

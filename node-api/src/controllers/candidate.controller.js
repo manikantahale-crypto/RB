@@ -1,6 +1,7 @@
 const candidateRepo = require("../repositories/candidate.repository");
 const lifecycleRepo = require("../modules/orbit/repositories/lifecycle.repository");
 const { computeCandidateActionNeeded } = require("../utils/actionNeeded");
+const log = require("../utils/logger");
 
 function mapCandidateListItem(row, stateMap = new Map()) {
   let skills = row.skills || [];
@@ -143,13 +144,24 @@ async function deleteCandidatesBulk(req, res, next) {
 }
 
 async function getCandidate(req, res, next) {
+  const reqId = req.id || req.requestId || "unknown";
+  const start = Date.now();
   try {
-    const row = await candidateRepo.getCandidateWithCurrentResume(req.params.candidateId, req.userId);
+    const { candidateId } = req.params;
+    log.debug(`[request=${reqId}] [candidate.controller] Lookup candidateId=${candidateId} userId=${req.userId}`);
+    const row = await candidateRepo.getCandidateWithCurrentResume(candidateId, req.userId);
     if (!row) {
-      const err = new Error(`Candidate not found: ${req.params.candidateId}`);
+      const elapsed = Date.now() - start;
+      log.debug(
+        `[request=${reqId}] [candidate.controller] 404 Candidate not found in core.people or not owned by user candidateId=${candidateId} userId=${req.userId} duration=${elapsed}ms`
+      );
+      const err = new Error(`Candidate not found: ${candidateId}`);
       err.statusCode = 404;
       throw err;
     }
+    log.debug(
+      `[request=${reqId}] [candidate.controller] Loaded candidateId=${candidateId} duration=${Date.now() - start}ms`
+    );
 
     let skills = row.skills || [];
     if (typeof skills === "string") {

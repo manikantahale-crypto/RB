@@ -372,16 +372,79 @@ async function updateSubmissionWorkflowData(client, submissionId, userId, update
   return rows[0] || null;
 }
 
-async function updateSubmissionRateAvailability(client, submissionId, userId, { rate, rateType, availability }) {
+async function updateSubmissionRateAvailability(
+  client,
+  submissionId,
+  userId,
+  { rate, rateType, availability, vendorId, candidateUpdates, brief } = {}
+) {
   const dbClient = client || pool;
   const sql = `
     UPDATE prism.submissions
-    SET rate = $1, rate_type = $2, availability = $3, updated_at = now()
+    SET rate = COALESCE($1, rate),
+        rate_type = COALESCE($2, rate_type),
+        availability = COALESCE($3, availability),
+        updated_at = now()
     WHERE id = $4 AND created_by = $5
     RETURNING ${SUB_RETURNING}
   `;
-  const { rows } = await dbClient.query(sql, [rate, rateType, availability, submissionId, userId]);
-  return rows[0] || null;
+  const { rows } = await dbClient.query(sql, [
+    rate !== undefined && rate !== null ? Number(rate) : null,
+    rateType || null,
+    availability || null,
+    submissionId,
+    userId,
+  ]);
+  const sub = rows[0] || null;
+
+  if (sub) {
+    // 1. Link vendor to job/requirement if provided
+    if (vendorId && sub.requirement_id) {
+      await dbClient.query(
+        "UPDATE core.requirements SET vendor_id = $1, updated_at = now() WHERE id = $2 AND (created_by = $3 OR created_by IS NULL)",
+        [vendorId, sub.requirement_id, userId]
+      );
+    }
+
+    // 2. Update candidate fields if provided
+    if (candidateUpdates && sub.person_id) {
+      const allowed = [
+        "full_name",
+        "email",
+        "phone",
+        "immigration_status",
+        "location",
+        "linkedin",
+        "github",
+        "status",
+      ];
+      const setClauses = [];
+      const values = [sub.person_id];
+      let idx = 2;
+      for (const k of allowed) {
+        if (candidateUpdates[k] !== undefined && candidateUpdates[k] !== null) {
+          setClauses.push(`${k} = $${idx++}`);
+          values.push(candidateUpdates[k]);
+        }
+      }
+      if (setClauses.length > 0) {
+        setClauses.push("updated_at = now()");
+        await dbClient.query(`UPDATE core.people SET ${setClauses.join(", ")} WHERE id = $1`, values);
+      }
+    }
+
+    // 3. Update brief in masked_profile if provided
+    if (brief && sub.id) {
+      const currentMasked = sub.masked_profile || {};
+      currentMasked.brief = brief;
+      await dbClient.query(
+        "UPDATE prism.submissions SET masked_profile = $1, updated_at = now() WHERE id = $2 AND created_by = $3",
+        [JSON.stringify(currentMasked), sub.id, userId]
+      );
+    }
+  }
+
+  return sub;
 }
 
 async function findActiveDuplicateSubmission(arg1, arg2, arg3, arg4 = null, arg5 = null) {

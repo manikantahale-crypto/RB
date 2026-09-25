@@ -19,8 +19,10 @@ const TOKEN_KEY = "tekisho.admin.token";
 const WHO_KEY = "tekisho.admin.who";
 
 const SYNTRA_API =
-  (import.meta.env.VITE_SYNTRA_API_URL as string | undefined) ??
-  "http://localhost:4000";
+  (import.meta.env.VITE_API_BASE_URL as string | undefined) ||
+  (import.meta.env.VITE_SYNTRA_API_URL as string | undefined) ||
+  (import.meta.env.VITE_API_URL as string | undefined) ||
+  (import.meta.env.DEV ? "http://localhost:4000" : "");
 
 export type Session = { email: string; token: string };
 

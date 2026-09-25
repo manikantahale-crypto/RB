@@ -37,7 +37,7 @@ function getOpenAIClient(customConfig) {
     apiKey: config.apiKey || "dummy-key",
     maxRetries: 0,
     defaultHeaders: {
-      "HTTP-Referer": "http://localhost:3000",
+      "HTTP-Referer": process.env.APP_URL || process.env.FRONTEND_URL || "http://localhost:3000",
       "X-Title": "Syntra ATS",
     },
   });
@@ -110,7 +110,7 @@ function getOpenRouterClient() {
       apiKey,
       maxRetries: 2,
       defaultHeaders: {
-        "HTTP-Referer": "http://localhost:3000",
+        "HTTP-Referer": process.env.APP_URL || process.env.FRONTEND_URL || "http://localhost:3000",
         "X-Title": "Syntra ATS",
       },
     }),

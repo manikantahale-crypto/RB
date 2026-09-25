@@ -124,7 +124,7 @@ ${email}`;
 }
 
 export async function fetchJobContextForConsent(jobId: string): Promise<ConsentJobContext> {
-  const base = (process.env.SYNTRA_API_URL || 'http://localhost:4000').replace(/\/$/, '');
+  const base = (process.env.SYNTRA_API_URL || `http://127.0.0.1:${process.env.SYNTRA_PORT || '4000'}`).replace(/\/$/, '');
   try {
     const res = await fetch(`${base}/internal/jobs/${jobId}`);
     if (!res.ok) return {};

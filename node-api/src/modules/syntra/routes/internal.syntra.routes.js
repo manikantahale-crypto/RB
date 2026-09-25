@@ -207,7 +207,7 @@ function relayBaseUrl() {
     process.env.RELAY_INTERNAL_URL ||
     process.env.RELAY_SERVICE_URL ||
     process.env.RELAY_API_URL ||
-    `http://127.0.0.1:${process.env.PORT || 4000}`
+    `http://127.0.0.1:${env.PORT}`
   ).replace(/\/$/, "");
 }
 

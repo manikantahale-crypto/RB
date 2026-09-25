@@ -10,8 +10,16 @@ app.use((req, res, next) => {
   const isLocalDev =
     origin &&
     /^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/.test(origin);
-  if (isLocalDev) {
+  const configuredOrigins = (process.env.FRONTEND_URL || process.env.ALLOWED_ORIGINS || "")
+    .split(",")
+    .map((o) => o.trim().replace(/\/$/, ""))
+    .filter(Boolean);
+  const isVercel = origin && /^https:\/\/[a-zA-Z0-9_.-]+\.vercel\.app$/.test(origin);
+  const isAllowed = isLocalDev || (origin && configuredOrigins.includes(origin)) || isVercel;
+
+  if (isAllowed && origin) {
     res.setHeader("Access-Control-Allow-Origin", origin);
+    res.setHeader("Access-Control-Allow-Credentials", "true");
     res.setHeader("Vary", "Origin");
   }
   res.setHeader(
@@ -20,7 +28,12 @@ app.use((req, res, next) => {
   );
   res.setHeader(
     "Access-Control-Allow-Headers",
-    "Content-Type, Authorization"
+    req.headers["access-control-request-headers"] ||
+      "Content-Type, Authorization, X-Requested-With, Accept, Origin, X-Request-Id, X-Correlation-Id"
+  );
+  res.setHeader(
+    "Access-Control-Expose-Headers",
+    "X-Request-Id, X-Correlation-Id"
   );
   if (req.method === "OPTIONS") {
     return res.sendStatus(204);
@@ -29,16 +42,41 @@ app.use((req, res, next) => {
 });
 
 app.use((req, res, next) => {
+  const incomingId = req.headers["x-request-id"] || req.headers["x-correlation-id"];
+  const requestId =
+    typeof incomingId === "string" && incomingId.trim()
+      ? incomingId.trim()
+      : `req-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
+
+  req.id = requestId;
+  req.requestId = requestId;
+  res.setHeader("X-Request-Id", requestId);
+
   const start = Date.now();
-  log.info(`→ ${req.method} ${req.originalUrl}`, {
-    origin: req.headers.origin || null,
-    contentType: req.headers["content-type"] || null,
-  });
-  res.on("finish", () => {
-    log.info(`← ${req.method} ${req.originalUrl}`, {
-      status: res.statusCode,
-      ms: Date.now() - start,
+  if (log.isDebugEnabled()) {
+    log.debug(`[request=${requestId}] → ${req.method} ${req.originalUrl}`, {
+      origin: req.headers.origin || null,
+      contentType: req.headers["content-type"] || null,
     });
+  } else {
+    log.info(`→ ${req.method} ${req.originalUrl}`, {
+      origin: req.headers.origin || null,
+      contentType: req.headers["content-type"] || null,
+    });
+  }
+
+  res.on("finish", () => {
+    const elapsed = Date.now() - start;
+    if (log.isDebugEnabled()) {
+      log.debug(
+        `[request=${requestId}] ← ${req.method} ${req.originalUrl} status=${res.statusCode} ms=${elapsed}`
+      );
+    } else {
+      log.info(`← ${req.method} ${req.originalUrl}`, {
+        status: res.statusCode,
+        ms: elapsed,
+      });
+    }
   });
   next();
 });

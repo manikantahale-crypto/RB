@@ -5,7 +5,7 @@
 const SYNTRA_BASE = (
   process.env.SYNTRA_API_URL ||
   process.env.NODE_API_URL ||
-  "http://localhost:4000"
+  `http://127.0.0.1:${process.env.SYNTRA_PORT || "4000"}`
 ).replace(/\/$/, "");
 
 export interface ForwardConsentParams {

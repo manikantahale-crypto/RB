@@ -11,7 +11,7 @@ export type AstraResponse = ModuleResponse;
 
 export const postAstra = modulePoster(
   'Astra',
-  () => process.env.ASTRA_API_URL || process.env.SYNTRA_API_URL || 'http://localhost:4000',
+  () => process.env.ASTRA_API_URL || process.env.SYNTRA_API_URL || `http://127.0.0.1:${process.env.SYNTRA_PORT || '4000'}`,
 );
 
 export const classifyAstraError = classifyModuleError;

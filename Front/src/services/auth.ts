@@ -1,6 +1,5 @@
 import { AuthResponse, User } from '../types';
-
-const API_BASE_URL = 'http://localhost:4000';
+import { API_BASE_URL } from '../config';
 
 async function parseResponse<T>(res: Response): Promise<T> {
   const isJson = res.headers.get('content-type')?.includes('application/json');

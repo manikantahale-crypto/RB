@@ -28,7 +28,7 @@ type FastifyLike = {
   post: (path: string, handler: (req: any, reply: any) => unknown) => unknown;
 };
 
-const ORCH_API = process.env.ORCH_API_URL ?? "http://localhost:4100";
+const ORCH_API = process.env.ORCH_API_URL ?? `http://127.0.0.1:${process.env.API_PORT ?? 4100}`;
 
 /** Reasonable defaults per JSON Schema type, so a form starts filled in. */
 function sampleFor(schema: any): unknown {

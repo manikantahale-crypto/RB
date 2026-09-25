@@ -16,7 +16,7 @@ export async function triggerJdMatchConsentPipeline(args: {
   jobId: string;
   relayThreadId: string;
 }): Promise<{ ok: boolean; skipped?: string; reason?: string }> {
-  const base = (process.env.SYNTRA_API_URL || 'http://localhost:4000').replace(/\/$/, '');
+  const base = (process.env.SYNTRA_API_URL || `http://127.0.0.1:${process.env.SYNTRA_PORT || '4000'}`).replace(/\/$/, '');
 
   try {
     const res = await fetch(`${base}/internal/jobs/${args.jobId}/pipeline/match-consent`, {
@@ -75,7 +75,7 @@ export async function tryDirectVendorJdIntake(args: {
     args.htmlBody || null,
   );
 
-  const base = (process.env.SYNTRA_API_URL || 'http://localhost:4000').replace(/\/$/, '');
+  const base = (process.env.SYNTRA_API_URL || `http://127.0.0.1:${process.env.SYNTRA_PORT || '4000'}`).replace(/\/$/, '');
 
   try {
     const res = await fetch(`${base}/internal/astra/intake/email`, {

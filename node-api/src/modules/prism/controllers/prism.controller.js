@@ -1,4 +1,5 @@
 const prismService = require("../services/prism.service");
+const log = require("../../../utils/logger");
 
 // -----------------------------------------------------------------------------
 // Submissions CRUD
@@ -91,13 +92,37 @@ async function updateSubmissionRateAvailability(req, res, next) {
   try {
     const userId = req.userId;
     const { submissionId } = req.params;
-    const { rate, rate_type, rateType, availability } = req.body;
+    const {
+      rate,
+      rate_type,
+      rateType,
+      availability,
+      vendorId,
+      vendor_id,
+      candidateName,
+      candidatePhone,
+      candidateEmail,
+      candidateLocation,
+      candidateWorkAuth,
+      brief,
+    } = req.body || {};
 
     const finalRateType = rateType || rate_type;
+    const finalVendorId = vendorId || vendor_id;
+    const candidateUpdates = {};
+    if (candidateName) candidateUpdates.full_name = candidateName;
+    if (candidatePhone) candidateUpdates.phone = candidatePhone;
+    if (candidateEmail) candidateUpdates.email = candidateEmail;
+    if (candidateLocation) candidateUpdates.location = candidateLocation;
+    if (candidateWorkAuth) candidateUpdates.immigration_status = candidateWorkAuth;
+
     const updated = await prismService.updateSubmissionRateAvailability(submissionId, userId, {
       rate,
       rateType: finalRateType,
       availability,
+      vendorId: finalVendorId,
+      candidateUpdates: Object.keys(candidateUpdates).length > 0 ? candidateUpdates : null,
+      brief,
     });
     res.json({ data: updated });
   } catch (err) {
@@ -109,14 +134,25 @@ async function updateSubmissionRateAvailability(req, res, next) {
 // Candidate Workflow Endpoints
 // -----------------------------------------------------------------------------
 async function requestCandidateConsent(req, res, next) {
-  try {
-    const userId = req.userId;
-    const { submissionId } = req.params;
-    const { notes, contractType } = req.body || {};
+  const start = Date.now();
+  const reqId = req.id || req.requestId || "unknown";
+  const userId = req.userId;
+  const { submissionId } = req.params;
+  const { notes, contractType } = req.body || {};
 
-    const updated = await prismService.requestCandidateConsent(submissionId, userId, { notes, contractType });
+  log.debug(`[request=${reqId}] [prism.consent] Controller received request submissionId=${submissionId} userId=${userId}`);
+  try {
+    const updated = await prismService.requestCandidateConsent(submissionId, userId, {
+      notes,
+      contractType,
+      requestId: reqId,
+    });
+    const elapsed = Date.now() - start;
+    log.debug(`[request=${reqId}] [prism.consent] Controller succeeded status=200 duration=${elapsed}ms submissionId=${submissionId}`);
     res.status(200).json({ data: updated });
   } catch (err) {
+    const elapsed = Date.now() - start;
+    log.debug(`[request=${reqId}] [prism.consent] Controller failed duration=${elapsed}ms status=${err.statusCode || 500} error=${err.message}`);
     next(err);
   }
 }
@@ -188,8 +224,9 @@ async function getVendorPreview(req, res, next) {
   try {
     const userId = req.userId;
     const { submissionId } = req.params;
+    const { vendorId } = req.query;
 
-    const preview = await prismService.getVendorPreview(submissionId, userId);
+    const preview = await prismService.getVendorPreview(submissionId, userId, { vendorId });
     res.status(200).json({ data: preview });
   } catch (err) {
     next(err);
@@ -271,8 +308,9 @@ async function sendToVendor(req, res, next) {
   try {
     const userId = req.userId;
     const { submissionId } = req.params;
+    const { vendorId } = req.body || {};
 
-    const updated = await prismService.sendToVendor(submissionId, userId);
+    const updated = await prismService.sendToVendor(submissionId, userId, { vendorId });
     res.status(200).json({ data: updated });
   } catch (err) {
     next(err);

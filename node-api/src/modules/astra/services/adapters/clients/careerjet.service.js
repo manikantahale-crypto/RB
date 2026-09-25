@@ -41,7 +41,7 @@ async function fetchCareerjetJobs(keyword, location, options = {}) {
 
   // Determine user_agent: prioritize dynamic browser User-Agent, fallback to .env / default
   const userAgent = options.userAgent || process.env.CAREERJET_USER_AGENT || "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36";
-  const referer = process.env.CAREERJET_REFERER || "http://localhost:4000";
+  const referer = process.env.CAREERJET_REFERER || process.env.APP_URL || process.env.FRONTEND_URL || "http://127.0.0.1:4000";
 
   const url = new URL(baseUrl);
   url.searchParams.set("locale_code", localeCode);

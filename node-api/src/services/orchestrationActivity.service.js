@@ -104,7 +104,7 @@ async function getActivitySnapshot() {
 
   let orchApiOk = false;
   try {
-    const res = await fetch(`${env.ORCH_API_URL || "http://localhost:4100"}/health`, {
+    const res = await fetch(`${env.ORCH_API_URL}/health`, {
       signal: AbortSignal.timeout(3000),
     });
     orchApiOk = res.ok;
@@ -116,7 +116,7 @@ async function getActivitySnapshot() {
     enabled: env.PLATFORM_EVENTS_ENABLED !== "0" && env.PLATFORM_EVENTS_ENABLED !== "false",
     delegateMatch: env.ORCH_DELEGATE_MATCH === "1",
     organizationId: env.ORCH_ORGANIZATION_ID,
-    orchApiUrl: env.ORCH_API_URL || "http://localhost:4100",
+    orchApiUrl: env.ORCH_API_URL,
     orchApiOk,
     worker,
     bindings: bindings.map((b) => ({

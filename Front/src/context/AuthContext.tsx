@@ -57,7 +57,6 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
   }, []);
 
   const login = async (email: string, password: string) => {
-    localStorage.removeItem(TOKEN_KEY);
     const res = await authService.login(email, password);
     localStorage.setItem(TOKEN_KEY, res.token);
     setUser(res.user);
@@ -65,7 +64,6 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
   };
 
   const signup = async (fullName: string, email: string, password: string) => {
-    localStorage.removeItem(TOKEN_KEY);
     const res = await authService.signup(fullName, email, password);
     localStorage.setItem(TOKEN_KEY, res.token);
     setUser(res.user);

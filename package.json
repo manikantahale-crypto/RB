@@ -10,6 +10,7 @@
     "typecheck:contract": "npm run typecheck -w @tekisho/node-contract",
     "typecheck:routing": "npm run typecheck -w @tekisho/routing-contract",
     "typecheck:adapters": "tsc -p adapters --noEmit",
+    "check:contracts": "npm run typecheck:contract && npm run typecheck:routing && npm run test:contract",
     "test:contract": "npm test -w @tekisho/node-contract",
     "dev:admin-api": "npm run dev -w @tekisho/admin-api",
     "dev:admin-ui": "npm run dev -w @tekisho/admin",
@@ -18,7 +19,6 @@
     "dev:worker": "npm run start -w @tekisho/worker",
     "dev:orch": "npm run dev:worker",
     "dev:syntra-api": "npm run dev --prefix node-api",
-    "dev:relay": "npm run dev -w relay",
     "dev:syntra-ui": "npm run dev --prefix Front",
     "dev:syntra": "npx concurrently --kill-others-on-fail -n api,ui -c cyan,yellow \"npm run dev:syntra-api\" \"npx wait-on -t 120000 http-get://127.0.0.1:4000/health && npm run dev:syntra-ui\"",
     "dev": "npm run dev:syntra",
@@ -38,14 +38,19 @@
     "db:apply": "node scripts/apply-migration.mjs",
     "dev:worker:watch": "npm run dev:watch -w @tekisho/worker",
     "dev:preflight": "node scripts/dev-preflight.mjs",
+    "dev:gateway": "node gateway.js",
     "dev:all:log": "node scripts/tee.mjs logs/dev-all.log npm run dev:all",
-    "dev:all": "npm run dev:preflight && npx concurrently --kill-others-on-fail --handle-input -n syntra,front,ingress,worker,authoring,ui -c yellow,white,magenta,cyan,blue,green \"npm run dev:syntra-api\" \"npx wait-on -t 120000 http-get://127.0.0.1:4000/health && npm run dev:syntra-ui\" \"npm run dev:orch-api\" \"npx wait-on -t 120000 http-get://127.0.0.1:4100/health && npm run dev:worker\" \"npm run dev:admin-api\" \"npx wait-on -t 120000 http-get://127.0.0.1:4200/health && npm run dev:admin-ui\""
+    "dev:all": "npm run dev:preflight && npx concurrently --kill-others-on-fail --handle-input -n gateway,syntra,front,ingress,worker,authoring,ui -c gray,yellow,white,magenta,cyan,blue,green \"node gateway.js\" \"npm run dev:syntra-api\" \"npx wait-on -t 120000 http-get://127.0.0.1:4000/health && npx wait-on -t 120000 http-get://127.0.0.1:8080/healthz && npm run dev:syntra-ui\" \"npm run dev:orch-api\" \"npx wait-on -t 120000 http-get://127.0.0.1:4100/health && npm run dev:worker\" \"npm run dev:admin-api\" \"npx wait-on -t 120000 http-get://127.0.0.1:4200/health && npm run dev:admin-ui\"",
+    "start:render": "npx concurrently -n gateway,syntra,orch,worker,admin -c yellow,cyan,magenta,blue,green \"node gateway.js\" \"npm run start --prefix node-api\" \"npm run start -w @tekisho/api\" \"npm run start -w @tekisho/worker\" \"npm run start -w @tekisho/admin-api\""
   },
   "dependencies": {
     "@langchain/langgraph": "^1.4.9",
     "@langchain/langgraph-checkpoint-postgres": "^1.0.4",
+    "cors": "^2.8.5",
     "dotenv": "^16.4.7",
+    "express": "^5.2.1",
     "fastify": "*",
+    "http-proxy-middleware": "^4.2.0",
     "pg": "*",
     "pg-boss": "^12.27.0",
     "pino": "*",
@@ -53,6 +58,7 @@
     "zod": "*"
   },
   "devDependencies": {
+    "@types/cors": "^2.8.17",
     "@types/node": "*",
     "concurrently": "^10.0.4",
     "tsx": "*",

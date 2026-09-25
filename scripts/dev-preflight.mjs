@@ -24,6 +24,7 @@ import { execFileSync } from "node:child_process";
 
 /** Each service and the port it must have — no drifting to the next one free. */
 const PORTS = [
+  { port: 8080, what: "API gateway", script: "dev:gateway" },
   { port: 4000, what: "SYNTRA api (including RELAY smart inbox)", script: "dev:syntra-api" },
   { port: 3000, what: "SYNTRA front", script: "dev:syntra-ui" },
   { port: 4100, what: "orchestrator ingress", script: "dev:orch-api" },
@@ -101,7 +102,7 @@ for (const p of PORTS) if (await inUse(p.port)) taken.push(p);
 const workers = runningWorkers();
 
 if (taken.length === 0 && workers.length === 0) {
-  console.log("preflight — 4 ports free, no worker running. Starting.\n");
+  console.log("preflight — all ports free, no worker running. Starting.\n");
   process.exit(0);
 }
 

@@ -9,6 +9,7 @@ interface VendorSubmissionModalProps {
   isOpen: boolean;
   onClose: () => void;
   record: SubmissionRecord | null;
+  vendors?: any[];
 }
 
 export const CandidateSubmissionSidebarContent: React.FC<{ record: SubmissionRecord, onClose: () => void, onSubmit?: () => void }> = ({ record, onClose, onSubmit }) => {
@@ -21,14 +22,22 @@ export const CandidateSubmissionSidebarContent: React.FC<{ record: SubmissionRec
   React.useEffect(() => {
     let isMounted = true;
     const fetchPreview = async () => {
+      if (!record.vendorId && (!record.vendorName || record.vendorName === 'Not specified')) {
+        setVendorPreviewData(null);
+        setPreviewLoading(false);
+        return;
+      }
       setPreviewLoading(true);
       try {
-        const res = await apiFetch(`/submissions/${record.id}/vendor/preview`);
+        const query = record.vendorId ? `?vendorId=${encodeURIComponent(record.vendorId)}` : '';
+        const res = await apiFetch(`/submissions/${record.id}/vendor/preview${query}`);
         if (res.ok) {
           const json = await res.json();
           if (isMounted && json.data) {
             setVendorPreviewData(json.data);
           }
+        } else {
+          if (isMounted) setVendorPreviewData(null);
         }
       } catch {
         /* non-blocking */
@@ -38,13 +47,20 @@ export const CandidateSubmissionSidebarContent: React.FC<{ record: SubmissionRec
     };
     fetchPreview();
     return () => { isMounted = false; };
-  }, [record.id]);
+  }, [record.id, record.vendorId, record.vendorName]);
 
   const handleSubmit = async () => {
+    if (!record.vendorId && (!record.vendorName || record.vendorName === 'Not specified')) {
+      setSubmitError('Please assign a target vendor in the "Vendor Submission Preview" tab before submitting.');
+      return;
+    }
     setIsSubmitting(true);
+    setSubmitError(null);
     try {
       const res = await apiFetch(`/submissions/${record.id}/send-vendor`, {
-        method: 'POST'
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(record.vendorId ? { vendorId: record.vendorId } : {})
       });
       if (!res.ok) {
         const err = await res.json().catch(() => ({}));
@@ -109,6 +125,15 @@ export const CandidateSubmissionSidebarContent: React.FC<{ record: SubmissionRec
               <div className="p-8 text-center text-slate-400 text-xs">
                 <div className="w-5 h-5 border-2 border-purple-500 border-t-transparent rounded-full animate-spin mx-auto mb-2"></div>
                 Loading vendor email preview...
+              </div>
+            ) : (!record.vendorId && (!record.vendorName || record.vendorName === 'Not specified')) ? (
+              <div className="p-4 text-xs text-amber-300 bg-amber-500/10 border border-amber-500/30 rounded-lg space-y-1">
+                <div className="font-semibold flex items-center gap-1.5 text-amber-400">
+                  <Info className="w-4 h-4 text-amber-400" /> Target Vendor Required
+                </div>
+                <div className="text-slate-300">
+                  No vendor is currently linked to this submission. Please switch to the <strong>Vendor Submission Preview</strong> tab to select a vendor, then click Save before previewing and submitting.
+                </div>
               </div>
             ) : vendorPreviewData ? (
               <div className="space-y-3">
@@ -185,7 +210,7 @@ export const CandidateSubmissionSidebarContent: React.FC<{ record: SubmissionRec
         </button>
         <button 
           onClick={handleSubmit}
-          disabled={isSubmitting}
+          disabled={isSubmitting || (!record.vendorId && (!record.vendorName || record.vendorName === 'Not specified'))}
           className="px-6 py-2.5 rounded-lg bg-purple-600 hover:bg-purple-500 text-white text-[13px] font-bold flex items-center gap-2 transition shadow-lg shadow-purple-900/20 cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
         >
           {isSubmitting ? (
@@ -199,7 +224,15 @@ export const CandidateSubmissionSidebarContent: React.FC<{ record: SubmissionRec
   );
 };
 
-export const VendorSubmissionContent: React.FC<{ record: SubmissionRecord, onChange?: (record: SubmissionRecord) => void, onSave: () => void, onClose: () => void, onDirtyChange?: (dirty: boolean) => void }> = ({ record, onChange, onSave, onClose, onDirtyChange }) => {
+export const VendorSubmissionContent: React.FC<{
+  record: SubmissionRecord,
+  vendors?: any[],
+  onChange?: (record: SubmissionRecord) => void,
+  onSave: () => void,
+  onClose: () => void,
+  onDirtyChange?: (dirty: boolean) => void
+}> = ({ record, vendors, onChange, onSave, onClose, onDirtyChange }) => {
+  const [selectedVendorId, setSelectedVendorId] = React.useState<string>(record.vendorId || '');
   const [brief, setBrief] = React.useState(record.brief || '');
   const [candidateName, setCandidateName] = React.useState(record.candidateName || '');
   const [candidatePhone, setCandidatePhone] = React.useState(record.candidatePhone || '');
@@ -220,9 +253,38 @@ export const VendorSubmissionContent: React.FC<{ record: SubmissionRecord, onCha
   const [saveError, setSaveError] = React.useState<string | null>(null);
   const attachmentInputRef = React.useRef<HTMLInputElement>(null);
 
+  React.useEffect(() => {
+    if (record.vendorId && record.vendorId !== selectedVendorId) {
+      setSelectedVendorId(record.vendorId);
+    }
+  }, [record.vendorId]);
+
   const notifyChange = (updatedRecord: SubmissionRecord) => {
     onDirtyChange?.(true);
     onChange?.(updatedRecord);
+  };
+
+  const handleVendorChange = (newVendorId: string) => {
+    setSelectedVendorId(newVendorId);
+    onDirtyChange?.(true);
+    const matchedVendor = vendors?.find(v => v.id === newVendorId);
+    if (matchedVendor) {
+      notifyChange({
+        ...record,
+        vendorId: matchedVendor.id,
+        vendorName: matchedVendor.name || matchedVendor.company_name || matchedVendor.contact_name,
+        vendorEmail: matchedVendor.email || matchedVendor.contact_email || record.vendorEmail,
+        vendorPhone: matchedVendor.phone || matchedVendor.contact_phone || record.vendorPhone,
+        vendorLocation: matchedVendor.location || record.vendorLocation,
+        vendorStatus: matchedVendor.status || 'Active'
+      });
+    } else {
+      notifyChange({
+        ...record,
+        vendorId: newVendorId,
+        vendorName: newVendorId ? record.vendorName : 'Not specified'
+      });
+    }
   };
 
   const handleSave = async () => {
@@ -235,20 +297,34 @@ export const VendorSubmissionContent: React.FC<{ record: SubmissionRecord, onCha
         body: JSON.stringify({
           rate: parsedRate,
           rateType: rateType,
-          availability: availability || 'Not specified'
+          availability: availability || 'Not specified',
+          vendorId: selectedVendorId || undefined,
+          candidateName: candidateName || undefined,
+          candidatePhone: candidatePhone || undefined,
+          candidateEmail: candidateEmail || undefined,
+          candidateLocation: candidateLocation || undefined,
+          candidateWorkAuth: candidateWorkAuth || undefined,
+          brief: brief || undefined
         })
       });
 
       if (!res.ok) {
         const err = await res.json().catch(() => ({}));
-        setSaveError(err.message || err.error || 'Failed to update rate & availability');
+        setSaveError(err.message || err.error || 'Failed to update submission fields');
         setIsSaving(false);
         return;
       }
 
       const formattedPayRate = parsedRate ? `$${parsedRate}/${rateType === 'HOURLY' ? 'hr' : 'yr'}` : 'Not specified';
+      const matchedVendor = vendors?.find(v => v.id === selectedVendorId);
       const updatedRec: SubmissionRecord = {
         ...record,
+        vendorId: selectedVendorId || record.vendorId,
+        vendorName: matchedVendor ? (matchedVendor.name || matchedVendor.company_name || matchedVendor.contact_name) : record.vendorName,
+        vendorEmail: matchedVendor?.email || matchedVendor?.contact_email || record.vendorEmail,
+        vendorPhone: matchedVendor?.phone || matchedVendor?.contact_phone || record.vendorPhone,
+        vendorLocation: matchedVendor?.location || record.vendorLocation,
+        vendorStatus: matchedVendor?.status || record.vendorStatus,
         candidateName,
         candidatePhone,
         candidateLocation,
@@ -266,7 +342,7 @@ export const VendorSubmissionContent: React.FC<{ record: SubmissionRecord, onCha
       setIsSaving(false);
       onSave();
     } catch (err: any) {
-      setSaveError(err.message || 'Error updating submission rate & availability');
+      setSaveError(err.message || 'Error updating submission');
       setIsSaving(false);
     }
   };
@@ -331,23 +407,50 @@ export const VendorSubmissionContent: React.FC<{ record: SubmissionRecord, onCha
 
             <div className="grid grid-cols-1 md:grid-cols-2 gap-6 divide-y md:divide-y-0 md:divide-x divide-[#261e38]">
               {/* Left Section — Vendor Information */}
-              <div className="flex items-start gap-4 pr-0 md:pr-6 pt-1 md:pt-0">
+              <div className="flex flex-col justify-between pr-0 md:pr-6 pt-1 md:pt-0">
                 <div>
-                  <div className="flex items-center gap-2 mb-1">
-                    <span className="font-bold text-white text-base">
-                      {record.vendorName || 'Not specified'}
-                    </span>
+                  <div className="flex items-center justify-between mb-2">
+                    <label className="text-[11px] font-bold text-purple-300 uppercase tracking-wider">
+                      Target Vendor
+                    </label>
                     {record.vendorStatus && (
                       <span className="px-1.5 py-0.5 rounded bg-purple-500/10 text-purple-400 border border-purple-500/20 text-[9px] font-bold tracking-wide uppercase">
                         {record.vendorStatus}
                       </span>
                     )}
                   </div>
-                  <div className="text-xs text-slate-400 mb-1">
-                    Vendor ID: {record.vendorId ? `VEN-${String(record.vendorId).substring(0, 4).toUpperCase()}` : 'Not specified'}
-                  </div>
-                  <div className="text-xs text-slate-400 mb-3">
-                    Vendor Name: {record.vendorName || 'Not specified'}
+
+                  <select
+                    value={selectedVendorId}
+                    onChange={(e) => handleVendorChange(e.target.value)}
+                    className="w-full bg-[#0b0914] border border-[#261e38] focus:border-purple-500/60 rounded-lg px-3 py-2 text-xs text-white focus:outline-none mb-3 cursor-pointer"
+                  >
+                    <option value="">-- Select / Assign Vendor --</option>
+                    {selectedVendorId && !vendors?.some(v => v.id === selectedVendorId) && (
+                      <option value={selectedVendorId}>
+                        {record.vendorName || `Vendor (${selectedVendorId.substring(0, 8)})`}
+                      </option>
+                    )}
+                    {vendors?.map(v => (
+                      <option key={v.id} value={v.id}>
+                        {v.name || v.company_name || v.contact_name} {v.domain ? `(${v.domain})` : ''}
+                      </option>
+                    ))}
+                  </select>
+
+                  <div className="text-xs text-slate-400 space-y-1 bg-[#0b0914]/80 p-2.5 rounded-lg border border-[#261e38]/70">
+                    <div className="flex justify-between items-center">
+                      <span className="text-slate-500">Vendor ID:</span>
+                      <span className="text-slate-300 font-mono text-[11px]">
+                        {selectedVendorId ? `VEN-${String(selectedVendorId).substring(0, 8).toUpperCase()}` : 'Not assigned'}
+                      </span>
+                    </div>
+                    <div className="flex justify-between items-center">
+                      <span className="text-slate-500">Contact Email:</span>
+                      <span className="text-slate-300 truncate max-w-[170px]">
+                        {record.vendorEmail || 'Not specified'}
+                      </span>
+                    </div>
                   </div>
                 </div>
               </div>
@@ -623,7 +726,8 @@ export const VendorSubmissionContent: React.FC<{ record: SubmissionRecord, onCha
 export const VendorSubmissionModal: React.FC<VendorSubmissionModalProps> = ({ 
   isOpen, 
   onClose, 
-  record 
+  record,
+  vendors
 }) => {
   if (!isOpen || !record) return null;
 
@@ -655,6 +759,7 @@ export const VendorSubmissionModal: React.FC<VendorSubmissionModalProps> = ({
         {/* Content Body */}
         <VendorSubmissionContent 
           record={record} 
+          vendors={vendors}
           onSave={onClose} 
           onClose={onClose} 
         />

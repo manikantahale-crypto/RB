@@ -1,5 +1,6 @@
 const jwt = require("jsonwebtoken");
 const env = require("../config/env");
+const log = require("../utils/logger");
 
 /**
  * Require Authorization: Bearer <token>.
@@ -13,19 +14,53 @@ const env = require("../config/env");
  */
 function requireAuth(req, res, next) {
   const authHeader = req.headers.authorization || "";
+  const hasAuth = Boolean(authHeader);
+  const authType = authHeader ? authHeader.split(" ")[0] : "None";
+  const cookieHeader = req.headers.cookie || "";
+  const hasCookie = Boolean(cookieHeader);
+  const requestId = req.id || req.requestId || req.headers["x-request-id"] || "none";
+  const route = req.originalUrl || req.url;
+
+  if (log.isDebugEnabled()) {
+    log.debug(
+      `[AUTH DEBUG] [request=${requestId}] route=${route} authorizationPresent=${hasAuth} authType=${authType} cookiePresent=${hasCookie}`
+    );
+  }
+
   if (!authHeader || !authHeader.startsWith("Bearer ")) {
-    return res.status(401).json({ error: "Unauthorized: Missing or malformed token" });
+    const reason = !authHeader ? "Missing Authorization header" : "Malformed Authorization header (not Bearer)";
+    log.warn(`[AUTH] 401 Unauthorized for ${req.method} ${route}: ${reason} [request=${requestId}]`);
+    if (log.isDebugEnabled()) {
+      log.debug(
+        `[AUTH DEBUG] [request=${requestId}] route=${route} authenticated=false reason="${reason}"`
+      );
+    }
+    return res.status(401).json({ error: "Unauthorized: Missing or malformed token", requestId });
   }
 
   const token = authHeader.substring(7).trim();
   if (!token) {
-    return res.status(401).json({ error: "Unauthorized: Missing token" });
+    const reason = "Empty token after Bearer";
+    log.warn(`[AUTH] 401 Unauthorized for ${req.method} ${route}: ${reason} [request=${requestId}]`);
+    if (log.isDebugEnabled()) {
+      log.debug(
+        `[AUTH DEBUG] [request=${requestId}] route=${route} authenticated=false reason="${reason}"`
+      );
+    }
+    return res.status(401).json({ error: "Unauthorized: Missing token", requestId });
   }
 
   try {
     const payload = jwt.verify(token, env.AUTH_JWT_SECRET);
     if (!payload || !payload.userId) {
-      return res.status(401).json({ error: "Unauthorized: Invalid token payload" });
+      const reason = "Invalid token payload: missing userId";
+      log.warn(`[AUTH] 401 Unauthorized for ${req.method} ${route}: ${reason} [request=${requestId}]`);
+      if (log.isDebugEnabled()) {
+        log.debug(
+          `[AUTH DEBUG] [request=${requestId}] route=${route} authenticated=false reason="${reason}"`
+        );
+      }
+      return res.status(401).json({ error: "Unauthorized: Invalid token payload", requestId });
     }
 
     req.user = {
@@ -37,12 +72,25 @@ function requireAuth(req, res, next) {
     req.userId = payload.userId;
     req.orgId = payload.orgId ?? null;
 
+    if (log.isDebugEnabled()) {
+      log.debug(
+        `[AUTH DEBUG] [request=${requestId}] route=${route} authenticated=true userIdPresent=true userId=${payload.userId}`
+      );
+    }
+
     return next();
   } catch (err) {
-    if (err.name === "TokenExpiredError") {
-      return res.status(401).json({ error: "Unauthorized: Token expired" });
+    const reason = err.name === "TokenExpiredError" ? "Token expired" : `Invalid token (${err.message})`;
+    log.warn(`[AUTH] 401 Unauthorized for ${req.method} ${route}: ${reason} [request=${requestId}]`);
+    if (log.isDebugEnabled()) {
+      log.debug(
+        `[AUTH DEBUG] [request=${requestId}] route=${route} authenticated=false reason="${reason}"`
+      );
     }
-    return res.status(401).json({ error: "Unauthorized: Invalid token" });
+    if (err.name === "TokenExpiredError") {
+      return res.status(401).json({ error: "Unauthorized: Token expired", requestId });
+    }
+    return res.status(401).json({ error: "Unauthorized: Invalid token", requestId });
   }
 }
 

@@ -1,4 +1,4 @@
-const API_BASE_URL = 'http://localhost:4000';
+import { API_BASE_URL } from '../config';
 const TOKEN_KEY = 'syntra_auth_token';
 
 /**
@@ -7,38 +7,90 @@ const TOKEN_KEY = 'syntra_auth_token';
  * 
  * Works seamlessly with both JSON requests and FormData uploads.
  */
+function isClientDebug(): boolean {
+  if (typeof window === 'undefined') return false;
+  return (
+    (window as any).__DEBUG_MODE__ === true ||
+    localStorage.getItem('DEBUG_MODE') === 'true' ||
+    import.meta.env.VITE_DEBUG_MODE === 'true'
+  );
+}
+
 export async function apiFetch(
   input: string | URL | Request,
-  init?: RequestInit
+  init?: RequestInit,
+  retryAttempt = 0
 ): Promise<Response> {
   let url: string;
+  let pathOnly: string;
   if (typeof input === 'string') {
     if (input.startsWith('http://') || input.startsWith('https://')) {
       url = input;
+      pathOnly = input;
     } else {
-      url = `${API_BASE_URL}${input.startsWith('/') ? '' : '/'}${input}`;
+      pathOnly = input.startsWith('/') ? input : `/${input}`;
+      url = `${API_BASE_URL}${pathOnly}`;
     }
   } else if (input instanceof URL) {
     url = input.toString();
+    pathOnly = input.pathname + input.search;
   } else {
     url = input.url;
+    pathOnly = input.url;
   }
 
-  const token = localStorage.getItem(TOKEN_KEY);
+  const rawToken = typeof window !== 'undefined' ? (localStorage.getItem(TOKEN_KEY) || sessionStorage.getItem(TOKEN_KEY)) : null;
+  const token = rawToken ? rawToken.trim() : null;
   const headers = new Headers(init?.headers);
 
-  if (token && !headers.has('Authorization')) {
-    headers.set('Authorization', `Bearer ${token}`);
+  // Preserve or generate request correlation ID
+  let requestId = headers.get('X-Request-Id');
+  if (!requestId) {
+    requestId = `cl-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 7)}`;
+    headers.set('X-Request-Id', requestId);
+  }
+
+  const existingAuth = headers.get('Authorization');
+  if (token && token !== 'undefined' && token !== 'null' && (!existingAuth || existingAuth === 'undefined' || existingAuth === 'null' || existingAuth.trim() === '')) {
+    const cleanToken = token.startsWith('Bearer ') ? token.slice(7).trim() : token.trim();
+    if (cleanToken && cleanToken !== 'undefined' && cleanToken !== 'null') {
+      headers.set('Authorization', `Bearer ${cleanToken}`);
+    }
   }
 
   if (typeof init?.body === 'string' && !headers.has('Content-Type')) {
     headers.set('Content-Type', 'application/json');
   }
 
-  return fetch(url, {
-    ...init,
-    headers,
-  });
+  const method = (init?.method || 'GET').toUpperCase();
+  const debug = isClientDebug();
+  const startTime = debug ? performance.now() : 0;
+
+  try {
+    const res = await fetch(url, {
+      ...init,
+      headers,
+    });
+
+    if (debug || res.status === 401) {
+      const duration = Math.round(performance.now() - startTime);
+      const retryTag = retryAttempt > 0 ? ` retry=${retryAttempt}` : '';
+      const authAttached = headers.has('Authorization');
+      console.log(
+        `[API DEBUG] ${method} ${pathOnly} status=${res.status} duration=${duration}ms requestId=${requestId} authAttached=${authAttached}${retryTag}`
+      );
+    }
+
+    return res;
+  } catch (err: any) {
+    if (debug) {
+      const duration = Math.round(performance.now() - startTime);
+      console.error(
+        `[API DEBUG ERROR] ${method} ${pathOnly} duration=${duration}ms requestId=${requestId} error=${err?.message || err}`
+      );
+    }
+    throw err;
+  }
 }
 
 /** Long-running requests (e.g. Run Match with sync Tier 3 scoring). */
@@ -65,7 +117,7 @@ export async function apiFetchWithRetry(
   let lastResponse: Response | null = null;
   for (let attempt = 0; attempt < retries; attempt++) {
     try {
-      const res = await apiFetch(input, init);
+      const res = await apiFetch(input, init, attempt);
       lastResponse = res;
       if (res.ok) return res;
       // Do not retry auth/client errors

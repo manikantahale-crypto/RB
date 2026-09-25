@@ -1,0 +1,88 @@
+services:
+  - type: web
+    name: benchsales-backend
+    runtime: node
+    plan: starter
+    buildCommand: npm install
+    startCommand: npm run start:render
+    healthCheckPath: /healthz
+    autoDeploy: false
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: SYNTRA_PORT
+        value: "4000"
+      - key: API_PORT
+        value: "4100"
+      - key: ADMIN_API_PORT
+        value: "4200"
+      - key: FRONTEND_URL
+        value: https://bench-sales-pi.vercel.app
+      - key: ALLOWED_ORIGINS
+        value: https://bench-sales-pi.vercel.app
+      - key: ADMIN_ORIGIN
+        value: https://bench-sales-pi.vercel.app
+      - key: PLATFORM_EVENTS_ENABLED
+        value: "1"
+      - key: ORCH_DELEGATE_MATCH
+        value: "1"
+      - key: ORCH_EMIT_JD_RECEIVED
+        value: "1"
+      - key: ORCH_DELEGATE_ASTRA
+        value: "0"
+      - key: ADMIN_ALLOW_ANONYMOUS
+        value: ""
+      # Database connection strings (Supabase Session Pooler & Direct Migrator)
+      - key: DATABASE_URL
+        sync: false
+      - key: DATABASE_MIGRATOR_URL
+        sync: false
+      - key: DATABASE_RELAY_URL
+        sync: false
+      # Security & Authentication Secrets
+      - key: AUTH_JWT_SECRET
+        sync: false
+      - key: INTERNAL_API_SECRET
+        sync: false
+      # AI & LLM Providers
+      - key: AI_PROVIDER
+        value: gemini
+      - key: AI_MODEL
+        value: gemini-2.5-flash
+      - key: AI_API_KEY
+        sync: false
+      - key: LLM_PROVIDER
+        value: gemini
+      - key: LLM_API_KEY
+        sync: false
+      - key: OPENAI_API_KEY
+        sync: false
+      # Email Intake & Dispatch (Relay Smart Inbox & ASTRA)
+      - key: EMAIL_PROVIDER
+        value: gmail_api
+      - key: EMAIL_SEND_PROVIDER
+        value: gmail_api
+      - key: GMAIL_CLIENT_ID
+        sync: false
+      - key: GMAIL_CLIENT_SECRET
+        sync: false
+      - key: GMAIL_REFRESH_TOKEN
+        sync: false
+      - key: GMAIL_SENDER_EMAIL
+        sync: false
+      - key: SMTP_HOST
+        sync: false
+      - key: SMTP_PORT
+        sync: false
+      - key: SMTP_USERNAME
+        sync: false
+      - key: SMTP_PASSWORD
+        sync: false
+      - key: IMAP_HOST
+        sync: false
+      - key: IMAP_PORT
+        sync: false
+      - key: IMAP_USERNAME
+        sync: false
+      - key: IMAP_PASSWORD
+        sync: false

@@ -496,7 +496,7 @@ export function registerRelayRoutes(app: FastifyInstance): void {
     );
 
     const fromEmail = latestInbound?.fromEmail || thread.latestSenderEmail || contextMsg.fromEmail || '';
-    const base = (process.env.SYNTRA_API_URL || 'http://localhost:4000').replace(/\/$/, '');
+    const base = (process.env.SYNTRA_API_URL || `http://127.0.0.1:${process.env.SYNTRA_PORT || '4000'}`).replace(/\/$/, '');
 
     const upstream = await fetch(`${base}/internal/astra/intake/email`, {
       method: 'POST',

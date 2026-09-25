@@ -450,7 +450,9 @@ async function executeTransition(submissionId, userId, targetStatus, updateData 
  * Transitions DRAFT -> PENDING_CONSENT on initial send.
  * Remains PENDING_CONSENT and increments resend count on eligible resend.
  */
-async function requestCandidateConsent(submissionId, userId, { notes, channel = "MANUAL", contractType } = {}) {
+async function requestCandidateConsent(submissionId, userId, { notes, channel = "MANUAL", contractType, requestId } = {}) {
+  const reqId = requestId || "prism-consent";
+  log.debug(`[request=${reqId}] [prism.workflow.consent] Starting consent request submissionId=${submissionId} userId=${userId}`);
   const maxResends = env.CONSENT_MAX_RESENDS || 3;
   const cooldownMinutes = env.CONSENT_RESEND_COOLDOWN_MINUTES || 60;
   const now = new Date();
@@ -463,6 +465,7 @@ async function requestCandidateConsent(submissionId, userId, { notes, channel = 
   let jobData = null;
 
   // Phase 1: Fast Atomic Transaction (< 2ms) to claim state and enforce concurrency lock
+  const tDbStart = Date.now();
   const client1 = await pool.connect();
   try {
     await client1.query("BEGIN");
@@ -562,6 +565,9 @@ async function requestCandidateConsent(submissionId, userId, { notes, channel = 
     }
 
     await client1.query("COMMIT");
+    log.debug(
+      `[request=${reqId}] [prism.workflow.consent] Phase 1 DB committed submissionId=${submissionId} candidateId=${candidateData?.id} jobId=${targetJobId} duration=${Date.now() - tDbStart}ms`
+    );
   } catch (err) {
     await client1.query("ROLLBACK");
     throw err;
@@ -581,6 +587,9 @@ async function requestCandidateConsent(submissionId, userId, { notes, channel = 
     requiredSkills: jobData?.required_skills,
   });
 
+  const tRelayStart = Date.now();
+  log.debug(`[request=${reqId}] [prism.workflow.consent] Phase 2 dispatching to Relay submissionId=${submissionId} candidateId=${candidateData?.id}`);
+
   try {
     const relayAdapter = require("../../../services/relay.adapter");
     await relayAdapter.sendCandidateConsentEmail({
@@ -589,8 +598,15 @@ async function requestCandidateConsent(submissionId, userId, { notes, channel = 
       candidate: candidateData,
       subject: canonical.subject,
       body: canonical.body,
+      requestId: reqId,
     });
+    log.debug(
+      `[request=${reqId}] [prism.workflow.consent] Phase 2 Relay dispatch complete submissionId=${submissionId} duration=${Date.now() - tRelayStart}ms`
+    );
   } catch (err) {
+    log.debug(
+      `[request=${reqId}] [prism.workflow.consent] Phase 2 Relay dispatch failed submissionId=${submissionId} duration=${Date.now() - tRelayStart}ms error=${err.message}`
+    );
     // If network call fails, revert DB state back in a fast transaction
     const clientRevert = await pool.connect();
     try {
@@ -957,17 +973,30 @@ async function sendToVendor(submissionId, userId, options = {}) {
       );
     }
 
-    vendor = await resolveVendorForJob(
-      clientCheck,
-      job,
-      userId
-    );
+    const explicitVendorId = options?.vendorId || sub.vendor_id || job.vendor_id;
+    if (explicitVendorId) {
+      vendor = await vendorRepo.getVendorById(clientCheck, explicitVendorId, userId);
+    }
+    if (!vendor) {
+      vendor = await resolveVendorForJob(
+        clientCheck,
+        job,
+        userId
+      );
+    }
 
     if (!vendor) {
       throw createWorkflowError(
-        "No eligible vendor found for this job.",
-        400
+        "No eligible vendor found for this job. Please select a vendor.",
+        400,
+        "NO_VENDOR_ASSOCIATED"
       );
+    }
+
+    // Persist vendor link to job if not already set
+    if (job && !job.vendor_id && vendor.id) {
+      await clientCheck.query("UPDATE core.requirements SET vendor_id = $1, updated_at = now() WHERE id = $2", [vendor.id, job.id]);
+      job.vendor_id = vendor.id;
     }
   } finally {
     clientCheck.release();
@@ -1175,13 +1204,27 @@ async function confirmRate(submissionId, userId, { rate, rateType, availability 
  * Step 8 & 9 Combined: Confirm Rate & Availability
  * Handles both sequential steps or updating rates at valid states.
  */
-async function confirmRateAndAvailability(submissionId, userId, { rate, rateType, availability }) {
+async function confirmRateAndAvailability(
+  submissionId,
+  userId,
+  { rate, rateType, availability, vendorId, candidateUpdates, brief } = {}
+) {
   const submission = await prismRepo.getSubmissionById(submissionId, userId);
   if (!submission) throw createWorkflowError("Submission not found or unauthorized.", 404);
 
   if (["SUBMITTED", "REJECTED", "WITHDRAWN"].includes(submission.status)) {
     throw createWorkflowError(`Cannot update rate/availability in status '${submission.status}'.`, 400);
   }
+
+  // Update rate, availability, vendor, and candidate info
+  const updatedSub = await prismRepo.updateSubmissionRateAvailability(null, submissionId, userId, {
+    rate: rate !== undefined && rate !== null ? Number(rate) : submission.rate,
+    rateType: rateType ? rateType.toUpperCase() : submission.rate_type,
+    availability: availability || submission.availability,
+    vendorId,
+    candidateUpdates,
+    brief,
+  });
 
   // If in VENDOR_VALIDATED -> First confirm availability, then rate
   if (submission.status === WORKFLOW_STATUSES.VENDOR_VALIDATED) {
@@ -1203,12 +1246,7 @@ async function confirmRateAndAvailability(submissionId, userId, { rate, rateType
     return await confirmRate(submissionId, userId, { rate, rateType, availability });
   }
 
-  // If already at or beyond RATE_CONFIRMED (e.g. PENDING_RTR, READY) -> Update values
-  return await prismRepo.updateSubmissionRateAvailability(null, submissionId, userId, {
-    rate: rate ? Number(rate) : submission.rate,
-    rateType: rateType ? rateType.toUpperCase() : submission.rate_type,
-    availability: availability || submission.availability,
-  });
+  return updatedSub;
 }
 
 /**
@@ -1674,11 +1712,11 @@ async function getConsentPreview(submissionId, userId, { contractType } = {}) {
     requiredSkills: job?.required_skills,
   });
 
-  log.success("consent preview generated");
+  log.info("consent preview generated");
   return canonical;
 }
 
-async function getVendorPreview(submissionId, userId) {
+async function getVendorPreview(submissionId, userId, options = {}) {
   log.info(`[VENDOR] preview submission=${submissionId}`);
 
   const sub = await prismRepo.getSubmissionById(submissionId, userId);
@@ -1701,13 +1739,27 @@ async function getVendorPreview(submissionId, userId) {
     job = await jobRepo.getJobById(jobId, userId);
   }
 
-  if (!job || !job.vendor_id) {
-    throw createWorkflowError("Job does not have an associated Vendor.", 400);
+  const targetVendorId = options?.vendorId || sub.vendor_id || sub.vendorId || job?.vendor_id;
+  let vendor = null;
+  if (targetVendorId) {
+    vendor = await vendorRepo.getVendorById(targetVendorId, userId);
+  }
+  if (!vendor && job) {
+    vendor = await resolveVendorForJob(pool, job, userId);
   }
 
-  const vendor = await vendorRepo.getVendorById(job.vendor_id, userId);
   if (!vendor) {
-    throw createWorkflowError("Vendor profile not found.", 404);
+    throw createWorkflowError(
+      "Job does not have an associated Vendor. Please select a vendor.",
+      400,
+      "NO_VENDOR_ASSOCIATED"
+    );
+  }
+
+  // Persist vendor link to job if not already set
+  if (job && !job.vendor_id && vendor.id) {
+    await pool.query("UPDATE core.requirements SET vendor_id = $1, updated_at = now() WHERE id = $2", [vendor.id, job.id]);
+    job.vendor_id = vendor.id;
   }
 
   const maskedProfile = sub.maskedProfile && sub.maskedProfile.maskedCandidateId
@@ -1730,7 +1782,7 @@ async function getVendorPreview(submissionId, userId) {
     companyName: process.env.COMPANY_NAME || "Syntra Portal",
   });
 
-  log.success("vendor preview generated");
+  log.info("vendor preview generated");
   return canonical;
 }
 
@@ -1762,7 +1814,7 @@ async function getConsultantConfirmationPreview(submissionId, userId) {
     companyName: process.env.COMPANY_NAME || "Syntra Portal",
   });
 
-  log.success("consultant confirmation preview generated");
+  log.info("consultant confirmation preview generated");
   return canonical;
 }
 
@@ -1808,7 +1860,7 @@ async function getVendorConfirmationPreview(submissionId, userId) {
     companyName: process.env.COMPANY_NAME || "Syntra Portal",
   });
 
-  log.success("vendor confirmation preview generated");
+  log.info("vendor confirmation preview generated");
   return canonical;
 }
 

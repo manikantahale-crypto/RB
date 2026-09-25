@@ -426,6 +426,26 @@ export const SubmissionRTR: React.FC<SubmissionRTRProps> = ({ navigationContext,
   const [resumeHistory, setResumeHistory] = useState<any[]>([]);
   const [previewingResume, setPreviewingResume] = useState<any>(null);
 
+  useEffect(() => {
+    if (resumeModalId) {
+      const activeRecord = records.find(r => r.id === resumeModalId);
+      if (activeRecord) {
+        const candidateBase = (activeRecord.candidateName || 'Candidate').replace(/[^a-zA-Z0-9]/g, '_');
+        setResumeHistory([
+          {
+            id: 'current-resume',
+            version: 'v1.0',
+            name: `${candidateBase}_Resume.pdf`,
+            size: '2.4 MB',
+            uploader: 'Recruiter',
+            date: new Date(activeRecord.updatedAt || Date.now()).toLocaleDateString(),
+            isCurrent: true,
+          }
+        ]);
+      }
+    }
+  }, [resumeModalId, records]);
+
   const handleDownloadResume = (resume: any) => {
     if (resume?.fileObj) {
       const url = URL.createObjectURL(resume.fileObj);
@@ -2030,10 +2050,16 @@ export const SubmissionRTR: React.FC<SubmissionRTRProps> = ({ navigationContext,
                         </div>
 
                         <div className="flex items-center gap-3 relative z-10">
-                          <button onClick={() => setPreviewingResume(resumeHistory.find(r => r.isCurrent))} className="px-3.5 py-2 rounded-lg bg-[#22183c] hover:bg-[#2c204d] text-white text-xs font-medium border border-[#3b3054] transition flex items-center gap-1.5 cursor-pointer">
+                          <button onClick={() => {
+                            const activeResume = resumeHistory.find(r => r.isCurrent) || { name: `${(resumeModalRecord?.candidateName || 'Candidate').replace(/\s+/g, '_')}_Resume.pdf` };
+                            setPreviewingResume(activeResume);
+                          }} className="px-3.5 py-2 rounded-lg bg-[#22183c] hover:bg-[#2c204d] text-white text-xs font-medium border border-[#3b3054] transition flex items-center gap-1.5 cursor-pointer">
                             <Eye className="w-4 h-4 text-slate-300" /> Preview
                           </button>
-                          <button onClick={() => handleDownloadResume(resumeHistory.find(r => r.isCurrent))} className="px-3.5 py-2 rounded-lg bg-[#22183c] hover:bg-[#2c204d] text-white text-xs font-medium border border-[#3b3054] transition flex items-center gap-1.5 cursor-pointer">
+                          <button onClick={() => {
+                            const activeResume = resumeHistory.find(r => r.isCurrent) || { name: `${(resumeModalRecord?.candidateName || 'Candidate').replace(/\s+/g, '_')}_Resume.pdf` };
+                            handleDownloadResume(activeResume);
+                          }} className="px-3.5 py-2 rounded-lg bg-[#22183c] hover:bg-[#2c204d] text-white text-xs font-medium border border-[#3b3054] transition flex items-center gap-1.5 cursor-pointer">
                             <Download className="w-4 h-4 text-slate-300" /> Download
                           </button>
                         </div>
@@ -2154,6 +2180,7 @@ export const SubmissionRTR: React.FC<SubmissionRTRProps> = ({ navigationContext,
                   <div className="h-full bg-[#120d1f] rounded-xl border border-[#261e38] overflow-hidden">
                     <VendorSubmissionContent
                       record={resumeModalRecord}
+                      vendors={vendorsList}
                       onChange={(updatedRecord) => { setIsDirty(true); setRecords(records.map(r => r.id === updatedRecord.id ? updatedRecord : r)); }}
                       onSave={() => { setIsDirty(false); fetchRecords(); setResumeModalTab('RTR Preview'); }}
                       onClose={() => handleAttemptAction({ type: 'CLOSE' })}
@@ -2678,6 +2705,7 @@ export const SubmissionRTR: React.FC<SubmissionRTRProps> = ({ navigationContext,
         isOpen={!!vendorSubmissionModalId}
         onClose={() => setVendorSubmissionModalId(null)}
         record={vendorSubmissionModalRecord || null}
+        vendors={vendorsList}
       />
 
       {/* PREVIEW RESUME MODAL */}
@@ -2687,7 +2715,7 @@ export const SubmissionRTR: React.FC<SubmissionRTRProps> = ({ navigationContext,
             <div className="px-6 py-4 border-b border-[#261e38] flex justify-between items-center bg-[#0c0916]">
               <h2 className="text-lg font-bold text-white flex items-center gap-2">
                 <FileText className="w-5 h-5 text-indigo-400" />
-                Previewing: {previewingResume.name}
+                Previewing: {previewingResume?.name || 'Resume'}
               </h2>
               <div className="flex gap-2">
                 <button onClick={() => handleDownloadResume(previewingResume)} className="text-slate-400 hover:text-white transition rounded p-1.5 bg-[#17102b] border border-[#2b2144] hover:bg-[#201936] cursor-pointer">

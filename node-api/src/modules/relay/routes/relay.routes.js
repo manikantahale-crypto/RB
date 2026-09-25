@@ -7,6 +7,7 @@
 const express = require("express");
 const { v4: uuidv4 } = require("uuid");
 const log = require("../../../utils/logger");
+const env = require("../../../config/env");
 const { requireInternalSecret } = require("../../../middleware/internalSecret");
 
 // Canonical DB Pool & Relay Services (zero ORM dependencies)
@@ -79,7 +80,7 @@ async function hasConsentThreadForJob(candidateId, jobId) {
 }
 
 async function notifyConsentSent(args) {
-  const base = `http://127.0.0.1:${process.env.PORT || 4000}`;
+  const base = `http://127.0.0.1:${env.PORT}`;
   try {
     const res = await fetch(`${base}/internal/pipeline/consent-sent`, {
       method: "POST",
@@ -104,7 +105,7 @@ router.get("/relay-health", (_req, res) => {
     status: "ok",
     service: "relay",
     mode: "in-process",
-    publicApi: ":4000",
+    publicApi: `:${env.PORT}`,
     timestamp: new Date().toISOString(),
   });
 });
@@ -493,7 +494,7 @@ router.post("/threads/:threadId/promote-to-jd", async (req, res, next) => {
     );
 
     const fromEmail = latestInbound?.fromEmail || thread.latestSenderEmail || contextMsg.fromEmail || "";
-    const base = `http://127.0.0.1:${process.env.PORT || 4000}`;
+    const base = `http://127.0.0.1:${env.PORT}`;
 
     const upstream = await fetch(`${base}/internal/astra/intake/email`, {
       method: "POST",
@@ -679,10 +680,17 @@ router.post("/internal/shortlist/approved", requireInternalSecret, async (req, r
 });
 
 router.post("/internal/consent/send", requireInternalSecret, async (req, res, next) => {
+  const reqId = req.id || req.headers["x-request-id"] || "relay-consent";
+  const tRouteStart = Date.now();
   const body = req.body || {};
   const jobId = body.jobId || body.requirement_id;
   const candidates = body.top_candidates || [];
   const force = Boolean(body.force);
+
+  log.debug(
+    `[request=${reqId}] [relay.consent.send] Request received jobId=${jobId} candidatesCount=${candidates.length} force=${force}`
+  );
+
   if (!jobId || !candidates.length) {
     return res.status(400).json({ error: "jobId and top_candidates required" });
   }
@@ -776,9 +784,12 @@ router.post("/internal/consent/send", requireInternalSecret, async (req, res, ne
       }
 
       let ok = false;
+      const tSend = Date.now();
+      log.debug(`[request=${reqId}] [relay.consent.send] EmailSenderFactory dispatching candidateId=${candidateId}`);
       try {
         ok = await sender.sendEmail(email, subject, bodyText);
       } catch (sendErr) {
+        log.debug(`[request=${reqId}] [relay.consent.send] EmailSenderFactory threw candidateId=${candidateId} error=${sendErr?.message}`);
         sendErrors.push({
           candidate_id: candidateId,
           email,
@@ -786,6 +797,7 @@ router.post("/internal/consent/send", requireInternalSecret, async (req, res, ne
         });
         continue;
       }
+      log.debug(`[request=${reqId}] [relay.consent.send] EmailSenderFactory finished ok=${ok} candidateId=${candidateId} duration=${Date.now() - tSend}ms`);
       if (!ok) {
         sendErrors.push({ candidate_id: candidateId, email, reason: "smtp_or_gmail_send_failed" });
         continue;
@@ -919,6 +931,10 @@ router.post("/internal/consent/send", requireInternalSecret, async (req, res, ne
         );
       }
     }
+
+    log.debug(
+      `[request=${reqId}] [relay.consent.send] Completed sentCount=${sentCount} duration=${Date.now() - tRouteStart}ms`
+    );
 
     return res.json({
       status: sentCount ? "sent" : "no_recipients",

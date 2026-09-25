@@ -1,6 +1,7 @@
 const jobRepo = require("../repositories/job.repository");
 const candidateRepo = require("../repositories/candidate.repository");
 const matchRepo = require("../repositories/match.repository");
+const log = require("../utils/logger");
 
 /**
  * Reading matches only. `createDirectMatch`, `runJobMatch` and
@@ -186,16 +187,32 @@ async function listJobMatches(req, res, next) {
 }
 
 async function listCandidateMatches(req, res, next) {
+  const reqId = req.id || req.requestId || "unknown";
+  const start = Date.now();
   try {
     const { candidateId } = req.params;
+    log.debug(
+      `[request=${reqId}] [matches.candidate] listCandidateMatches candidateId=${candidateId} userId=${req.userId}`
+    );
+
     const candidate = await candidateRepo.getCandidateWithCurrentResume(
       candidateId,
       req.userId
     );
-    if (!candidate) throw notFound(`Candidate not found: ${candidateId}`);
+    if (!candidate) {
+      const elapsed = Date.now() - start;
+      log.debug(
+        `[request=${reqId}] [matches.candidate] 404 Candidate not found in core.people or not owned by user candidateId=${candidateId} userId=${req.userId} duration=${elapsed}ms`
+      );
+      throw notFound(`Candidate not found: ${candidateId}`);
+    }
 
     const filters = parseListQuery(req.query);
     const rows = await matchRepo.listMatchesForCandidate(candidateId, filters);
+    const elapsed = Date.now() - start;
+    log.debug(
+      `[request=${reqId}] [matches.candidate] Loaded ${rows.length} matches candidateId=${candidateId} duration=${elapsed}ms`
+    );
 
     res.json({
       candidateId: candidate.id,
@@ -218,12 +235,22 @@ async function getJob(req, res, next) {
 }
 
 async function getCandidate(req, res, next) {
+  const reqId = req.id || req.requestId || "unknown";
+  const start = Date.now();
   try {
+    const { candidateId } = req.params;
+    log.debug(`[request=${reqId}] [matches.getCandidate] candidateId=${candidateId} userId=${req.userId}`);
     const row = await candidateRepo.getCandidateWithCurrentResume(
-      req.params.candidateId,
+      candidateId,
       req.userId
     );
-    if (!row) throw notFound(`Candidate not found: ${req.params.candidateId}`);
+    if (!row) {
+      const elapsed = Date.now() - start;
+      log.debug(
+        `[request=${reqId}] [matches.getCandidate] 404 Candidate not found in core.people or not owned by user candidateId=${candidateId} userId=${req.userId} duration=${elapsed}ms`
+      );
+      throw notFound(`Candidate not found: ${candidateId}`);
+    }
     res.json({ candidate: mapCandidateDetail(row) });
   } catch (err) {
     next(err);

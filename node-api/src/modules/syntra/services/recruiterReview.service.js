@@ -56,7 +56,7 @@ async function decide({ itemId, userId, approved, note }) {
     const graphKey = payload.graph_key;
     const orgId = item.organization_id || env.ORCH_ORGANIZATION_ID;
     if (threadId && graphKey && orgId) {
-      const orchUrl = (env.ORCH_API_URL || "http://localhost:4100").replace(/\/$/, "");
+      const orchUrl = env.ORCH_API_URL.replace(/\/$/, "");
       log.info(
         `[recruiterReview] resume thread=${threadId} graph=${graphKey} approved=${approved}`,
       );

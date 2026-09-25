@@ -222,8 +222,8 @@ export const RelayWorkspace: React.FC<RelayWorkspaceProps> = ({ onNavigate }) =>
     throw new Error(
       lastStatus === 503
         ? lastMessage ||
-            'Smart Inbox is still starting inside the API on port 4000. Wait a few seconds and click Refresh.'
-        : `Inbox API returned ${lastStatus}. ${lastMessage || 'Is the API running on port 4000? (npm run dev)'}`,
+            'Smart Inbox is still starting inside the API. Wait a few seconds and click Refresh.'
+        : `Inbox API returned ${lastStatus}. ${lastMessage || 'Is the API server running?'}`,
     );
   }, [applyThreadPayload, fetchWithTimeout]);
 
@@ -250,7 +250,7 @@ export const RelayWorkspace: React.FC<RelayWorkspaceProps> = ({ onNavigate }) =>
         setDetailById({});
       } catch (err: any) {
         console.error('Smart Inbox sync failed:', err);
-        setLoadError(err?.message || 'Could not reach the inbox API on port 4000.');
+        setLoadError(err?.message || 'Could not reach the inbox API.');
         try {
           await fetchThreads();
         } catch {

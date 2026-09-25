@@ -3,7 +3,7 @@ import { internalHeaders } from './internalSecret';
 import { buildToolResult } from './toolEnvelope';
 import { isPlatformUuid, relayThreadCorrelationId } from './relayIds';
 
-const ORCH_BASE = process.env.ORCH_API_URL || 'http://localhost:4100';
+const ORCH_BASE = process.env.ORCH_API_URL || `http://127.0.0.1:${process.env.API_PORT || '4100'}`;
 const ORG_ID =
   process.env.ORCH_ORGANIZATION_ID ||
   process.env.ORGANIZATION_ID ||
@@ -211,7 +211,7 @@ export async function emitConsentDecided(args: {
       tool_result: toolResult,
     },
   }).then((eventId) => {
-    const base = (process.env.SYNTRA_API_URL || 'http://localhost:4000').replace(/\/$/, '');
+    const base = (process.env.SYNTRA_API_URL || `http://127.0.0.1:${process.env.SYNTRA_PORT || '4000'}`).replace(/\/$/, '');
     void fetch(`${base}/internal/pipeline/consent-decided`, {
       method: 'POST',
       headers: internalHeaders(),
