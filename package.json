@@ -41,7 +41,7 @@
     "dev:gateway": "node gateway.js",
     "dev:all:log": "node scripts/tee.mjs logs/dev-all.log npm run dev:all",
     "dev:all": "npm run dev:preflight && npx concurrently --kill-others-on-fail --handle-input -n gateway,syntra,front,ingress,worker,authoring,ui -c gray,yellow,white,magenta,cyan,blue,green \"node gateway.js\" \"npm run dev:syntra-api\" \"npx wait-on -t 120000 http-get://127.0.0.1:4000/health && npx wait-on -t 120000 http-get://127.0.0.1:8080/healthz && npm run dev:syntra-ui\" \"npm run dev:orch-api\" \"npx wait-on -t 120000 http-get://127.0.0.1:4100/health && npm run dev:worker\" \"npm run dev:admin-api\" \"npx wait-on -t 120000 http-get://127.0.0.1:4200/health && npm run dev:admin-ui\"",
-    "start:render": "npx concurrently -n gateway,syntra,orch,worker,admin -c yellow,cyan,magenta,blue,green \"node gateway.js\" \"npm run start --prefix node-api\" \"npm run start -w @tekisho/api\" \"npm run start -w @tekisho/worker\" \"npm run start -w @tekisho/admin-api\""
+    "start:render": "npx concurrently --kill-others-on-fail -n gateway,syntra,orch,worker,admin -c yellow,cyan,magenta,blue,green \"node gateway.js\" \"npm run start --prefix node-api\" \"npm run start -w @tekisho/api\" \"npm run start -w @tekisho/worker\" \"npm run start -w @tekisho/admin-api\""
   },
   "dependencies": {
     "@langchain/langgraph": "^1.4.9",

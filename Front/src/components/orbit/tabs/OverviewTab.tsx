@@ -5,6 +5,7 @@ import { StatusBadge } from '../StatusBadge';
 interface OverviewTabProps {
   candidate: CandidateProfile;
   onOpenTransition?: () => void;
+  onOpenEditProfile?: () => void;
 }
 
 function calculateDaysOnBench(dateString?: string): string {
@@ -16,7 +17,11 @@ function calculateDaysOnBench(dateString?: string): string {
   return `${diffDays} days`;
 }
 
-export const OverviewTab: React.FC<OverviewTabProps> = ({ candidate, onOpenTransition }) => {
+export const OverviewTab: React.FC<OverviewTabProps> = ({
+  candidate,
+  onOpenTransition,
+  onOpenEditProfile,
+}) => {
   const benchDays = calculateDaysOnBench(candidate.uploadedDate);
   const formattedAvailableFrom = candidate.uploadedDate || 'Aug 1, 2026';
 
@@ -75,9 +80,19 @@ export const OverviewTab: React.FC<OverviewTabProps> = ({ candidate, onOpenTrans
 
       {/* 2. PROFILE CARD */}
       <div className="p-4 rounded-xl bg-[#120c24]/90 border border-[#261e38] space-y-3 shadow-inner shadow-black/20">
-        <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block">
-          Profile
-        </span>
+        <div className="flex items-center justify-between">
+          <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block">
+            Profile
+          </span>
+          {onOpenEditProfile && (
+            <button
+              onClick={onOpenEditProfile}
+              className="text-[10px] font-semibold text-purple-400 hover:text-purple-300 transition cursor-pointer underline"
+            >
+              Edit Profile
+            </button>
+          )}
+        </div>
         <div className="grid grid-cols-2 gap-y-3.5 gap-x-4 text-xs">
           <div>
             <span className="text-[10px] text-slate-500 uppercase font-bold block">Full Name</span>
@@ -90,7 +105,17 @@ export const OverviewTab: React.FC<OverviewTabProps> = ({ candidate, onOpenTrans
             </span>
           </div>
           <div>
-            <span className="text-[10px] text-slate-500 uppercase font-bold block">Email</span>
+            <div className="flex items-center justify-between">
+              <span className="text-[10px] text-slate-500 uppercase font-bold block">Email</span>
+              {onOpenEditProfile && (
+                <button
+                  onClick={onOpenEditProfile}
+                  className="text-[9px] font-semibold text-purple-400 hover:text-purple-300 transition cursor-pointer underline"
+                >
+                  Edit Email
+                </button>
+              )}
+            </div>
             <span className="font-medium text-slate-300 truncate block" title={candidate.email || 'Not specified'}>
               {candidate.email || '—'}
             </span>

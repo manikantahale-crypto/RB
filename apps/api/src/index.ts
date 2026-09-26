@@ -61,6 +61,7 @@ async function main(): Promise<void> {
   const app = Fastify({ logger: true });
 
   app.get("/health", async () => ({ ok: true }));
+  app.get("/v1/health", async () => ({ ok: true }));
 
   /**
    * Trace an ingress event: outbox siblings (same correlation_id) + agent_runs/steps.

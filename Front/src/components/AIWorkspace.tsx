@@ -17,7 +17,8 @@ import {
   ThumbsUp,
   FileText,
   Loader2,
-  AlertCircle
+  AlertCircle,
+  RefreshCw
 } from 'lucide-react';
 import { JobRequirement, CandidateProfile, NavigationScreen, NavigationContext } from '../types';
 import { cleanJobTitle } from '../utils';
@@ -361,7 +362,7 @@ export const AIWorkspace: React.FC<AIWorkspaceProps> = ({
       setMatchesError(null);
       try {
         const res = await apiFetch(
-          `/jobs/${selectedJob.id}/matches?status=completed&minScore=0`,
+          `/jobs/${selectedJob.id}/matches?minScore=0`,
         );
         if (!res.ok) {
           let detail = `HTTP ${res.status}`;
@@ -384,11 +385,12 @@ export const AIWorkspace: React.FC<AIWorkspaceProps> = ({
         if (isMounted) {
           setJobMatches(data.matches || []);
           const ranked = (data.matches || [])
-            .filter((m: any) => {
-              const status = String(m.matchStatus || m.match_status || '').toLowerCase();
-              return m.candidateId && m.score != null && status === 'completed';
-            })
-            .sort((a: any, b: any) => Number(b.score) - Number(a.score));
+            .map((m: any) => ({
+              ...m,
+              effectiveScore: Number(m.score != null ? m.score : (m.skillMatchScore != null ? m.skillMatchScore : 0)),
+            }))
+            .filter((m: any) => m.candidateId)
+            .sort((a: any, b: any) => b.effectiveScore - a.effectiveScore);
           setSelectedCandidateId(ranked[0]?.candidateId || null);
         }
       } catch (err: any) {
@@ -427,7 +429,7 @@ export const AIWorkspace: React.FC<AIWorkspaceProps> = ({
       setMatchesError(null);
       try {
         const res = await apiFetch(
-          `/candidates/${selectedResumeCandidate.id}/matches?status=completed&minScore=0`,
+          `/candidates/${selectedResumeCandidate.id}/matches?minScore=0`,
         );
         if (!res.ok) {
           throw new Error("Failed to fetch matching jobs for this candidate.");
@@ -435,7 +437,13 @@ export const AIWorkspace: React.FC<AIWorkspaceProps> = ({
         const data = await res.json();
         if (isMounted) {
           setResumeMatches(data.matches || []);
-          const ranked = (data.matches || []).filter((m: any) => m.jobId && m.score != null);
+          const ranked = (data.matches || [])
+            .map((m: any) => ({
+              ...m,
+              effectiveScore: Number(m.score != null ? m.score : (m.skillMatchScore != null ? m.skillMatchScore : 0)),
+            }))
+            .filter((m: any) => m.jobId)
+            .sort((a: any, b: any) => b.effectiveScore - a.effectiveScore);
           setSelectedJobIdForResume(ranked[0]?.jobId || null);
         }
       } catch (err: any) {
@@ -477,6 +485,55 @@ export const AIWorkspace: React.FC<AIWorkspaceProps> = ({
   const showToast = (msg: string) => {
     setToastMessage(msg);
     setTimeout(() => setToastMessage(null), 3000);
+  };
+
+  const [isRescoring, setIsRescoring] = useState(false);
+
+  const handleRescoreJob = async () => {
+    if (!selectedJob) return;
+    setIsRescoring(true);
+    try {
+      const res = await apiFetch(`/jobs/${selectedJob.id}/run-match`, { method: 'POST' });
+      if (!res.ok) {
+        throw new Error('Failed to run matching for this job description.');
+      }
+      showToast('Matching completed. Refreshing candidates...');
+      const matchRes = await apiFetch(`/jobs/${selectedJob.id}/matches?minScore=0`);
+      if (matchRes.ok) {
+        const data = await matchRes.json();
+        setJobMatches(data.matches || []);
+      }
+    } catch (err: any) {
+      showToast(err.message || 'Error running match');
+    } finally {
+      setIsRescoring(false);
+    }
+  };
+
+  const handleRescoreResume = async () => {
+    if (!selectedResumeCandidate) return;
+    const resumeId = selectedResumeCandidate.resumeId || (selectedResumeCandidate as any).currentResume?.id;
+    if (!resumeId) {
+      showToast('Candidate has no active resume to match.');
+      return;
+    }
+    setIsRescoring(true);
+    try {
+      const res = await apiFetch(`/resumes/${resumeId}/run-match`, { method: 'POST' });
+      if (!res.ok) {
+        throw new Error('Failed to run matching for this resume.');
+      }
+      showToast('Matching completed. Refreshing jobs...');
+      const matchRes = await apiFetch(`/candidates/${selectedResumeCandidate.id}/matches?minScore=0`);
+      if (matchRes.ok) {
+        const data = await matchRes.json();
+        setResumeMatches(data.matches || []);
+      }
+    } catch (err: any) {
+      showToast(err.message || 'Error running match');
+    } finally {
+      setIsRescoring(false);
+    }
   };
 
   const submitToPrism = async () => {
@@ -567,15 +624,17 @@ export const AIWorkspace: React.FC<AIWorkspaceProps> = ({
     const c = candidates.find((cand) => cand.id === m.candidateId);
     const status = (m.matchStatus || "").toLowerCase();
     const isCompleted = status === "completed";
-    const hasScore = isCompleted && m.score != null && !Number.isNaN(Number(m.score));
-    const rawScore = Number(m.score);
+    const rawScore = m.score != null
+      ? Number(m.score)
+      : (m.skillMatchScore != null ? Number(m.skillMatchScore) : null);
+    const hasScore = rawScore != null && !Number.isNaN(rawScore);
     const matchScore = hasScore
       ? (rawScore > 0 && rawScore < 1 ? Math.round(rawScore * 100) : Math.round(rawScore))
-      : null;
+      : 0;
     const pending =
-      !hasScore &&
+      !isCompleted &&
       (status === "requested" || status === "processing" || status === "waiting");
-    const failed = !hasScore && (status === "failed" || !isCompleted);
+    const failed = !isCompleted && !pending && status === "failed";
 
     return {
       id: m.candidateId,
@@ -588,28 +647,30 @@ export const AIWorkspace: React.FC<AIWorkspaceProps> = ({
       experience: c?.experience || "N/A",
       expYears: c?.expYears || 0,
       visa: c?.visa || "N/A",
-      matchedSkills: Array.isArray(m.strengths) ? m.strengths : [],
+      matchedSkills: Array.isArray(m.strengths) && m.strengths.length > 0 ? m.strengths : (c?.matchedSkills || []),
       missingSkills: Array.isArray(m.gaps) ? m.gaps : [],
-      matchScore: matchScore ?? 0,
+      matchScore: matchScore,
       isCompleted,
       hasValidScore: hasScore,
-      aiConfidence: m.confidenceScore != null ? Math.round(Number(m.confidenceScore)) : (m.skillMatchScore != null ? Math.round(Number(m.skillMatchScore)) : 0),
-      badge: (pending
-        ? 'Potential Match'
-        : failed
-          ? 'Potential Match'
-          : m.tier === 'strong' || m.tier === 'highly_recommended' || m.tier === 'Highly Recommended'
+      aiConfidence: m.confidenceScore != null ? Math.round(Number(m.confidenceScore)) : (m.skillMatchScore != null ? Math.round(Number(m.skillMatchScore)) : 80),
+      badge: (isCompleted
+        ? (m.tier === 'strong' || m.tier === 'highly_recommended' || m.tier === 'Highly Recommended' || matchScore >= 80
             ? 'Highly Recommended'
-            : m.tier === 'moderate' || m.tier === 'recommended' || m.tier === 'Recommended' || m.tier === 'Moderate Fit'
+            : m.tier === 'moderate' || m.tier === 'recommended' || m.tier === 'Recommended' || matchScore >= 50
               ? 'Moderate Fit'
-              : m.tier === 'weak'
-                ? 'Potential Match'
-                : 'Potential Match') as any,
-      summary: pending
-        ? "AI scoring in progress…"
-        : failed
-          ? "AI scoring failed — retry match or re-upload after fixing the AI provider."
-          : (m.reasoning || c?.summary || "Match reasoning is processing."),
+              : 'Potential Match')
+        : (matchScore >= 80
+            ? 'Highly Recommended'
+            : matchScore >= 50
+              ? 'Moderate Fit'
+              : 'Potential Match')) as any,
+      summary: m.reasoning && m.reasoning.trim()
+        ? m.reasoning
+        : pending
+          ? (matchScore > 0 ? `Skill overlap: ${matchScore}%. Deep AI scoring in progress…` : "AI scoring in progress…")
+          : failed
+            ? "AI scoring failed — retry match or re-upload after fixing the AI provider."
+            : (c?.summary || "Match reasoning is processing."),
       breakdown: m.breakdown && typeof m.breakdown === "object"
         ? {
           skills: m.breakdown.skills ?? 0,
@@ -640,11 +701,13 @@ export const AIWorkspace: React.FC<AIWorkspaceProps> = ({
     const j = jobs.find((job) => job.id === m.jobId);
     const status = (m.matchStatus || "").toLowerCase();
     const isCompleted = status === "completed";
-    const hasScore = isCompleted && m.score != null && !Number.isNaN(Number(m.score));
-    const rawScore = Number(m.score);
+    const rawScore = m.score != null
+      ? Number(m.score)
+      : (m.skillMatchScore != null ? Number(m.skillMatchScore) : null);
+    const hasScore = rawScore != null && !Number.isNaN(rawScore);
     const normalizedScore = hasScore
       ? (rawScore > 0 && rawScore < 1 ? Math.round(rawScore * 100) : Math.round(rawScore))
-      : null;
+      : 0;
     return {
       id: m.jobId,
       title: cleanJobTitle(m.jobTitle || j?.title || "Untitled Job"),
@@ -667,26 +730,25 @@ export const AIWorkspace: React.FC<AIWorkspaceProps> = ({
     };
   });
 
-  // Filter out resume jobs with missing scores and sort descending
+  // Filter out resume jobs and sort descending based on localMatchThreshold
   const filteredResumeJobs = mappedResumeJobs
     .filter((j) => {
-      if (!j.hasValidScore || j.avgMatchScore === undefined || j.avgMatchScore === null || Number.isNaN(Number(j.avgMatchScore))) return false;
+      if (j.avgMatchScore === undefined || j.avgMatchScore === null || Number.isNaN(Number(j.avgMatchScore))) return false;
       return Number(j.avgMatchScore) >= localMatchThreshold;
     })
     .sort((a, b) => {
       const norm = (v: any) => {
         const num = Number(v);
-        // Normalize fractions (<1) to percentage
         if (!Number.isNaN(num) && num > 0 && num < 1) return Math.round(num * 100);
         return Math.round(num);
       };
       return norm(b.avgMatchScore) - norm(a.avgMatchScore);
     });
 
-  // Show all shortlisted candidates
+  // Show all shortlisted candidates matching or exceeding local threshold
   const filteredCandidates = mappedJobCandidates
     .filter((c) => {
-      if (!c.hasValidScore || c.matchScore === undefined || c.matchScore === null || Number.isNaN(Number(c.matchScore))) return false;
+      if (c.matchScore === undefined || c.matchScore === null || Number.isNaN(Number(c.matchScore))) return false;
       return c.matchScore >= localMatchThreshold;
     })
     .sort((a, b) => b.matchScore - a.matchScore);
@@ -700,14 +762,29 @@ export const AIWorkspace: React.FC<AIWorkspaceProps> = ({
   // Jobs list shown in left panel for Resume Mode
   const filteredJobs = filteredResumeJobs;
 
+  // Toggle to show all jobs vs only jobs with candidate matches
+  const [showAllJobs, setShowAllJobs] = useState(false);
+
   // Filtered jobs for combobox search
-  const searchedJobs = jobs.filter(
-    (j) =>
-      j.title.toLowerCase().includes(jobSearchQuery.toLowerCase()) ||
-      j.company.toLowerCase().includes(jobSearchQuery.toLowerCase()) ||
-      j.id.toLowerCase().includes(jobSearchQuery.toLowerCase()) ||
-      (j.location && j.location.toLowerCase().includes(jobSearchQuery.toLowerCase()))
-  );
+  const searchedJobs = jobs
+    .filter((j) => {
+      const queryMatch =
+        j.title.toLowerCase().includes(jobSearchQuery.toLowerCase()) ||
+        j.company.toLowerCase().includes(jobSearchQuery.toLowerCase()) ||
+        j.id.toLowerCase().includes(jobSearchQuery.toLowerCase()) ||
+        (j.location && j.location.toLowerCase().includes(jobSearchQuery.toLowerCase()));
+
+      if (jobSearchQuery.trim()) {
+        return queryMatch;
+      }
+      const hasMatches = (j.matchCount ?? 0) > 0 || (j.matchScores && j.matchScores.length > 0);
+      return (showAllJobs || hasMatches) && queryMatch;
+    })
+    .sort((a, b) => {
+      const aMatches = (a.matchCount ?? 0) > 0 ? 1 : 0;
+      const bMatches = (b.matchCount ?? 0) > 0 ? 1 : 0;
+      return bMatches - aMatches;
+    });
 
   // Filtered candidates for combobox search
   const searchedCandidates = candidates.filter(
@@ -812,9 +889,33 @@ export const AIWorkspace: React.FC<AIWorkspaceProps> = ({
               {/* Job Dropdown Menu */}
               {isJobDropdownOpen && (
                 <div className="absolute top-full left-0 right-0 mt-2 bg-[#161123] border border-purple-500/40 rounded-xl shadow-2xl overflow-y-auto max-h-72 z-50 divide-y divide-white/5">
+                  <div className="flex items-center justify-between px-3.5 py-2 bg-purple-950/40 text-[11px] text-slate-400">
+                    <span>{showAllJobs ? `All Job Descriptions (${searchedJobs.length})` : `JDs with Candidate Matches (${searchedJobs.length})`}</span>
+                    <button
+                      type="button"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        setShowAllJobs(!showAllJobs);
+                      }}
+                      className="text-purple-400 hover:text-purple-300 font-semibold underline cursor-pointer"
+                    >
+                      {showAllJobs ? 'Show only with matches' : 'Show all JDs'}
+                    </button>
+                  </div>
                   {searchedJobs.length === 0 ? (
                     <div className="p-4 text-center text-xs text-slate-400">
-                      No jobs matching "{jobSearchQuery}"
+                      {jobSearchQuery ? `No jobs matching "${jobSearchQuery}"` : "No jobs with matches found."}
+                      {!showAllJobs && !jobSearchQuery && (
+                        <div className="mt-2">
+                          <button
+                            type="button"
+                            onClick={() => setShowAllJobs(true)}
+                            className="px-2.5 py-1 rounded bg-purple-600/30 text-purple-300 text-xs font-medium cursor-pointer"
+                          >
+                            Show all JDs
+                          </button>
+                        </div>
+                      )}
                     </div>
                   ) : (
                     searchedJobs.map((j) => (
@@ -823,7 +924,7 @@ export const AIWorkspace: React.FC<AIWorkspaceProps> = ({
                         onClick={() => {
                           setSelectedJob(j);
                           setLocalMatchThreshold(j.scoreThreshold ?? 50);
-                          setSelectedCandidateId(candidates[0]?.id || null);
+                          setSelectedCandidateId(null);
                           setIsJobDropdownOpen(false);
                           setJobSearchQuery('');
                         }}
@@ -836,9 +937,9 @@ export const AIWorkspace: React.FC<AIWorkspaceProps> = ({
                             {j.company} {j.location ? `— ${j.location}` : ''}
                             {' · '}
                             {(j.matchCount ?? 0) > 0
-                              ? `${j.matchCount} matches`
+                              ? `${j.matchCount} match${(j.matchCount ?? 0) > 1 ? 'es' : ''}`
                               : j.processingStatus === 'processed'
-                                ? 'processed'
+                                ? 'processed (0 matches)'
                                 : j.processingStatus || 'uploaded'}
                           </div>
                         </div>
@@ -972,6 +1073,16 @@ export const AIWorkspace: React.FC<AIWorkspaceProps> = ({
             </div>
 
             <div className="flex items-center gap-2 flex-wrap text-xs">
+              <button
+                type="button"
+                onClick={handleRescoreJob}
+                disabled={isRescoring}
+                className="px-3 py-1 rounded-lg bg-purple-600/30 hover:bg-purple-600/50 text-purple-200 border border-purple-500/40 flex items-center gap-1.5 font-semibold transition cursor-pointer disabled:opacity-50"
+                title="Re-run matching and deep AI scoring for this job description"
+              >
+                <RefreshCw className={`w-3.5 h-3.5 ${isRescoring ? 'animate-spin' : ''}`} />
+                <span>{isRescoring ? 'Matching...' : 'Rescore'}</span>
+              </button>
               <span className="px-3 py-1 rounded-lg bg-purple-500/20 border border-purple-500/30 text-purple-300 font-semibold">
                 {filteredCandidates.length} Matched • Avg {filteredCandidates.length > 0 ? Math.round(filteredCandidates.reduce((acc, c) => acc + c.matchScore, 0) / filteredCandidates.length) : 0}%
               </span>
@@ -1022,6 +1133,16 @@ export const AIWorkspace: React.FC<AIWorkspaceProps> = ({
             </div>
 
             <div className="flex items-center gap-2 flex-wrap text-xs">
+              <button
+                type="button"
+                onClick={handleRescoreResume}
+                disabled={isRescoring}
+                className="px-3 py-1 rounded-lg bg-purple-600/30 hover:bg-purple-600/50 text-purple-200 border border-purple-500/40 flex items-center gap-1.5 font-semibold transition cursor-pointer disabled:opacity-50"
+                title="Re-run matching and deep AI scoring for this candidate resume"
+              >
+                <RefreshCw className={`w-3.5 h-3.5 ${isRescoring ? 'animate-spin' : ''}`} />
+                <span>{isRescoring ? 'Matching...' : 'Rescore'}</span>
+              </button>
               <span className="px-3 py-1 rounded-lg bg-purple-500/20 border border-purple-500/30 text-purple-300 font-semibold">
                 {filteredJobs.length} Matched Jobs • Avg {filteredJobs.length > 0 ? Math.round(filteredJobs.reduce((acc, j) => acc + j.avgMatchScore, 0) / filteredJobs.length) : 0}%
               </span>
@@ -1080,8 +1201,24 @@ export const AIWorkspace: React.FC<AIWorkspaceProps> = ({
                   <span className="text-xs text-slate-400">Fetching matching scores...</span>
                 </div>
               ) : filteredCandidates.length === 0 ? (
-                <div className="py-12 text-center text-xs text-slate-400 space-y-2 px-4">
-                  {selectedJob?.processingStatus === 'uploaded' ? (
+                <div className="py-12 text-center text-xs text-slate-400 space-y-3 px-4">
+                  {jobMatches.length > 0 ? (
+                    <div className="space-y-2">
+                      <p className="text-slate-300 font-medium">
+                        No candidates meet the {localMatchThreshold}% threshold.
+                      </p>
+                      <p className="text-slate-500">
+                        {jobMatches.length} candidate{jobMatches.length > 1 ? 's are' : ' is'} available below this threshold.
+                      </p>
+                      <button
+                        type="button"
+                        onClick={() => setLocalMatchThreshold(0)}
+                        className="mt-2 px-3 py-1.5 rounded-lg bg-purple-600/30 hover:bg-purple-600/50 text-purple-300 text-xs font-semibold cursor-pointer transition"
+                      >
+                        Reset Threshold to 0%
+                      </button>
+                    </div>
+                  ) : selectedJob?.processingStatus === 'uploaded' ? (
                     <>
                       <p>This job is still processing (no AI summary yet).</p>
                       <p className="text-slate-500">
@@ -1089,7 +1226,18 @@ export const AIWorkspace: React.FC<AIWorkspaceProps> = ({
                       </p>
                     </>
                   ) : (
-                    <p>No relevant candidates found for this job.</p>
+                    <div className="space-y-2">
+                      <p>No candidate matches found for this job.</p>
+                      <button
+                        type="button"
+                        onClick={handleRescoreJob}
+                        disabled={isRescoring}
+                        className="mt-2 px-3 py-1.5 rounded-lg bg-purple-600 hover:bg-purple-500 text-white text-xs font-semibold inline-flex items-center gap-1.5 mx-auto cursor-pointer transition disabled:opacity-50"
+                      >
+                        {isRescoring ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <RefreshCw className="w-3.5 h-3.5" />}
+                        <span>{isRescoring ? 'Matching Candidates...' : 'Run Match & Score'}</span>
+                      </button>
+                    </div>
                   )}
                 </div>
               ) : (
@@ -1196,8 +1344,37 @@ export const AIWorkspace: React.FC<AIWorkspaceProps> = ({
                   <span className="text-xs text-slate-400">Fetching matching scores...</span>
                 </div>
               ) : filteredJobs.length === 0 ? (
-                <div className="py-12 text-center text-xs text-slate-400">
-                  No matched jobs found.
+                <div className="py-12 text-center text-xs text-slate-400 space-y-3 px-4">
+                  {resumeMatches.length > 0 ? (
+                    <div className="space-y-2">
+                      <p className="text-slate-300 font-medium">
+                        No jobs meet the {localMatchThreshold}% threshold.
+                      </p>
+                      <p className="text-slate-500">
+                        {resumeMatches.length} job{resumeMatches.length > 1 ? 's are' : ' is'} available below this threshold.
+                      </p>
+                      <button
+                        type="button"
+                        onClick={() => setLocalMatchThreshold(0)}
+                        className="mt-2 px-3 py-1.5 rounded-lg bg-purple-600/30 hover:bg-purple-600/50 text-purple-300 text-xs font-semibold cursor-pointer transition"
+                      >
+                        Reset Threshold to 0%
+                      </button>
+                    </div>
+                  ) : (
+                    <div className="space-y-2">
+                      <p>No matched jobs found for this resume yet.</p>
+                      <button
+                        type="button"
+                        onClick={handleRescoreResume}
+                        disabled={isRescoring}
+                        className="mt-2 px-3 py-1.5 rounded-lg bg-purple-600 hover:bg-purple-500 text-white text-xs font-semibold inline-flex items-center gap-1.5 mx-auto cursor-pointer transition disabled:opacity-50"
+                      >
+                        {isRescoring ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <RefreshCw className="w-3.5 h-3.5" />}
+                        <span>{isRescoring ? 'Matching Jobs...' : 'Run Match & Score'}</span>
+                      </button>
+                    </div>
+                  )}
                 </div>
               ) : (
                 filteredJobs.map((job) => {

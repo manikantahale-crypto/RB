@@ -3,6 +3,11 @@ const lifecycleRepo = require("../modules/orbit/repositories/lifecycle.repositor
 const { computeCandidateActionNeeded } = require("../utils/actionNeeded");
 const log = require("../utils/logger");
 
+const UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+function isValidUuid(id) {
+  return typeof id === "string" && UUID_REGEX.test(id);
+}
+
 function mapCandidateListItem(row, stateMap = new Map()) {
   let skills = row.skills || [];
   if (typeof skills === "string") {
@@ -99,7 +104,28 @@ async function listCandidates(req, res, next) {
 async function updateCandidate(req, res, next) {
   try {
     const { candidateId } = req.params;
+    if (!isValidUuid(candidateId)) {
+      const err = new Error("Invalid candidate ID");
+      err.statusCode = 400;
+      throw err;
+    }
+
     const updates = req.body || {};
+
+    // Validate email if present
+    if (updates.email !== undefined && updates.email !== null) {
+      if (typeof updates.email !== "string" || updates.email.trim() === "") {
+        const err = new Error("Email cannot be empty");
+        err.statusCode = 400;
+        throw err;
+      }
+      const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+      if (!emailRegex.test(updates.email.trim())) {
+        const err = new Error("Invalid email format");
+        err.statusCode = 400;
+        throw err;
+      }
+    }
 
     const updated = await candidateRepo.updateCandidate(candidateId, updates, req.userId);
     if (!updated) {
@@ -108,7 +134,16 @@ async function updateCandidate(req, res, next) {
       throw err;
     }
 
-    res.json({ success: true, candidate: updated });
+    const stateMap = await lifecycleRepo.getLatestStatesForCandidates([candidateId]);
+    const mapped = mapCandidateListItem(updated, stateMap);
+
+    res.json({
+      success: true,
+      candidate: {
+        ...updated,
+        ...mapped,
+      },
+    });
   } catch (err) {
     next(err);
   }
@@ -116,9 +151,16 @@ async function updateCandidate(req, res, next) {
 
 async function deleteCandidate(req, res, next) {
   try {
-    const ok = await candidateRepo.deleteCandidate(req.params.candidateId, req.userId);
+    const { candidateId } = req.params;
+    if (!isValidUuid(candidateId)) {
+      const err = new Error("Invalid candidate ID");
+      err.statusCode = 400;
+      throw err;
+    }
+
+    const ok = await candidateRepo.deleteCandidate(candidateId, req.userId);
     if (!ok) {
-      const err = new Error(`Candidate not found: ${req.params.candidateId}`);
+      const err = new Error(`Candidate not found: ${candidateId}`);
       err.statusCode = 404;
       throw err;
     }
@@ -136,6 +178,13 @@ async function deleteCandidatesBulk(req, res, next) {
       err.statusCode = 400;
       throw err;
     }
+    for (const id of ids) {
+      if (!isValidUuid(id)) {
+        const err = new Error(`Invalid candidate ID: ${id}`);
+        err.statusCode = 400;
+        throw err;
+      }
+    }
     const result = await candidateRepo.deleteCandidates(ids, req.userId);
     res.json(result);
   } catch (err) {
@@ -148,6 +197,11 @@ async function getCandidate(req, res, next) {
   const start = Date.now();
   try {
     const { candidateId } = req.params;
+    if (!isValidUuid(candidateId)) {
+      const err = new Error(`Candidate not found: ${candidateId}`);
+      err.statusCode = 404;
+      throw err;
+    }
     log.debug(`[request=${reqId}] [candidate.controller] Lookup candidateId=${candidateId} userId=${req.userId}`);
     const row = await candidateRepo.getCandidateWithCurrentResume(candidateId, req.userId);
     if (!row) {

@@ -951,6 +951,7 @@ export const CandidatesWorkspace: React.FC<CandidatesWorkspaceProps> = ({
                             <OverviewTab
                               candidate={selectedCandidate}
                               onOpenTransition={() => setShowTransitionModal(true)}
+                              onOpenEditProfile={() => setShowUpdateProfileModal(true)}
                             />
                           )}
                           {activeDrawerTab === 'experience' && <ExperienceTab candidate={selectedCandidate} />}

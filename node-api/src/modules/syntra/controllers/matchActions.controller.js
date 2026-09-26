@@ -22,6 +22,7 @@
 const jobRepo = require("../../../repositories/job.repository");
 const candidateRepo = require("../../../repositories/candidate.repository");
 const matchRepo = require("../../../repositories/match.repository");
+const log = require("../../../utils/logger");
 
 function notFound(message) {
   const err = new Error(message);
@@ -57,11 +58,27 @@ async function runJobMatch(req, res, next) {
       throw err;
     }
     const result = await runForJob(jobId);
+    let scored = 0;
+    try {
+      const { processBatchForJob } = require("../workers/matchRequested.worker");
+      const matches = await matchRepo.listMatchesForJob(jobId, {});
+      const unscored = matches
+        .filter((m) => m.score == null)
+        .map((m) => ({ candidateId: m.candidate_id, resumeId: m.resume_id }));
+      if (unscored.length > 0) {
+        const outcome = await processBatchForJob(jobId, unscored.slice(0, 15));
+        scored = outcome.scored;
+      }
+    } catch (batchErr) {
+      log.warn(`[runJobMatch] batch scoring warn: ${batchErr.message}`);
+    }
+
     res.status(202).json({
       jobId,
       created: (result.created || []).length,
       poolSize: result.poolSize || 0,
       finalists: result.finalists || 0,
+      scored,
       matchIds: (result.created || []).map((m) => m.matchId),
     });
   } catch (err) {
@@ -90,12 +107,30 @@ async function runResumeMatch(req, res, next) {
       throw err;
     }
     const result = await runForResume(resumeId);
+    let scored = 0;
+    try {
+      const { processBatchForJob } = require("../workers/matchRequested.worker");
+      const matches = await matchRepo.listMatchesForCandidate(resume.candidate_id, {});
+      const unscored = matches.filter((m) => m.score == null);
+      for (const m of unscored.slice(0, 10)) {
+        try {
+          const outcome = await processBatchForJob(m.job_id, [{ candidateId: resume.candidate_id, resumeId }]);
+          scored += outcome.scored || 0;
+        } catch {
+          /* ignore individual batch error */
+        }
+      }
+    } catch (batchErr) {
+      log.warn(`[runResumeMatch] batch scoring warn: ${batchErr.message}`);
+    }
+
     res.status(202).json({
       resumeId,
       candidateId: resume.candidate_id,
       created: (result.created || []).length,
       poolSize: result.poolSize || 0,
       finalists: result.finalists || 0,
+      scored,
       matchIds: (result.created || []).map((m) => m.matchId),
     });
   } catch (err) {

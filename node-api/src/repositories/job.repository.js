@@ -239,50 +239,79 @@ async function updateJobThreshold(jobId, threshold) {
   );
 }
 
+const UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+function isValidUuid(val) {
+  return typeof val === "string" && UUID_REGEX.test(val);
+}
+
 async function deleteJob(jobId, userId = null) {
-  const client = await pool.connect();
-  try {
-    await client.query("BEGIN");
-    const checkSql = userId
-      ? `SELECT id FROM ${CORE_REQUIREMENTS} WHERE id = $1 AND created_by = $2`
-      : `SELECT id FROM ${CORE_REQUIREMENTS} WHERE id = $1`;
-    const checkParams = userId ? [jobId, userId] : [jobId];
-    const existing = await client.query(checkSql, checkParams);
-    if (!existing.rows[0]) {
-      await client.query("ROLLBACK");
-      return false;
-    }
-    await client.query(`DELETE FROM ${CORE_MATCHES} WHERE job_id = $1`, [jobId]);
-    await client.query(`DELETE FROM ${CORE_REQUIREMENTS} WHERE id = $1`, [jobId]);
-    await client.query("COMMIT");
-    return true;
-  } catch (err) {
-    await client.query("ROLLBACK");
-    throw err;
-  } finally {
-    client.release();
-  }
+  if (!isValidUuid(jobId)) return false;
+  const res = await deleteJobs([jobId], userId);
+  return res.deleted > 0;
 }
 
 async function deleteJobs(jobIds, userId = null) {
-  const ids = Array.isArray(jobIds) ? jobIds.filter(Boolean) : [];
+  const ids = Array.isArray(jobIds) ? jobIds.filter(isValidUuid) : [];
   if (ids.length === 0) return { deleted: 0 };
   const client = await pool.connect();
   try {
     await client.query("BEGIN");
     const selectSql = userId
-      ? `SELECT id FROM ${CORE_REQUIREMENTS} WHERE id = ANY($1::uuid[]) AND created_by = $2`
-      : `SELECT id FROM ${CORE_REQUIREMENTS} WHERE id = ANY($1::uuid[])`;
+      ? `SELECT id FROM core.requirements WHERE id = ANY($1::uuid[]) AND (created_by = $2 OR created_by IS NULL)`
+      : `SELECT id FROM core.requirements WHERE id = ANY($1::uuid[])`;
     const selectParams = userId ? [ids, userId] : [ids];
     const ownedRows = await client.query(selectSql, selectParams);
-    const ownedIds = ownedRows.rows.map(r => r.id);
+    const ownedIds = ownedRows.rows.map((r) => r.id);
     if (ownedIds.length === 0) {
       await client.query("ROLLBACK");
       return { deleted: 0 };
     }
-    await client.query(`DELETE FROM ${CORE_MATCHES} WHERE job_id = ANY($1::uuid[])`, [ownedIds]);
+
+    // 1. Matches
+    await client.query(
+      `DELETE FROM core.matches WHERE requirement_id = ANY($1::uuid[])`,
+      [ownedIds]
+    );
+
+    // 2. Prism submissions (child tables cascade: prism.rtr, prism.consents, prism.approvals)
+    await client.query(
+      `DELETE FROM prism.submissions WHERE requirement_id = ANY($1::uuid[])`,
+      [ownedIds]
+    );
+
+    // 3. Orbit placements and submissions
+    await client.query(
+      `DELETE FROM orbit.placements WHERE requirement_id = ANY($1::uuid[])`,
+      [ownedIds]
+    );
+    await client.query(
+      `DELETE FROM orbit.submissions WHERE requirement_id = ANY($1::uuid[])`,
+      [ownedIds]
+    );
+
+    // 4. Syntra scoring log
+    await client.query(
+      `DELETE FROM syntra.scoring_log WHERE job_id = ANY($1::uuid[])`,
+      [ownedIds]
+    );
+
+    // 5. Polymorphic tables (subject_type = 'requirement')
+    await client.query(
+      `DELETE FROM core.embeddings WHERE subject_type = 'requirement' AND subject_id = ANY($1::uuid[])`,
+      [ownedIds]
+    );
+    await client.query(
+      `DELETE FROM core.processing_jobs WHERE subject_type = 'requirement' AND subject_id = ANY($1::uuid[])`,
+      [ownedIds]
+    );
+    await client.query(
+      `DELETE FROM core.source_files WHERE subject_type = 'requirement' AND subject_id = ANY($1::uuid[])`,
+      [ownedIds]
+    );
+
+    // 6. Core requirements
     const { rowCount } = await client.query(
-      `DELETE FROM ${CORE_REQUIREMENTS} WHERE id = ANY($1::uuid[])`,
+      `DELETE FROM core.requirements WHERE id = ANY($1::uuid[])`,
       [ownedIds]
     );
     await client.query("COMMIT");

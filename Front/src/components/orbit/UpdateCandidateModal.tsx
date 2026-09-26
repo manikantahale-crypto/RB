@@ -1,4 +1,4 @@
-﻿import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   X,
   Loader2,
@@ -132,21 +132,20 @@ export const UpdateCandidateModal: React.FC<UpdateCandidateModalProps> = ({
         .map((s) => s.trim())
         .filter(Boolean);
 
-      // Validate all mandatory fields
-      if (!fullName.trim() || !email.trim() || !phone.trim() || parsedSkills.length === 0 || !experience.trim() || !visa.trim() || !location.trim()) {
-        const missing: string[] = [];
-        if (!fullName.trim()) missing.push('Full Name');
-        if (!email.trim() || !email.includes('@')) missing.push('Email');
-        if (!phone.trim() || phone.replace(/\D/g, '').length < 7) missing.push('Phone');
-        if (parsedSkills.length === 0) missing.push('Technical Skills');
-        if (!experience.trim()) missing.push('Total Experience');
-        if (!visa.trim()) missing.push('Visa / Work Authorization');
-        if (!location.trim()) missing.push('Current Location');
-        throw new Error(`Please complete all mandatory fields: ${missing.join(', ')}`);
+      // Validate identity fields
+      if (!fullName.trim()) {
+        throw new Error('Please enter candidate full name');
+      }
+      if (email.trim() && !email.includes('@')) {
+        throw new Error('Please provide a valid email address');
+      }
+      if (phone.trim() && phone.replace(/\D/g, '').length < 7) {
+        throw new Error('Please provide a valid phone number (at least 7 digits)');
       }
 
       const payload = {
         fullName: fullName.trim() || undefined,
+        full_name: fullName.trim() || undefined,
         current_title: title.trim() || undefined,
         skills: parsedSkills,
         total_experience: experience.trim() || undefined,
@@ -408,7 +407,6 @@ export const UpdateCandidateModal: React.FC<UpdateCandidateModalProps> = ({
               </label>
               <input
                 type="text"
-                required
                 value={location}
                 onChange={(e) => setLocation(e.target.value)}
                 placeholder="e.g. Atlanta, GA, USA"
@@ -496,7 +494,6 @@ export const UpdateCandidateModal: React.FC<UpdateCandidateModalProps> = ({
               </label>
               <input
                 type="text"
-                required
                 value={phone}
                 onChange={(e) => setPhone(e.target.value)}
                 placeholder="+1 (555) 000-0000"

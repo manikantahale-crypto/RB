@@ -184,18 +184,26 @@ Required JSON structure:
 
 Rules:
 - You MUST evaluate and return an entry in "results" for EVERY candidate provided in the input list using their exact candidate_id and resume_id.
-- match_score: An integer between 0 and 100 representing semantic alignment.
-- match_status: Must be one of: "Strong Match" (score 80-100), "Potential Match" (score 50-79), or "Low Match" (score 0-49).
-- consultant_response: MUST be a bulleted list (max 5-7 bullets) starting with 'Why Matched:'.
+- match_score: An integer between 0 and 100 representing true technical and semantic alignment based on verified skill overlap.
+- strengths: Array of strings naming specific verified skills, tools, and technical areas from the candidate profile that directly fulfill the JD requirements (e.g. ['PHP 8', 'Laravel', 'MySQL database design']). DO NOT use vague phrases like 'relevant experience' or 'good communication'.
+- gaps: Array of strings naming specific missing skills, tools, or requirements from the JD not found in the candidate profile (e.g. ['Vue.js', 'Docker containerization', 'CodeIgniter']).
+- consultant_response: MUST be concise bullet points (3-5 bullets) starting with 'Why Matched:' stating exactly which key required skills overlap and any critical gaps.
+- ranking_explanation: 2-3 clear sentences of actionable recruiter advice with specific reasoning based on technical skills overlap.
 - recommendation: Choose one: "Strong Match" (80-100), "Potential Match" (50-79), or "Low Match" (0-49). Must agree with match_score.
 - next_action: Choose one: "shortlist" (80-100), "hold" (50-79), or "reject" (0-49).
-- ranking_explanation: Recruiter-style next-step reason (2-4 sentences). Say what to do and why. Do NOT copy consultant_response bullets.
 - Return clean, valid JSON only.`;
 
-async function matchBatchSummariesToSummary(candidatesList, jdSummary) {
+async function matchBatchSummariesToSummary(candidatesList, jdSummaryOrMeta) {
   if (!Array.isArray(candidatesList) || candidatesList.length === 0) {
     return { results: [] };
   }
+
+  const isMetaObj = jdSummaryOrMeta && typeof jdSummaryOrMeta === "object";
+  const jdSummary = isMetaObj ? jdSummaryOrMeta.jdSummary : String(jdSummaryOrMeta || "");
+  const jobTitle = isMetaObj ? jdSummaryOrMeta.jobTitle : null;
+  const requiredSkills = isMetaObj ? jdSummaryOrMeta.requiredSkills : null;
+  const mandatorySkills = isMetaObj ? jdSummaryOrMeta.mandatorySkills : null;
+
   if (!jdSummary || !jdSummary.trim()) {
     throw new Error("jdSummary is required for batch matching");
   }
@@ -204,16 +212,20 @@ async function matchBatchSummariesToSummary(candidatesList, jdSummary) {
 --- CANDIDATE ITEM ${i + 1} ---
 candidate_id: ${c.candidate_id || c.candidateId}
 resume_id: ${c.resume_id || c.resumeId}
+role: ${c.candidate_role || "Professional"}
+skills: ${Array.isArray(c.candidate_skills) ? c.candidate_skills.join(", ") : (c.candidate_skills || "Not specified")}
 summary: ${c.resume_summary || c.resumeSummary || ""}
 `).join("\n");
 
-  const prompt = `JD SUMMARY:
+  const prompt = `JOB REQUIREMENT:
+${jobTitle ? `Title: ${jobTitle}\n` : ""}Required Skills: ${Array.isArray(requiredSkills) ? requiredSkills.join(", ") : (requiredSkills || "N/A")}
+${mandatorySkills && Array.isArray(mandatorySkills) && mandatorySkills.length > 0 ? `Mandatory Skills: ${mandatorySkills.join(", ")}\n` : ""}JD Summary:
 ${jdSummary}
 
 CANDIDATES LIST (${candidatesList.length} items):
 ${formattedCandidates}
 
-Return the JSON object with results array now.`;
+Evaluate technical fit with specific skill overlap and concrete gaps. Return the JSON object with results array now.`;
 
   const log = require("../../../utils/logger");
   log.info(`[MATCH-TRACE] Prompt size: ${prompt.length} chars. Candidates: ${candidatesList.length}`);

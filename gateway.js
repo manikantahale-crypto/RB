@@ -93,16 +93,55 @@ app.use((req, res, next) => {
   next();
 });
 
-// 2. Direct Gateway Healthcheck:
-// Fast 200 response without requiring node-api or DB pool initialization.
-app.get('/healthz', (req, res) => {
-  res.status(200).json({
-    status: 'ok',
-    gateway: true,
-    uptime: process.uptime(),
-    timestamp: new Date().toISOString(),
-    debugMode: isDebug,
-  });
+// 2. Gateway Deep Readiness Healthcheck:
+// Checks all internal services concurrently with a short timeout.
+// Returns 200 only when Node API, Orchestrator, and Admin API are all ready.
+// Returns 503 while any service is initializing or unreachable.
+const checkServiceHealth = async (url, timeoutMs = 2000) => {
+  try {
+    const res = await fetch(url, {
+      signal: AbortSignal.timeout(timeoutMs),
+    });
+    return res.ok;
+  } catch {
+    return false;
+  }
+};
+
+app.get('/healthz', async (req, res) => {
+  try {
+    const [syntraOk, orchOk, adminOk] = await Promise.all([
+      checkServiceHealth(`${SYNTRA_TARGET}/health`),
+      checkServiceHealth(`${ORCH_TARGET}/health`),
+      checkServiceHealth(`${ADMIN_TARGET}/health`),
+    ]);
+
+    if (syntraOk && orchOk && adminOk) {
+      return res.status(200).json({
+        ok: true,
+        status: 'ready',
+      });
+    }
+
+    if (isDebug) {
+      console.warn(
+        `[GATEWAY READINESS] Initializing: syntra=${syntraOk}, orch=${orchOk}, admin=${adminOk}`
+      );
+    }
+
+    return res.status(503).json({
+      ok: false,
+      status: 'initializing',
+    });
+  } catch (err) {
+    if (isDebug) {
+      console.error('[GATEWAY READINESS ERROR]', err.message);
+    }
+    return res.status(503).json({
+      ok: false,
+      status: 'initializing',
+    });
+  }
 });
 
 // 3 & 4. Proxy Error Handling & Timeouts:

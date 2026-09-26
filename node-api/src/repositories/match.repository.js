@@ -226,7 +226,7 @@ function buildMatchFilters({ status, minScore }, alias = "m", startIndex = 1) {
   if (minScore != null && !Number.isNaN(Number(minScore))) {
     params.push(Number(minScore));
     i += 1;
-    clauses.push(`${alias}.score >= $${i}`);
+    clauses.push(`COALESCE(${alias}.score, ${alias}.skill_match_score, 0) >= $${i}`);
   }
   return { clauses, params };
 }
@@ -315,7 +315,7 @@ async function listMatchesForJob(jobId, { status, minScore } = {}) {
        JOIN ${CORE_PEOPLE} c ON c.id = m.candidate_id
        JOIN ${CORE_REQUIREMENTS} j ON j.id = m.job_id
       WHERE m.job_id = $1${extra}
-      ORDER BY m.score DESC NULLS LAST, m.created_at DESC`,
+      ORDER BY COALESCE(m.score, m.skill_match_score, 0) DESC NULLS LAST, m.created_at DESC`,
     params
   );
   return rows;
@@ -350,7 +350,7 @@ async function listMatchesForCandidate(candidateId, { status, minScore } = {}) {
        FROM ${CORE_MATCHES} m
        JOIN ${CORE_REQUIREMENTS} j ON j.id = m.job_id
       WHERE m.candidate_id = $1${extra}
-      ORDER BY m.score DESC NULLS LAST, m.created_at DESC`,
+      ORDER BY COALESCE(m.score, m.skill_match_score, 0) DESC NULLS LAST, m.created_at DESC`,
     params
   );
   return rows;
@@ -603,10 +603,14 @@ async function markFailed(jobId, resumeId, error) {
 
 async function getSummariesForScoring(jobId, resumeId) {
   const { rows } = await pool.query(
-    `SELECT j.jd_summary,
+    `SELECT j.id AS job_id,
+            j.title AS job_title,
+            j.jd_summary,
             j.score_threshold,
             j.required_skills,
             j.mandatory_skills,
+            r.id AS resume_id,
+            r.current_role,
             r.resume_summary,
             r.candidate_id,
             r.skills AS resume_skills

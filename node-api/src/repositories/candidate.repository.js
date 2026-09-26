@@ -155,12 +155,18 @@ async function listCandidates({ userId = null, limit = 50 } = {}) {
   };
 }
 
+const UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+function isValidUuid(val) {
+  return typeof val === "string" && UUID_REGEX.test(val);
+}
+
 async function deleteCandidate(candidateId, userId = null) {
+  if (!isValidUuid(candidateId)) return false;
   const client = await pool.connect();
   try {
     await client.query("BEGIN");
     const checkSql = userId
-      ? `SELECT id FROM ${CORE_PEOPLE} WHERE id = $1 AND created_by = $2`
+      ? `SELECT id FROM ${CORE_PEOPLE} WHERE id = $1 AND (created_by = $2 OR created_by IS NULL)`
       : `SELECT id FROM ${CORE_PEOPLE} WHERE id = $1`;
     const checkParams = userId ? [candidateId, userId] : [candidateId];
     const existing = await client.query(checkSql, checkParams);
@@ -168,19 +174,78 @@ async function deleteCandidate(candidateId, userId = null) {
       await client.query("ROLLBACK");
       return false;
     }
+
     const resumes = await client.query(
-      `SELECT id FROM ${CORE_RESUMES} WHERE candidate_id = $1`,
+      `SELECT id FROM core.resumes WHERE person_id = $1`,
       [candidateId]
     );
     const resumeIds = resumes.rows.map((r) => r.id);
-    await client.query(`DELETE FROM ${CORE_MATCHES} WHERE candidate_id = $1`, [candidateId]);
+
+    // 1. Matches
+    await client.query(`DELETE FROM core.matches WHERE person_id = $1`, [candidateId]);
     if (resumeIds.length) {
-      await client.query(`DELETE FROM ${CORE_MATCHES} WHERE resume_id = ANY($1::uuid[])`, [
+      await client.query(`DELETE FROM core.matches WHERE resume_id = ANY($1::uuid[])`, [
         resumeIds,
       ]);
     }
-    await client.query(`DELETE FROM ${CORE_RESUMES} WHERE candidate_id = $1`, [candidateId]);
-    await client.query(`DELETE FROM ${CORE_PEOPLE} WHERE id = $1`, [candidateId]);
+
+    // 2. Activities
+    await client.query(`DELETE FROM core.activities WHERE person_id = $1`, [candidateId]);
+
+    // 3. Orbit module records
+    await client.query(`DELETE FROM orbit.lifecycle_states WHERE person_id = $1`, [candidateId]);
+    await client.query(`DELETE FROM orbit.interviews WHERE person_id = $1`, [candidateId]);
+    await client.query(`DELETE FROM orbit.submissions WHERE person_id = $1`, [candidateId]);
+    await client.query(`DELETE FROM orbit.placements WHERE person_id = $1`, [candidateId]);
+
+    // 4. Prism module records (approvals, consents, rtr cascade from prism.submissions)
+    if (resumeIds.length) {
+      await client.query(
+        `DELETE FROM prism.submissions WHERE person_id = $1 OR resume_id = ANY($2::uuid[])`,
+        [candidateId, resumeIds]
+      );
+    } else {
+      await client.query(`DELETE FROM prism.submissions WHERE person_id = $1`, [candidateId]);
+    }
+
+    // 5. Relay module records
+    await client.query(`DELETE FROM relay.followups WHERE candidate_id = $1`, [candidateId]);
+    await client.query(`DELETE FROM relay.email_classifications WHERE candidate_id = $1`, [candidateId]);
+    await client.query(
+      `DELETE FROM relay.email_messages WHERE thread_id IN (SELECT thread_id FROM relay.email_threads WHERE candidate_id = $1)`,
+      [candidateId]
+    );
+    await client.query(`DELETE FROM relay.email_threads WHERE candidate_id = $1`, [candidateId]);
+
+    // 6. Syntra scoring log
+    await client.query(`DELETE FROM syntra.scoring_log WHERE candidate_id = $1`, [candidateId]);
+    if (resumeIds.length) {
+      await client.query(`DELETE FROM syntra.scoring_log WHERE resume_id = ANY($1::uuid[])`, [
+        resumeIds,
+      ]);
+    }
+
+    // 7. Polymorphic tables (embeddings, processing_jobs, source_files)
+    const subjectIds = [candidateId, ...resumeIds];
+    await client.query(
+      `DELETE FROM core.embeddings WHERE subject_type IN ('person', 'resume') AND subject_id = ANY($1::uuid[])`,
+      [subjectIds]
+    );
+    await client.query(
+      `DELETE FROM core.processing_jobs WHERE subject_type IN ('person', 'resume') AND subject_id = ANY($1::uuid[])`,
+      [subjectIds]
+    );
+    await client.query(
+      `DELETE FROM core.source_files WHERE subject_type IN ('person', 'resume') AND subject_id = ANY($1::uuid[])`,
+      [subjectIds]
+    );
+
+    // 8. Resumes
+    await client.query(`DELETE FROM core.resumes WHERE person_id = $1`, [candidateId]);
+
+    // 9. People
+    await client.query(`DELETE FROM core.people WHERE id = $1`, [candidateId]);
+
     await client.query("COMMIT");
     return true;
   } catch (err) {
@@ -194,38 +259,99 @@ async function deleteCandidate(candidateId, userId = null) {
 async function deleteCandidates(candidateIds, userId = null) {
   const ids = Array.isArray(candidateIds) ? candidateIds.filter(Boolean) : [];
   if (ids.length === 0) return { deleted: 0 };
+  const validIds = ids.filter(isValidUuid);
+  if (validIds.length === 0) return { deleted: 0 };
+
   const client = await pool.connect();
   try {
     await client.query("BEGIN");
     const selectSql = userId
-      ? `SELECT id FROM ${CORE_PEOPLE} WHERE id = ANY($1::uuid[]) AND created_by = $2`
-      : `SELECT id FROM ${CORE_PEOPLE} WHERE id = ANY($1::uuid[])`;
-    const selectParams = userId ? [ids, userId] : [ids];
+      ? `SELECT id FROM core.people WHERE id = ANY($1::uuid[]) AND (created_by = $2 OR created_by IS NULL)`
+      : `SELECT id FROM core.people WHERE id = ANY($1::uuid[])`;
+    const selectParams = userId ? [validIds, userId] : [validIds];
     const ownedRows = await client.query(selectSql, selectParams);
     const ownedIds = ownedRows.rows.map((r) => r.id);
     if (ownedIds.length === 0) {
       await client.query("ROLLBACK");
       return { deleted: 0 };
     }
+
     const resumes = await client.query(
-      `SELECT id FROM ${CORE_RESUMES} WHERE candidate_id = ANY($1::uuid[])`,
+      `SELECT id FROM core.resumes WHERE person_id = ANY($1::uuid[])`,
       [ownedIds]
     );
     const resumeIds = resumes.rows.map((r) => r.id);
+
+    // 1. Matches
     await client.query(
-      `DELETE FROM ${CORE_MATCHES} WHERE candidate_id = ANY($1::uuid[])`,
+      `DELETE FROM core.matches WHERE person_id = ANY($1::uuid[])`,
       [ownedIds]
     );
     if (resumeIds.length) {
-      await client.query(`DELETE FROM ${CORE_MATCHES} WHERE resume_id = ANY($1::uuid[])`, [
+      await client.query(`DELETE FROM core.matches WHERE resume_id = ANY($1::uuid[])`, [
         resumeIds,
       ]);
     }
-    await client.query(`DELETE FROM ${CORE_RESUMES} WHERE candidate_id = ANY($1::uuid[])`, [
+
+    // 2. Activities
+    await client.query(`DELETE FROM core.activities WHERE person_id = ANY($1::uuid[])`, [ownedIds]);
+
+    // 3. Orbit module records
+    await client.query(`DELETE FROM orbit.lifecycle_states WHERE person_id = ANY($1::uuid[])`, [ownedIds]);
+    await client.query(`DELETE FROM orbit.interviews WHERE person_id = ANY($1::uuid[])`, [ownedIds]);
+    await client.query(`DELETE FROM orbit.submissions WHERE person_id = ANY($1::uuid[])`, [ownedIds]);
+    await client.query(`DELETE FROM orbit.placements WHERE person_id = ANY($1::uuid[])`, [ownedIds]);
+
+    // 4. Prism module records
+    if (resumeIds.length) {
+      await client.query(
+        `DELETE FROM prism.submissions WHERE person_id = ANY($1::uuid[]) OR resume_id = ANY($2::uuid[])`,
+        [ownedIds, resumeIds]
+      );
+    } else {
+      await client.query(`DELETE FROM prism.submissions WHERE person_id = ANY($1::uuid[])`, [ownedIds]);
+    }
+
+    // 5. Relay module records
+    await client.query(`DELETE FROM relay.followups WHERE candidate_id = ANY($1::uuid[])`, [ownedIds]);
+    await client.query(`DELETE FROM relay.email_classifications WHERE candidate_id = ANY($1::uuid[])`, [ownedIds]);
+    await client.query(
+      `DELETE FROM relay.email_messages WHERE thread_id IN (SELECT thread_id FROM relay.email_threads WHERE candidate_id = ANY($1::uuid[]))`,
+      [ownedIds]
+    );
+    await client.query(`DELETE FROM relay.email_threads WHERE candidate_id = ANY($1::uuid[])`, [ownedIds]);
+
+    // 6. Syntra scoring log
+    await client.query(`DELETE FROM syntra.scoring_log WHERE candidate_id = ANY($1::uuid[])`, [ownedIds]);
+    if (resumeIds.length) {
+      await client.query(`DELETE FROM syntra.scoring_log WHERE resume_id = ANY($1::uuid[])`, [
+        resumeIds,
+      ]);
+    }
+
+    // 7. Polymorphic tables
+    const subjectIds = [...ownedIds, ...resumeIds];
+    await client.query(
+      `DELETE FROM core.embeddings WHERE subject_type IN ('person', 'resume') AND subject_id = ANY($1::uuid[])`,
+      [subjectIds]
+    );
+    await client.query(
+      `DELETE FROM core.processing_jobs WHERE subject_type IN ('person', 'resume') AND subject_id = ANY($1::uuid[])`,
+      [subjectIds]
+    );
+    await client.query(
+      `DELETE FROM core.source_files WHERE subject_type IN ('person', 'resume') AND subject_id = ANY($1::uuid[])`,
+      [subjectIds]
+    );
+
+    // 8. Resumes
+    await client.query(`DELETE FROM core.resumes WHERE person_id = ANY($1::uuid[])`, [
       ownedIds,
     ]);
+
+    // 9. People
     const { rowCount } = await client.query(
-      `DELETE FROM ${CORE_PEOPLE} WHERE id = ANY($1::uuid[])`,
+      `DELETE FROM core.people WHERE id = ANY($1::uuid[])`,
       [ownedIds]
     );
     await client.query("COMMIT");
@@ -288,51 +414,163 @@ async function saveProfileFields(
 
 /**
  * Update candidate fields by ID (with optional userId ownership check).
+ * Updates core.people, core.resumes, and orbit.lifecycle_states safely in a transaction.
  */
 async function updateCandidate(candidateId, updates = {}, userId = null) {
-  const allowed = [
-    "full_name",
-    "email",
-    "phone",
-    "immigration_status",
-    "location",
-    "linkedin",
-    "github",
-    "current_title",
-    "status",
-  ];
+  if (!isValidUuid(candidateId)) return null;
 
-  const setClauses = [];
-  const values = [candidateId];
-  let idx = 2;
-
-  for (const key of allowed) {
-    if (updates[key] !== undefined) {
-      setClauses.push(`${key} = $${idx++}`);
-      values.push(updates[key]);
+  const client = await pool.connect();
+  try {
+    await client.query("BEGIN");
+    const checkSql = userId
+      ? `SELECT id, org_id FROM core.people WHERE id = $1 AND (created_by = $2 OR created_by IS NULL)`
+      : `SELECT id, org_id FROM core.people WHERE id = $1`;
+    const checkParams = userId ? [candidateId, userId] : [candidateId];
+    const existing = await client.query(checkSql, checkParams);
+    if (!existing.rows[0]) {
+      await client.query("ROLLBACK");
+      return null;
     }
+    const orgId = existing.rows[0].org_id;
+
+    // 1. Update core.people
+    const peopleMap = {
+      full_name: updates.full_name !== undefined ? updates.full_name : updates.fullName,
+      email: updates.email !== undefined ? updates.email : undefined,
+      phone: updates.phone !== undefined ? updates.phone : undefined,
+      immigration_status:
+        updates.immigration_status !== undefined
+          ? updates.immigration_status
+          : updates.work_authorization,
+      location: updates.location !== undefined ? updates.location : undefined,
+      linkedin: updates.linkedin !== undefined ? updates.linkedin : undefined,
+      github: updates.github !== undefined ? updates.github : undefined,
+      current_title: updates.current_title !== undefined ? updates.current_title : updates.title,
+      status: updates.status !== undefined ? updates.status : undefined,
+    };
+
+    const setClauses = [];
+    const values = [candidateId];
+    let idx = 2;
+
+    for (const [col, val] of Object.entries(peopleMap)) {
+      if (val !== undefined) {
+        setClauses.push(`${col} = $${idx++}`);
+        values.push(val);
+      }
+    }
+
+    if (setClauses.length > 0) {
+      setClauses.push("updated_at = now()");
+      await client.query(
+        `UPDATE core.people SET ${setClauses.join(", ")} WHERE id = $1`,
+        values
+      );
+    }
+
+    // 2. Update core.resumes (current or latest resume)
+    const hasResumeUpdates =
+      updates.skills !== undefined ||
+      updates.total_experience !== undefined ||
+      updates.experience_years !== undefined ||
+      updates.min_rate !== undefined ||
+      updates.minRate !== undefined ||
+      updates.current_title !== undefined ||
+      updates.title !== undefined;
+
+    if (hasResumeUpdates) {
+      const rRes = await client.query(
+        `SELECT id FROM core.resumes WHERE person_id = $1 AND is_current = true ORDER BY created_at DESC LIMIT 1`,
+        [candidateId]
+      );
+      let resumeId = rRes.rows[0]?.id;
+      if (!resumeId) {
+        const anyR = await client.query(
+          `SELECT id FROM core.resumes WHERE person_id = $1 ORDER BY created_at DESC LIMIT 1`,
+          [candidateId]
+        );
+        resumeId = anyR.rows[0]?.id;
+      }
+
+      if (resumeId) {
+        const rClauses = [];
+        const rValues = [resumeId];
+        let rIdx = 2;
+
+        if (updates.skills !== undefined) {
+          let sVal = updates.skills;
+          if (typeof sVal === "string") {
+            try {
+              sVal = JSON.parse(sVal);
+            } catch {
+              sVal = sVal.split(/[,;\n]+/).map((s) => s.trim()).filter(Boolean);
+            }
+          }
+          if (!Array.isArray(sVal)) sVal = [sVal];
+          rClauses.push(`skills = $${rIdx++}`);
+          rValues.push(JSON.stringify(sVal));
+        }
+
+        const expVal =
+          updates.total_experience !== undefined
+            ? updates.total_experience
+            : updates.experience_years;
+        if (expVal !== undefined) {
+          rClauses.push(`total_experience = $${rIdx++}`);
+          rValues.push(expVal);
+          const parsedExp = parseInt(expVal, 10);
+          if (!isNaN(parsedExp)) {
+            rClauses.push(`years_experience = $${rIdx++}`);
+            rValues.push(parsedExp);
+          }
+        }
+
+        const rateVal = updates.min_rate !== undefined ? updates.min_rate : updates.minRate;
+        if (rateVal !== undefined) {
+          rClauses.push(`min_rate = $${rIdx++}`);
+          rValues.push(rateVal);
+        }
+
+        const titleVal =
+          updates.current_title !== undefined ? updates.current_title : updates.title;
+        if (titleVal !== undefined) {
+          rClauses.push(`current_role_title = $${rIdx++}`);
+          rValues.push(titleVal);
+          rClauses.push(`primary_role = $${rIdx++}`);
+          rValues.push(titleVal);
+        }
+
+        if (rClauses.length > 0) {
+          rClauses.push("updated_at = now()");
+          await client.query(
+            `UPDATE core.resumes SET ${rClauses.join(", ")} WHERE id = $1`,
+            rValues
+          );
+        }
+      }
+    }
+
+    // 3. Record lifecycle transition if specified
+    const targetState =
+      updates.orbit_lifecycle_state ||
+      (updates.status === "Active" ? "AVAILABLE" : updates.status);
+    if (targetState) {
+      await client.query(
+        `INSERT INTO orbit.lifecycle_states (org_id, person_id, state, transitioned_by, transitioned_at)
+         VALUES ($1, $2, $3, $4, now())`,
+        [orgId, candidateId, targetState, userId]
+      );
+    }
+
+    await client.query("COMMIT");
+  } catch (err) {
+    await client.query("ROLLBACK");
+    throw err;
+  } finally {
+    client.release();
   }
 
-  if (setClauses.length === 0) {
-    return getCandidateWithCurrentResume(candidateId, userId);
-  }
-
-  setClauses.push("updated_at = now()");
-
-  let whereClause = "WHERE id = $1";
-  if (userId) {
-    whereClause += ` AND (created_by = $${idx++} OR created_by IS NULL)`;
-    values.push(userId);
-  }
-
-  const sql = `
-    UPDATE core.people
-       SET ${setClauses.join(", ")}
-     ${whereClause}
-     RETURNING id, full_name, email, phone, location, immigration_status, status, updated_at;
-  `;
-  const { rows } = await pool.query(sql, values);
-  return rows[0] || null;
+  return getCandidateWithCurrentResume(candidateId, userId);
 }
 
 async function getClosestJdsCount(candidateId, threshold = 60, userId = null) {

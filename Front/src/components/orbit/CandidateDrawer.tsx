@@ -227,6 +227,7 @@ export const CandidateDrawer: React.FC<CandidateDrawerProps> = ({
               <OverviewTab
                 candidate={{ ...candidate, orbit_lifecycle_state: currentState }}
                 onOpenTransition={() => setShowTransitionModal(true)}
+                onOpenEditProfile={() => setShowUpdateProfileModal(true)}
               />
             )}
             {activeTab === 'experience' && <ExperienceTab candidate={candidate} />}

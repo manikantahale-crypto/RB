@@ -1,6 +1,11 @@
 const jobService = require("../services/job.service");
 const jobRepo = require("../repositories/job.repository");
 
+const UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+function isValidUuid(id) {
+  return typeof id === "string" && UUID_REGEX.test(id);
+}
+
 async function uploadJob(req, res, next) {
   try {
     if (!req.file) {
@@ -101,11 +106,19 @@ async function listJobs(req, res, next) {
 
 async function deleteJob(req, res, next) {
   try {
-    const ok = await jobRepo.deleteJob(req.params.jobId, req.userId);
+    const { jobId } = req.params;
+    if (!jobId || !isValidUuid(jobId)) {
+      return res.status(400).json({
+        error: "invalid_job_id",
+        message: "Job ID must be a valid UUID",
+      });
+    }
+    const ok = await jobRepo.deleteJob(jobId, req.userId);
     if (!ok) {
-      const err = new Error(`Job not found: ${req.params.jobId}`);
-      err.statusCode = 404;
-      throw err;
+      return res.status(404).json({
+        error: "job_not_found",
+        message: `Job not found: ${jobId}`,
+      });
     }
     res.status(204).send();
   } catch (err) {
@@ -170,13 +183,15 @@ async function getJob(req, res, next) {
 
 async function deleteJobsBulk(req, res, next) {
   try {
-    const ids = Array.isArray(req.body?.ids) ? req.body.ids : [];
-    if (!ids.length) {
-      const err = new Error("Provide ids: string[]");
-      err.statusCode = 400;
-      throw err;
+    const rawIds = Array.isArray(req.body?.ids) ? req.body.ids : [];
+    const validIds = rawIds.filter(isValidUuid);
+    if (!validIds.length) {
+      return res.status(400).json({
+        error: "invalid_ids",
+        message: "Provide ids: string[] containing valid UUIDs",
+      });
     }
-    const result = await jobRepo.deleteJobs(ids, req.userId);
+    const result = await jobRepo.deleteJobs(validIds, req.userId);
     res.json(result);
   } catch (err) {
     next(err);

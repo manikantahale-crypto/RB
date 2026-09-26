@@ -117,6 +117,11 @@ async function processBatchForJob(jobId, candidateRows) {
         jobId,
         candidate_id: c.candidateId || row.candidate_id,
         resume_id: c.resumeId,
+        job_title: row.job_title,
+        candidate_role: row.current_role,
+        required_skills: row.required_skills,
+        mandatory_skills: row.mandatory_skills,
+        candidate_skills: row.resume_skills,
         jd_summary: row.jd_summary,
         resume_summary: row.resume_summary,
         score_threshold: row.score_threshold != null ? Number(row.score_threshold) : 60,
@@ -140,11 +145,16 @@ async function processBatchForJob(jobId, candidateRows) {
 
   if (validPairs.length === 0) return outcome;
 
-  const jdSummary = validPairs[0].jd_summary;
+  const jdMeta = {
+    jdSummary: validPairs[0].jd_summary,
+    jobTitle: validPairs[0].job_title,
+    requiredSkills: validPairs[0].required_skills,
+    mandatorySkills: validPairs[0].mandatory_skills,
+  };
 
   try {
     const llmStart = Date.now();
-    const batchResult = await matchBatchSummariesToSummary(validPairs, jdSummary);
+    const batchResult = await matchBatchSummariesToSummary(validPairs, jdMeta);
     log.info(`match scoring batch completed job=${jobId} duration=${Date.now() - llmStart}ms`);
     batchResult.pairCount = validPairs.length;
 
