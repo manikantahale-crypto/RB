@@ -119,10 +119,20 @@ async function pollEmails(options = {}) {
           defaultUserId = defaultUser.id;
           log.info(`[IMAP Poller] Resolved IMAP mailbox ${env.IMAP_USERNAME} to user ID: ${defaultUserId}`);
         } else {
-          log.warn(`[IMAP Poller] IMAP username ${env.IMAP_USERNAME} does not map to a system user; email JD will have no created_by.`);
+          // Fall back to default operator user if mailbox does not match a user
+          const { pool } = require("../../../config/db");
+          const fallbackRes = await pool.query(
+            "SELECT u.id FROM platform.users u WHERE u.status = 'active' AND u.deleted_at IS NULL ORDER BY u.created_at ASC LIMIT 1"
+          );
+          if (fallbackRes.rows.length > 0) {
+            defaultUserId = fallbackRes.rows[0].id;
+            log.info(`[IMAP Poller] IMAP mailbox ${env.IMAP_USERNAME} mapped to fallback system user ID: ${defaultUserId}`);
+          } else {
+            log.warn(`[IMAP Poller] IMAP username ${env.IMAP_USERNAME} does not map to a system user; email JD will rely on organizationId.`);
+          }
         }
       } catch (userErr) {
-        log.warn(`[IMAP Poller] Error resolving user for IMAP username ${env.IMAP_USERNAME}: ${userErr.message}; email JD will have no created_by.`);
+        log.warn(`[IMAP Poller] Error resolving user for IMAP username ${env.IMAP_USERNAME}: ${userErr.message}`);
       }
     }
 
@@ -168,6 +178,7 @@ async function pollEmails(options = {}) {
           references: Array.isArray(parsed.references) ? parsed.references.join(" ") : parsed.references || null,
           date: parsed.date ? parsed.date.toISOString() : new Date().toISOString(),
           createdBy: defaultUserId,
+          organizationId: env.ORCH_ORGANIZATION_ID || null,
         };
 
         log.info(`[IMAP Poller] Ingesting email: "${payload.subject}" from: ${payload.from}`);

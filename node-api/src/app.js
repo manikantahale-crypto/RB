@@ -105,10 +105,11 @@ app.use("/auth", require("./routes/auth.routes"));
  * INTERNAL_API_SECRET unset the gate passes everything and says so at boot.
  */
 const { requireInternalSecret } = require("./middleware/internalSecret");
-app.use(requireInternalSecret, require("./modules/syntra/routes/internal.syntra.routes"));
-app.use(requireInternalSecret, require("./modules/orbit/routes/internal.orbit.routes"));
-app.use(requireInternalSecret, require("./modules/astra/routes/internal.astra.routes"));
-app.use(requireInternalSecret, require("./modules/prism/routes/internal.prism.routes"));
+app.use("/internal", requireInternalSecret);
+app.use(require("./modules/syntra/routes/internal.syntra.routes"));
+app.use(require("./modules/orbit/routes/internal.orbit.routes"));
+app.use(require("./modules/astra/routes/internal.astra.routes"));
+app.use(require("./modules/prism/routes/internal.prism.routes"));
 app.use("/api/astra", require("./modules/astra/routes/astra.routes"));
 app.use("/astra", require("./modules/astra/routes/astra.routes"));
 app.use("/api/job-boards", require("./modules/astra/routes/jobBoards.routes"));
