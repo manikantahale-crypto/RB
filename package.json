@@ -44,6 +44,7 @@
     "start:render": "npx concurrently --kill-others-on-fail -n gateway,syntra,orch,worker,admin -c yellow,cyan,magenta,blue,green \"node gateway.js\" \"npm run start --prefix node-api\" \"npm run start -w @tekisho/api\" \"npm run start -w @tekisho/worker\" \"npm run start -w @tekisho/admin-api\""
   },
   "dependencies": {
+    "@langchain/core": "^1.2.13",
     "@langchain/langgraph": "^1.4.9",
     "@langchain/langgraph-checkpoint-postgres": "^1.0.4",
     "cors": "^2.8.5",

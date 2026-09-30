@@ -62,7 +62,7 @@ async function getJobById(...args) {
   let extraWhere = "";
   if (userId) {
     params.push(userId);
-    extraWhere = " AND created_by = $2";
+    extraWhere = " AND (created_by = $2 OR created_by IS NULL OR org_id IN (SELECT org_id FROM platform.org_members WHERE user_id = $2 AND status = 'active'))";
   }
 
   const { rows } = await db.query(

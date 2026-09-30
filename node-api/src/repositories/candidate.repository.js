@@ -44,7 +44,7 @@ async function getCandidateWithCurrentResume(...args) {
   let extraWhere = "";
   if (userId) {
     params.push(userId);
-    extraWhere = " AND c.created_by = $2";
+    extraWhere = " AND (c.created_by = $2 OR c.created_by IS NULL OR c.org_id IN (SELECT org_id FROM platform.org_members WHERE user_id = $2 AND status = 'active'))";
   }
 
   const { rows } = await db.query(
@@ -618,7 +618,7 @@ async function getCurrentResumeId(candidateId, userId = null) {
   let extra = "";
   if (userId) {
     params.push(userId);
-    extra = " AND c.created_by = $2";
+    extra = " AND (c.created_by = $2 OR c.created_by IS NULL OR c.org_id IN (SELECT org_id FROM platform.org_members WHERE user_id = $2 AND status = 'active'))";
   }
   const { rows } = await pool.query(
     `SELECT r.id

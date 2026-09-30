@@ -8,15 +8,14 @@
  *   VITE_API_URL
  *
  * Local development fallback:
- *   http://localhost:8080
+ *   http://localhost:4000
  *
- * The frontend communicates through the Gateway rather than directly
- * connecting to Node API, Orchestrator, or Admin API ports.
+ * The frontend communicates with the Syntra API on port 4000.
  */
 
 const rawApiUrl: string =
   (import.meta.env.VITE_API_BASE_URL as string | undefined) ||
   (import.meta.env.VITE_API_URL as string | undefined) ||
-  (import.meta.env.DEV ? 'http://localhost:8080' : '');
+  (import.meta.env.DEV ? 'http://localhost:4000' : '');
 
 export const API_BASE_URL: string = rawApiUrl.replace(/\/$/, '');

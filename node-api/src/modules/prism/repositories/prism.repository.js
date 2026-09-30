@@ -33,14 +33,14 @@ const SUB_RETURNING = `*, person_id AS candidate_id, requirement_id AS job_id`;
 // -----------------------------------------------------------------------------
 // Submissions CRUD
 // -----------------------------------------------------------------------------
-async function createSubmission(client, { candidateId, resumeId, jobId, matchId, status, createdBy }) {
+async function createSubmission(client, { candidateId, resumeId, jobId, matchId, status, createdBy, orgId }) {
   const dbClient = client || pool;
   const sql = `
     INSERT INTO prism.submissions (
-      person_id, resume_id, requirement_id, match_id, status, created_by,
+      person_id, resume_id, requirement_id, match_id, status, created_by, org_id,
       candidate_validation_results, vendor_validation_results, masked_profile, interview_details
     )
-    VALUES ($1, $2, $3, $4, COALESCE($5, 'DRAFT'), $6, '{}'::jsonb, '{}'::jsonb, '{}'::jsonb, '{}'::jsonb)
+    VALUES ($1, $2, $3, $4, COALESCE($5, 'DRAFT'), $6, $7, '{}'::jsonb, '{}'::jsonb, '{}'::jsonb, '{}'::jsonb)
     RETURNING ${SUB_RETURNING}
   `;
   const { rows } = await dbClient.query(sql, [
@@ -49,7 +49,8 @@ async function createSubmission(client, { candidateId, resumeId, jobId, matchId,
     jobId,
     matchId || null,
     status || 'DRAFT',
-    createdBy
+    createdBy,
+    orgId || null,
   ]);
   return rows[0];
 }
@@ -717,11 +718,11 @@ async function updateApprovalStatus(client, approvalId, submissionId, userId, st
 // -----------------------------------------------------------------------------
 // Audit
 // -----------------------------------------------------------------------------
-async function insertAuditLog(client, { entityType, entityId, previousStatus, newStatus, createdBy }) {
+async function insertAuditLog(client, { entityType, entityId, previousStatus, newStatus, createdBy, orgId }) {
   const dbClient = client || pool;
   const sql = `
-    INSERT INTO prism.audit (entity_type, entity_id, previous_status, new_status, created_by)
-    VALUES ($1, $2, $3, $4, $5)
+    INSERT INTO prism.audit (entity_type, entity_id, previous_status, new_status, created_by, org_id)
+    VALUES ($1, $2, $3, $4, $5, $6)
     RETURNING *
   `;
   const { rows } = await dbClient.query(sql, [
@@ -729,7 +730,8 @@ async function insertAuditLog(client, { entityType, entityId, previousStatus, ne
     entityId,
     previousStatus || null,
     newStatus,
-    createdBy
+    createdBy,
+    orgId || null,
   ]);
   return rows[0];
 }

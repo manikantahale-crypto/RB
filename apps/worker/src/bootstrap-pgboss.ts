@@ -54,7 +54,7 @@ async function bootstrapPgBoss(): Promise<void> {
     connectionString: env.DATABASE_MIGRATOR_URL,
     schema: "pgboss",
     ssl: sslFor(env.DATABASE_MIGRATOR_URL),
-    max: Math.max(1, parseInt(process.env.DB_BOSS_POOL_MAX || process.env.DEV_PG_POOL_MAX || "1", 10)),
+    max: Math.max(1, parseInt(process.env.DB_BOSS_POOL_MAX || process.env.DEV_PG_POOL_MAX || "3", 10)),
     application_name: process.env.DB_APPLICATION_NAME || "tekisho-worker-boss",
   });
 

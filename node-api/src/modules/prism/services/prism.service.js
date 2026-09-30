@@ -42,13 +42,41 @@ async function createSubmission({ candidateId, resumeId, jobId, matchId, userId 
     throw createError("Job not found or does not belong to you.", 404);
   }
 
-  // Step 4 - Duplicate active submission
+  // Step 4 - Organization Validation & Authorization
+  const candidateOrg = candidate.org_id || null;
+  const jobOrg = job.org_id || null;
+
+  if (candidateOrg && jobOrg && candidateOrg !== jobOrg) {
+    throw createError("Candidate and job belong to different organizations.", 400);
+  }
+
+  let orgId = candidateOrg || jobOrg;
+  if (!orgId) {
+    const userOrgsRes = await pool.query(
+      `SELECT org_id FROM platform.org_members WHERE user_id = $1 AND status = 'active' ORDER BY created_at ASC`,
+      [userId]
+    );
+    if (userOrgsRes.rows.length === 0) {
+      throw createError("User does not belong to an active organization.", 403);
+    }
+    orgId = userOrgsRes.rows[0].org_id;
+  }
+
+  const memberCheck = await pool.query(
+    `SELECT 1 FROM platform.org_members WHERE user_id = $1 AND org_id = $2 AND status = 'active'`,
+    [userId, orgId]
+  );
+  if (memberCheck.rows.length === 0) {
+    throw createError("User is not authorized for this organization.", 403);
+  }
+
+  // Step 5 - Duplicate active submission
   const duplicate = await prismRepo.findActiveDuplicateSubmission(candidateId, jobId, userId);
   if (duplicate) {
     throw createError("A PRISM submission already exists for this candidate and job.", 409);
   }
 
-  // Step 5 - Create Submission
+  // Step 6 - Create Submission
   const client = await pool.connect();
   try {
     await client.query("BEGIN");
@@ -59,6 +87,7 @@ async function createSubmission({ candidateId, resumeId, jobId, matchId, userId 
       matchId,
       status: "DRAFT",
       createdBy: userId,
+      orgId,
     });
 
     await prismRepo.insertAuditLog(client, {
@@ -67,6 +96,7 @@ async function createSubmission({ candidateId, resumeId, jobId, matchId, userId 
       previousStatus: null,
       newStatus: "DRAFT",
       createdBy: userId,
+      orgId,
     });
 
     await client.query("COMMIT");

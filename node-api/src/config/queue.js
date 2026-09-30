@@ -37,7 +37,7 @@ async function startBoss() {
     schema: "pgboss",
     ssl: resolveSsl(env.DATABASE_URL),
     // Session pooler allows ~15 clients total — share budget with Node + Python pools
-    max: Math.max(1, parseInt(process.env.DB_BOSS_POOL_MAX || process.env.DEV_PG_POOL_MAX || "1", 10)),
+    max: Math.max(1, parseInt(process.env.DB_BOSS_POOL_MAX || process.env.DEV_PG_POOL_MAX || "3", 10)),
     connectionTimeoutMillis: parseInt(process.env.DB_CONNECTION_TIMEOUT_MS || "20000", 10),
     application_name: process.env.DB_APPLICATION_NAME || "node-api-boss",
   });

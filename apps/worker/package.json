@@ -21,6 +21,8 @@
     "tsx": "^4.23.5"
   },
   "dependencies": {
+    "@langchain/core": "^1.1.48",
+    "@langchain/langgraph-checkpoint-postgres": "^1.0.4",
     "@tekisho/authoring": "*",
     "@tekisho/domain": "*",
     "@tekisho/orchestrator": "*",

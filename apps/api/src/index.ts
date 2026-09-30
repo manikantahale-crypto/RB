@@ -47,7 +47,7 @@ async function main(): Promise<void> {
     connectionString: databaseUrl,
     schema: "pgboss",
     ssl: sslFor(databaseUrl),
-    max: Math.max(1, parseInt(process.env.DB_BOSS_POOL_MAX || process.env.DEV_PG_POOL_MAX || "1", 10)),
+    max: Math.max(1, parseInt(process.env.DB_BOSS_POOL_MAX || process.env.DEV_PG_POOL_MAX || "3", 10)),
     application_name: process.env.DB_APPLICATION_NAME || "tekisho-ingress-boss",
   });
   // Pool timeouts must not crash the process (same pattern as worker bootstrap).
