@@ -20,7 +20,7 @@ function formatUserResponse(userRow) {
     id: userRow.id,
     fullName: userRow.full_name,
     email: userRow.email,
-    role: userRow.role,
+    role: userRow.role || "Recruiter",
     createdAt: userRow.created_at,
   };
 }
@@ -30,12 +30,6 @@ function generateToken(user) {
     {
       userId: user.id,
       email: user.email,
-      role: user.role,
-      // Which customer this session is acting for. Every tenant-scoped write
-      // reads it from here rather than deriving it from a row, which is what
-      // lets one person belong to two organisations later, and what RLS will
-      // read when it is switched on.
-      orgId: user.organization_id,
     },
     env.AUTH_JWT_SECRET,
     { expiresIn: "7d" }

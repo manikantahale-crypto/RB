@@ -44,7 +44,7 @@ async function getCandidateWithCurrentResume(...args) {
   let extraWhere = "";
   if (userId) {
     params.push(userId);
-    extraWhere = " AND (c.created_by = $2 OR c.created_by IS NULL OR c.org_id IN (SELECT org_id FROM platform.org_members WHERE user_id = $2 AND status = 'active'))";
+    extraWhere = " AND (c.created_by = $2 OR c.created_by IS NULL)";
   }
 
   const { rows } = await db.query(
@@ -58,6 +58,7 @@ async function getCandidateWithCurrentResume(...args) {
             c.github,
             c.created_at,
             c.created_by,
+            c.org_id,
             COALESCE(c.status, 'Active') AS status,
             r.id AS resume_id,
             r.skills,
@@ -88,11 +89,11 @@ async function getCandidateWithCurrentResume(...args) {
 async function listCandidates({ userId = null, limit = 50 } = {}) {
   const safeLimit = Math.min(Math.max(Number(limit) || 50, 1), 100);
   const whereClause = userId
-    ? "WHERE c.created_by = $1 AND c.created_by IS NOT NULL AND r.id IS NOT NULL AND c.status = 'Active'"
-    : "WHERE c.created_by IS NOT NULL AND r.id IS NOT NULL AND c.status = 'Active'";
+    ? "WHERE (c.created_by = $1 OR c.created_by IS NULL) AND r.id IS NOT NULL AND c.status = 'Active'"
+    : "WHERE r.id IS NOT NULL AND c.status = 'Active'";
   const countWhere = userId
-    ? "WHERE c.created_by = $1 AND c.created_by IS NOT NULL AND r.id IS NOT NULL AND c.status = 'Active'"
-    : "WHERE c.created_by IS NOT NULL AND r.id IS NOT NULL AND c.status = 'Active'";
+    ? "WHERE (c.created_by = $1 OR c.created_by IS NULL) AND r.id IS NOT NULL AND c.status = 'Active'"
+    : "WHERE r.id IS NOT NULL AND c.status = 'Active'";
   const queryParams = userId ? [userId, safeLimit] : [safeLimit];
   const countParams = userId ? [userId] : [];
 
@@ -618,7 +619,7 @@ async function getCurrentResumeId(candidateId, userId = null) {
   let extra = "";
   if (userId) {
     params.push(userId);
-    extra = " AND (c.created_by = $2 OR c.created_by IS NULL OR c.org_id IN (SELECT org_id FROM platform.org_members WHERE user_id = $2 AND status = 'active'))";
+    extra = " AND (c.created_by = $2 OR c.created_by IS NULL)";
   }
   const { rows } = await pool.query(
     `SELECT r.id

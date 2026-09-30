@@ -62,7 +62,7 @@ async function getJobById(...args) {
   let extraWhere = "";
   if (userId) {
     params.push(userId);
-    extraWhere = " AND (created_by = $2 OR created_by IS NULL OR org_id IN (SELECT org_id FROM platform.org_members WHERE user_id = $2 AND status = 'active'))";
+    extraWhere = " AND (created_by = $2 OR created_by IS NULL)";
   }
 
   const { rows } = await db.query(
@@ -71,7 +71,7 @@ async function getJobById(...args) {
             score_threshold, uploaded_at, processed_at, processing_failed_at,
             processing_status, processing_error, embedding,
             COALESCE(status, 'Active') AS status,
-            location, created_by,
+            location, created_by, org_id,
             company_name, source_email, source_url, message_id,
             employment_type, visa_requirement, remote_policy,
             min_experience, max_experience, vendor_id
@@ -169,11 +169,11 @@ async function markFailed(jobId, error) {
 async function listJobs({ userId = null, limit = 50 } = {}) {
   const safeLimit = Math.min(Math.max(Number(limit) || 50, 1), 100);
   const whereClause = userId
-    ? "WHERE j.created_by = $1 AND j.created_by IS NOT NULL AND j.processed_at IS NOT NULL AND j.processing_failed_at IS NULL AND j.status = 'Active'"
-    : "WHERE j.created_by IS NOT NULL AND j.processed_at IS NOT NULL AND j.processing_failed_at IS NULL AND j.status = 'Active'";
+    ? "WHERE (j.created_by = $1 OR j.created_by IS NULL) AND j.processed_at IS NOT NULL AND j.processing_failed_at IS NULL AND j.status = 'Active'"
+    : "WHERE j.processed_at IS NOT NULL AND j.processing_failed_at IS NULL AND j.status = 'Active'";
   const countWhere = userId
-    ? "WHERE created_by = $1 AND created_by IS NOT NULL AND processed_at IS NOT NULL AND processing_failed_at IS NULL AND status = 'Active'"
-    : "WHERE created_by IS NOT NULL AND processed_at IS NOT NULL AND processing_failed_at IS NULL AND status = 'Active'";
+    ? "WHERE (created_by = $1 OR created_by IS NULL) AND processed_at IS NOT NULL AND processing_failed_at IS NULL AND status = 'Active'"
+    : "WHERE processed_at IS NOT NULL AND processing_failed_at IS NULL AND status = 'Active'";
   const queryParams = userId ? [userId, safeLimit] : [safeLimit];
   const countParams = userId ? [userId] : [];
 

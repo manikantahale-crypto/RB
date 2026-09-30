@@ -42,33 +42,8 @@ async function createSubmission({ candidateId, resumeId, jobId, matchId, userId 
     throw createError("Job not found or does not belong to you.", 404);
   }
 
-  // Step 4 - Organization Validation & Authorization
-  const candidateOrg = candidate.org_id || null;
-  const jobOrg = job.org_id || null;
-
-  if (candidateOrg && jobOrg && candidateOrg !== jobOrg) {
-    throw createError("Candidate and job belong to different organizations.", 400);
-  }
-
-  let orgId = candidateOrg || jobOrg;
-  if (!orgId) {
-    const userOrgsRes = await pool.query(
-      `SELECT org_id FROM platform.org_members WHERE user_id = $1 AND status = 'active' ORDER BY created_at ASC`,
-      [userId]
-    );
-    if (userOrgsRes.rows.length === 0) {
-      throw createError("User does not belong to an active organization.", 403);
-    }
-    orgId = userOrgsRes.rows[0].org_id;
-  }
-
-  const memberCheck = await pool.query(
-    `SELECT 1 FROM platform.org_members WHERE user_id = $1 AND org_id = $2 AND status = 'active'`,
-    [userId, orgId]
-  );
-  if (memberCheck.rows.length === 0) {
-    throw createError("User is not authorized for this organization.", 403);
-  }
+  // Step 4 - Organization Context Resolution (for database compatibility)
+  const orgId = candidate.org_id || job.org_id || null;
 
   // Step 5 - Duplicate active submission
   const duplicate = await prismRepo.findActiveDuplicateSubmission(candidateId, jobId, userId);

@@ -66,11 +66,11 @@ function requireAuth(req, res, next) {
     req.user = {
       userId: payload.userId,
       email: payload.email,
-      role: payload.role,
-      orgId: payload.orgId ?? null,
+      role: payload.role || null,
+      orgId: payload.orgId || null,
     };
     req.userId = payload.userId;
-    req.orgId = payload.orgId ?? null;
+    req.orgId = payload.orgId || null;
 
     if (log.isDebugEnabled()) {
       log.debug(

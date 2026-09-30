@@ -102,13 +102,13 @@ async function listEnrichedSubmissions(userId, filters = {}) {
     SELECT c.id, c.full_name, r.primary_role, r.total_experience, c.immigration_status, c.location, c.email, c.phone
     FROM core.people c
     LEFT JOIN core.resumes r ON r.person_id = c.id AND r.is_current = true
-    WHERE c.id = ANY($1) AND c.created_by = $2
+    WHERE c.id = ANY($1) AND (c.created_by = $2 OR c.created_by IS NULL)
   `;
   const jobSql = `
     SELECT j.id as job_id, j.title, j.location, j.company_name, v.id as vendor_id, v.name as vendor_name, v.status as vendor_status, v.email as vendor_email, v.phone as vendor_phone, v.location as vendor_location
     FROM core.requirements j
-    LEFT JOIN core.vendors v ON j.vendor_id = v.id AND v.created_by = $2
-    WHERE j.id = ANY($1) AND j.created_by = $2
+    LEFT JOIN core.vendors v ON j.vendor_id = v.id AND (v.created_by = $2 OR v.created_by IS NULL)
+    WHERE j.id = ANY($1) AND (j.created_by = $2 OR j.created_by IS NULL)
   `;
   const rtrSql = `
     SELECT DISTINCT ON (submission_id) id, submission_id, status, document_url, created_at
@@ -529,7 +529,7 @@ async function getRTRBySubmissionId(arg1, arg2, arg3 = null) {
     SELECT r.*
     FROM prism.rtr r
     JOIN prism.submissions s ON r.submission_id = s.id
-    WHERE r.submission_id = $1 AND s.created_by = $2
+    WHERE r.submission_id = $1 AND ($2::uuid IS NULL OR s.created_by = $2::uuid OR r.created_by = $2::uuid)
     ORDER BY r.created_at DESC
     LIMIT 1
   `;
@@ -601,7 +601,7 @@ async function getConsentBySubmissionId(arg1, arg2, arg3 = null) {
     SELECT c.*
     FROM prism.consents c
     JOIN prism.submissions s ON c.submission_id = s.id
-    WHERE c.submission_id = $1 AND s.created_by = $2
+    WHERE c.submission_id = $1 AND ($2::uuid IS NULL OR s.created_by = $2::uuid OR c.created_by = $2::uuid)
     ORDER BY c.created_at DESC
   `;
   const { rows } = await dbClient.query(sql, [submissionId, userId]);
@@ -631,7 +631,7 @@ async function getLatestConsent(arg1, arg2, arg3 = null) {
     SELECT c.*
     FROM prism.consents c
     JOIN prism.submissions s ON c.submission_id = s.id
-    WHERE c.submission_id = $1 AND s.created_by = $2
+    WHERE c.submission_id = $1 AND ($2::uuid IS NULL OR s.created_by = $2::uuid OR c.created_by = $2::uuid)
     ORDER BY c.created_at DESC
     LIMIT 1
   `;
@@ -720,6 +720,17 @@ async function updateApprovalStatus(client, approvalId, submissionId, userId, st
 // -----------------------------------------------------------------------------
 async function insertAuditLog(client, { entityType, entityId, previousStatus, newStatus, createdBy, orgId }) {
   const dbClient = client || pool;
+  let resolvedOrgId = orgId || null;
+  if (!resolvedOrgId && entityId) {
+    try {
+      const { rows } = await dbClient.query("SELECT org_id FROM prism.submissions WHERE id = $1", [entityId]);
+      if (rows.length && rows[0].org_id) {
+        resolvedOrgId = rows[0].org_id;
+      }
+    } catch (e) {
+      // Ignore lookup failure
+    }
+  }
   const sql = `
     INSERT INTO prism.audit (entity_type, entity_id, previous_status, new_status, created_by, org_id)
     VALUES ($1, $2, $3, $4, $5, $6)
@@ -731,7 +742,7 @@ async function insertAuditLog(client, { entityType, entityId, previousStatus, ne
     previousStatus || null,
     newStatus,
     createdBy,
-    orgId || null,
+    resolvedOrgId,
   ]);
   return rows[0];
 }

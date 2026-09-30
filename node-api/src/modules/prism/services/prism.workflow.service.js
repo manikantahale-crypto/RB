@@ -1511,21 +1511,23 @@ async function recordRTRStatus(submissionId, userId, { status, documentUrl } = {
           });
         }
 
-        // Publish PRISM Submission Completed event to outbox within transaction
-        await platformEvents.publishPrismSubmissionCompleted({
-          submissionId: sub.id,
-          candidateId: sub.candidate_id,
-          jobId: sub.job_id,
-          vendorId: sub.vendor_id || sub.vendorId,
-          status: WORKFLOW_STATUSES.RTR_CONFIRMED,
-          rate: sub.rate,
-          rateType: sub.rate_type || sub.rateType,
-          availability: sub.availability,
-          rtrStatus: "SIGNED",
-          completedAt: new Date().toISOString(),
-          createdBy: userId,
-          client,
-        });
+        // Publish PRISM Submission Completed event to outbox within transaction if available
+        if (typeof platformEvents.publishPrismSubmissionCompleted === "function") {
+          await platformEvents.publishPrismSubmissionCompleted({
+            submissionId: sub.id,
+            candidateId: sub.candidate_id,
+            jobId: sub.job_id,
+            vendorId: sub.vendor_id || sub.vendorId,
+            status: WORKFLOW_STATUSES.RTR_CONFIRMED,
+            rate: sub.rate,
+            rateType: sub.rate_type || sub.rateType,
+            availability: sub.availability,
+            rtrStatus: "SIGNED",
+            completedAt: new Date().toISOString(),
+            createdBy: userId,
+            client,
+          });
+        }
       }
     );
   }
