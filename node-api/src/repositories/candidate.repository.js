@@ -210,8 +210,14 @@ async function deleteCandidate(candidateId, userId = null) {
     }
 
     // 5. Relay module records
-    await client.query(`DELETE FROM relay.followups WHERE candidate_id = $1`, [candidateId]);
-    await client.query(`DELETE FROM relay.email_classifications WHERE candidate_id = $1`, [candidateId]);
+    await client.query(
+      `DELETE FROM relay.followups WHERE candidate_id = $1 OR thread_id IN (SELECT thread_id FROM relay.email_threads WHERE candidate_id = $1)`,
+      [candidateId]
+    );
+    await client.query(
+      `DELETE FROM relay.email_classifications WHERE candidate_id = $1 OR thread_id IN (SELECT thread_id FROM relay.email_threads WHERE candidate_id = $1)`,
+      [candidateId]
+    );
     await client.query(
       `DELETE FROM relay.email_messages WHERE thread_id IN (SELECT thread_id FROM relay.email_threads WHERE candidate_id = $1)`,
       [candidateId]
@@ -314,8 +320,14 @@ async function deleteCandidates(candidateIds, userId = null) {
     }
 
     // 5. Relay module records
-    await client.query(`DELETE FROM relay.followups WHERE candidate_id = ANY($1::uuid[])`, [ownedIds]);
-    await client.query(`DELETE FROM relay.email_classifications WHERE candidate_id = ANY($1::uuid[])`, [ownedIds]);
+    await client.query(
+      `DELETE FROM relay.followups WHERE candidate_id = ANY($1::uuid[]) OR thread_id IN (SELECT thread_id FROM relay.email_threads WHERE candidate_id = ANY($1::uuid[]))`,
+      [ownedIds]
+    );
+    await client.query(
+      `DELETE FROM relay.email_classifications WHERE candidate_id = ANY($1::uuid[]) OR thread_id IN (SELECT thread_id FROM relay.email_threads WHERE candidate_id = ANY($1::uuid[]))`,
+      [ownedIds]
+    );
     await client.query(
       `DELETE FROM relay.email_messages WHERE thread_id IN (SELECT thread_id FROM relay.email_threads WHERE candidate_id = ANY($1::uuid[]))`,
       [ownedIds]

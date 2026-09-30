@@ -36,12 +36,6 @@ async function createVendor(userId, data) {
       throw err;
     }
 
-    if (!user.organization_id) {
-      const err = new Error("User is not associated with an organization");
-      err.statusCode = 403;
-      throw err;
-    }
-
     // 2. Duplicate protection (scoped to user)
     const existing = await vendorRepo.findVendorByName(cleanName, userId, client);
     if (existing) {
