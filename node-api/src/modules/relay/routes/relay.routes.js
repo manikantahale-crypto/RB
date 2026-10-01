@@ -9,6 +9,7 @@ const { v4: uuidv4 } = require("uuid");
 const log = require("../../../utils/logger");
 const env = require("../../../config/env");
 const { requireInternalSecret } = require("../../../middleware/internalSecret");
+const { requireAuth } = require("../../../middleware/auth");
 
 // Canonical DB Pool & Relay Services (zero ORM dependencies)
 const { pool, query, sql, normalizeThread, normalizeMessage, normalizeFollowup } = require("../../../../../apps/relay/src/db/index.ts");
@@ -111,8 +112,17 @@ router.get("/relay-health", (_req, res) => {
 });
 
 // ============================================================================
-// Public / Recruiter Relay Routes
+// Recruiter Relay Routes (Authenticated)
 // ============================================================================
+
+router.use("/threads", requireAuth);
+router.use("/followups", requireAuth);
+router.use("/fetch-now", requireAuth);
+router.use("/reclassify-inbox", requireAuth);
+router.use("/test-sla", requireAuth);
+router.use("/test-consent-timeout", requireAuth);
+router.use("/test-consent-reminders", requireAuth);
+router.use("/webhooks", requireAuth);
 
 router.get("/threads", async (_req, res, next) => {
   try {

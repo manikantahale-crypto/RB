@@ -16,7 +16,7 @@ function flag(name, defaultValue = false) {
 
 module.exports = {
   DATABASE_URL: required("DATABASE_URL"),
-  PORT: parseInt(process.env.SYNTRA_PORT || (process.env.RENDER ? "4000" : process.env.PORT) || "4000", 10),
+  PORT: parseInt(process.env.SYNTRA_PORT || "4000", 10),
   UPLOAD_DIR: process.env.UPLOAD_DIR || "./uploads",
   PYTHON_SERVICE_URL: (
     process.env.PYTHON_SERVICE_URL || "http://localhost:8000"
@@ -75,5 +75,5 @@ module.exports = {
   ORCH_DELEGATE_ASTRA: flag("ORCH_DELEGATE_ASTRA", false),
   /** Orchestrator HTTP API — used by admin runtime trace; Syntra writes outbox directly. */
   ORCH_API_URL: (process.env.ORCH_API_URL || "http://127.0.0.1:4100").replace(/\/$/, ""),
-  SYNTRA_API_URL: (process.env.SYNTRA_API_URL || `http://127.0.0.1:${process.env.SYNTRA_PORT || (process.env.RENDER ? "4000" : process.env.PORT) || "4000"}`).replace(/\/$/, ""),
+  SYNTRA_API_URL: (process.env.SYNTRA_API_URL || `http://127.0.0.1:${process.env.SYNTRA_PORT || "4000"}`).replace(/\/$/, ""),
 };
