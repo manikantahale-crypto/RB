@@ -64,6 +64,7 @@
     "concurrently": "^10.0.4",
     "tsx": "*",
     "typescript": "*",
-    "vitest": "*"
+    "vitest": "*",
+    "wait-on": "^9.5.1"
   }
 }

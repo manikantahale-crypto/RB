@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { X, Send, Sparkles, RefreshCw, CheckCircle2, Paperclip, Trash2 } from 'lucide-react';
 import { RelayEmail } from '../../types';
+import { apiFetch } from '../../services/api';
 
 interface ComposerAttachment {
   filename: string;
@@ -50,6 +51,7 @@ export const ReplyComposerModal: React.FC<ReplyComposerModalProps> = ({
   const [isDrafting, setIsDrafting] = useState(false);
   const [isRewriting, setIsRewriting] = useState(false);
   const [sentSuccess, setSentSuccess] = useState(false);
+  const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [draftSource, setDraftSource] = useState<string | null>(null);
   const [replyable, setReplyable] = useState(true);
   const saveTimerRef = useRef<number | null>(null);
@@ -62,9 +64,8 @@ export const ReplyComposerModal: React.FC<ReplyComposerModalProps> = ({
   }) => {
     if (!replyToEmail || mode !== 'reply') return;
     try {
-      await fetch(`/api/threads/${replyToEmail.id}/draft`, {
+      await apiFetch(`/threads/${replyToEmail.id}/draft`, {
         method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           body: overrides?.body ?? messageBody,
           subject: overrides?.subject ?? subject,
@@ -110,7 +111,7 @@ export const ReplyComposerModal: React.FC<ReplyComposerModalProps> = ({
 
       setIsDrafting(true);
       try {
-        const res = await fetch(`/api/threads/${replyToEmail.id}/draft`);
+        const res = await apiFetch(`/threads/${replyToEmail.id}/draft`);
         if (res.ok) {
           const data = await res.json();
           setMessageBody(data.body || '');
@@ -146,9 +147,8 @@ export const ReplyComposerModal: React.FC<ReplyComposerModalProps> = ({
     if (!replyToEmail || !messageBody.trim()) return;
     setIsRewriting(true);
     try {
-      const res = await fetch(`/api/threads/${replyToEmail.id}/rewrite`, {
+      const res = await apiFetch(`/threads/${replyToEmail.id}/rewrite`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ body: messageBody }),
       });
       if (res.ok) {
@@ -165,7 +165,7 @@ export const ReplyComposerModal: React.FC<ReplyComposerModalProps> = ({
     if (!replyToEmail || mode !== 'reply') return;
     setIsDrafting(true);
     try {
-      const res = await fetch(`/api/threads/${replyToEmail.id}/draft?force=1`);
+      const res = await apiFetch(`/threads/${replyToEmail.id}/draft?force=1`);
       if (res.ok) {
         const data = await res.json();
         setMessageBody(data.body || messageBody);
@@ -200,9 +200,8 @@ export const ReplyComposerModal: React.FC<ReplyComposerModalProps> = ({
     if (!replyToEmail) return;
     setIsSending(true);
     try {
-      const res = await fetch(`/api/threads/${replyToEmail.id}/send`, {
+      const res = await apiFetch(`/threads/${replyToEmail.id}/send`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           to: toAddress,
           subject,
@@ -224,7 +223,7 @@ export const ReplyComposerModal: React.FC<ReplyComposerModalProps> = ({
         onClose();
       }, 1200);
     } catch (err: unknown) {
-      alert(err instanceof Error ? err.message : 'Failed to send message');
+      setErrorMessage(err instanceof Error ? err.message : 'Failed to send message');
     } finally {
       setIsSending(false);
     }
@@ -233,6 +232,18 @@ export const ReplyComposerModal: React.FC<ReplyComposerModalProps> = ({
   return (
     <div className="fixed inset-0 z-50 bg-black/75 backdrop-blur-sm flex items-center justify-center p-4">
       <div className="bg-[#120c24] border border-purple-500/30 rounded-2xl p-5 max-w-2xl w-full shadow-2xl flex flex-col max-h-[90vh]">
+        {errorMessage && (
+          <div className="mb-3 px-3 py-2 rounded-xl bg-red-500/10 border border-red-500/30 text-xs text-red-300 flex items-center justify-between shrink-0">
+            <span>{errorMessage}</span>
+            <button
+              type="button"
+              onClick={() => setErrorMessage(null)}
+              className="text-red-400 hover:text-white font-bold ml-2 cursor-pointer"
+            >
+              ✕
+            </button>
+          </div>
+        )}
         <div className="flex items-center justify-between border-b border-[#261e38] pb-3 mb-3 shrink-0">
           <div>
             <h3 className="text-base font-bold text-slate-100">

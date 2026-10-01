@@ -3,7 +3,7 @@ services:
     name: benchsales-backend
     runtime: node
     plan: starter
-    buildCommand: npm install
+    buildCommand: npm install --include=dev && npm install --prefix node-api
     startCommand: npm run start:render
     healthCheckPath: /healthz
     autoDeploy: false

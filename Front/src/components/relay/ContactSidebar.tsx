@@ -11,7 +11,6 @@ import {
   FilePlus,
   CheckSquare,
   ListPlus,
-  Clock,
   ExternalLink,
   Eye,
   CheckCircle2,
@@ -229,38 +228,42 @@ export const ContactSidebar: React.FC<ContactSidebarProps> = ({
         <div className="grid grid-cols-1 gap-2">
           <button
             type="button"
-            onClick={() => handleActionClick('Create Candidate')}
-            className="flex items-center gap-2 px-3 py-2 rounded-xl bg-purple-600/15 border border-purple-500/30 hover:bg-purple-600/25 text-purple-200 font-semibold text-xs transition cursor-pointer"
+            disabled
+            title="Coming soon"
+            className="flex items-center gap-2 px-3 py-2 rounded-xl bg-purple-900/20 border border-white/5 text-slate-500 font-semibold text-xs opacity-60 cursor-not-allowed"
           >
-            <UserPlus className="w-3.5 h-3.5 text-purple-400" />
-            <span>Create Candidate</span>
+            <UserPlus className="w-3.5 h-3.5 text-slate-500" />
+            <span>Create Candidate (Soon)</span>
           </button>
 
           <button
             type="button"
-            onClick={() => handleActionClick('Create JD')}
-            className="flex items-center gap-2 px-3 py-2 rounded-xl bg-emerald-600/15 border border-emerald-500/30 hover:bg-emerald-600/25 text-emerald-200 font-semibold text-xs transition cursor-pointer"
+            disabled
+            title="Coming soon"
+            className="flex items-center gap-2 px-3 py-2 rounded-xl bg-emerald-900/20 border border-white/5 text-slate-500 font-semibold text-xs opacity-60 cursor-not-allowed"
           >
-            <FilePlus className="w-3.5 h-3.5 text-emerald-400" />
-            <span>Create JD</span>
+            <FilePlus className="w-3.5 h-3.5 text-slate-500" />
+            <span>Create JD (Soon)</span>
           </button>
 
           <button
             type="button"
-            onClick={() => handleActionClick('Create Task')}
-            className="flex items-center gap-2 px-3 py-2 rounded-xl bg-blue-600/15 border border-blue-500/30 hover:bg-blue-600/25 text-blue-200 font-semibold text-xs transition cursor-pointer"
+            disabled
+            title="Coming soon"
+            className="flex items-center gap-2 px-3 py-2 rounded-xl bg-blue-900/20 border border-white/5 text-slate-500 font-semibold text-xs opacity-60 cursor-not-allowed"
           >
-            <CheckSquare className="w-3.5 h-3.5 text-blue-400" />
-            <span>Create Task</span>
+            <CheckSquare className="w-3.5 h-3.5 text-slate-500" />
+            <span>Create Task (Soon)</span>
           </button>
 
           <button
             type="button"
-            onClick={() => handleActionClick('Add to Sequence')}
-            className="flex items-center gap-2 px-3 py-2 rounded-xl bg-amber-600/15 border border-amber-500/30 hover:bg-amber-600/25 text-amber-200 font-semibold text-xs transition cursor-pointer"
+            disabled
+            title="Coming soon"
+            className="flex items-center gap-2 px-3 py-2 rounded-xl bg-amber-900/20 border border-white/5 text-slate-500 font-semibold text-xs opacity-60 cursor-not-allowed"
           >
-            <ListPlus className="w-3.5 h-3.5 text-amber-400" />
-            <span>Add to Sequence</span>
+            <ListPlus className="w-3.5 h-3.5 text-slate-500" />
+            <span>Add to Sequence (Soon)</span>
           </button>
         </div>
       </div>

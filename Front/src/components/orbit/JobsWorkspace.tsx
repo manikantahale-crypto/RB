@@ -1083,13 +1083,14 @@ export const JobsWorkspace: React.FC<JobsWorkspaceProps> = ({
               )}
             </div>
 
-            {/* AGENTIC DISCOVERY ACTION: Find Jobs for My Candidates */}
+            {/* AGENTIC DISCOVERY ACTION: Find Jobs for My Candidates (Feature Gated) */}
             <button
               type="button"
-              onClick={() => setIsDiscoveryModalOpen(true)}
-              className="px-4 py-2.5 rounded-xl bg-gradient-to-r from-purple-600 to-indigo-600 hover:from-purple-500 hover:to-indigo-500 text-white font-bold text-xs md:text-sm flex items-center justify-center gap-2 shadow-lg shadow-purple-950/40 transition cursor-pointer hover:border-purple-400/70 border border-purple-500/50 hover:scale-[1.02] active:scale-[0.98]"
+              disabled
+              title="Coming soon"
+              className="px-4 py-2.5 rounded-xl bg-purple-900/20 text-slate-400 font-bold text-xs md:text-sm flex items-center justify-center gap-2 border border-white/10 opacity-60 cursor-not-allowed"
             >
-              <Sparkles className="w-4 h-4 text-purple-200" />
+              <Sparkles className="w-4 h-4 text-slate-400" />
               <span>Find Jobs for My Candidates</span>
             </button>
 

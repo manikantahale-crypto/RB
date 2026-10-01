@@ -26,6 +26,12 @@ export const Dashboard: React.FC<DashboardProps> = ({ onNavigate }) => {
   const [trends, setTrends] = useState<any[]>([]);
   const [loading, setLoading] = useState<boolean>(false);
   const [error, setError] = useState<string | null>(null);
+  const [toastMessage, setToastMessage] = useState<string | null>(null);
+
+  const showToast = (msg: string) => {
+    setToastMessage(msg);
+    setTimeout(() => setToastMessage(null), 3500);
+  };
 
   const fetchDashboardData = async () => {
     setLoading(true);
@@ -106,7 +112,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ onNavigate }) => {
   }, [timeRange]);
 
   const handleActionClick = (actionName: string) => {
-    alert(`${actionName} action triggered (local mock interface).`);
+    showToast(`${actionName} triggered.`);
   };
 
   const handleApproveShortlist = async (jobId: string) => {
@@ -118,8 +124,9 @@ export const Dashboard: React.FC<DashboardProps> = ({ onNavigate }) => {
         throw new Error(body.error || `Approve failed (${res.status})`);
       }
       setQuickActions((prev) => prev.filter((a) => a.jobId !== jobId));
+      showToast('Shortlist approved successfully.');
     } catch (err: any) {
-      alert(err.message || 'Failed to send consent emails.');
+      showToast(err.message || 'Failed to send consent emails.');
     } finally {
       setApprovingJobId(null);
     }
@@ -590,6 +597,13 @@ export const Dashboard: React.FC<DashboardProps> = ({ onNavigate }) => {
             </div>
           </div>
         </>
+      )}
+
+      {toastMessage && (
+        <div className="fixed bottom-6 right-6 z-50 bg-[#1e1338] text-white px-5 py-3 rounded-xl shadow-2xl border border-purple-500/40 font-medium text-sm flex items-center gap-2 animate-in fade-in slide-in-from-bottom-4 duration-200">
+          <AlertCircle className="w-4 h-4 text-purple-400 shrink-0" />
+          <span>{toastMessage}</span>
+        </div>
       )}
     </div>
   );

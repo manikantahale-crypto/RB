@@ -20,7 +20,7 @@ import { RelayEmail, NavigationScreen, RelayThreadMessage, RelayTopMatch } from 
 import { cleanEmailSubject, extractRenderableEmailHtml, plainBodyForDisplay } from './emailBodyUtils';
 import { ThreadView } from './ThreadView';
 import { EmailBodyView } from './EmailBodyView';
-import { apiFetchWithRetry } from '../../services/api';
+import { apiFetch, apiFetchWithRetry } from '../../services/api';
 import { inboxBadgeLabel } from './relayCategoryMap';
 
 interface EmailDetailProps {
@@ -96,7 +96,7 @@ export const EmailDetail: React.FC<EmailDetailProps> = ({ email, loadingDetail, 
     let cancelled = false;
     (async () => {
       try {
-        const res = await fetch(`/api/threads/${email.id}/matches`);
+        const res = await apiFetch(`/threads/${email.id}/matches`);
         if (!res.ok || cancelled) return;
         const data = await res.json();
         if (cancelled) return;
@@ -130,7 +130,7 @@ export const EmailDetail: React.FC<EmailDetailProps> = ({ email, loadingDetail, 
       }
       setShortlistStatus('approved');
     } catch (err: unknown) {
-      alert(err instanceof Error ? err.message : 'Failed to send consent');
+      setPromoteError(err instanceof Error ? err.message : 'Failed to send consent');
     } finally {
       setApproving(false);
     }
@@ -150,9 +150,8 @@ export const EmailDetail: React.FC<EmailDetailProps> = ({ email, loadingDetail, 
     setPromoting(true);
     setPromoteError(null);
     try {
-      const res = await fetch(`/api/threads/${encodeURIComponent(email.id)}/promote-to-jd`, {
+      const res = await apiFetch(`/threads/${encodeURIComponent(email.id)}/promote-to-jd`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
       });
       const data = await res.json().catch(() => ({}));
       if (!res.ok) {

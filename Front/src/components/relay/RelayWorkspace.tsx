@@ -8,6 +8,7 @@ import { recruiterActionForIntent } from './recruiterActions';
 import { EmailList } from './EmailList';
 import { EmailDetail } from './EmailDetail';
 import { ReplyComposerModal } from './ReplyComposerModal';
+import { apiFetch, apiFetchWithTimeout } from '../../services/api';
 
 interface RelayWorkspaceProps {
   onNavigate?: (screen: NavigationScreen) => void;
@@ -31,13 +32,7 @@ export const RelayWorkspace: React.FC<RelayWorkspaceProps> = ({ onNavigate }) =>
   const loadedDetailRef = useRef<Set<string>>(new Set());
 
   const fetchWithTimeout = useCallback(async (url: string, ms = 45000) => {
-    const ctrl = new AbortController();
-    const timer = window.setTimeout(() => ctrl.abort(), ms);
-    try {
-      return await fetch(url, { signal: ctrl.signal });
-    } finally {
-      window.clearTimeout(timer);
-    }
+    return await apiFetchWithTimeout(url, {}, ms);
   }, []);
   const [categoryMenuOpen, setCategoryMenuOpen] = useState(false);
   const categoryMenuRef = useRef<HTMLDivElement>(null);
@@ -204,7 +199,7 @@ export const RelayWorkspace: React.FC<RelayWorkspaceProps> = ({ onNavigate }) =>
     let lastStatus = 0;
     let lastMessage = '';
     for (let attempt = 0; attempt < 2; attempt++) {
-      const res = await fetchWithTimeout('/api/threads', 20000);
+      const res = await fetchWithTimeout('/threads', 20000);
       lastStatus = res.status;
       if (res.ok) {
         const data = await res.json();
@@ -238,7 +233,7 @@ export const RelayWorkspace: React.FC<RelayWorkspaceProps> = ({ onNavigate }) =>
           /* list may still succeed after background sync */
         }
         setLoading(false);
-        void fetchWithTimeout('/api/fetch-now', 8000).catch(() => undefined);
+        void fetchWithTimeout('/fetch-now', 8000).catch(() => undefined);
         await new Promise((r) => setTimeout(r, 4000));
         try {
           await fetchThreads();
@@ -297,7 +292,7 @@ export const RelayWorkspace: React.FC<RelayWorkspaceProps> = ({ onNavigate }) =>
 
     let cancelled = false;
     setDetailLoading(true);
-    fetchWithTimeout(`/api/threads/${encodeURIComponent(selectedEmailId)}`, 20000)
+    fetchWithTimeout(`/threads/${encodeURIComponent(selectedEmailId)}`, 20000)
       .then(async (res) => {
         if (!res.ok) throw new Error(`Could not load conversation (${res.status})`);
         const payload = await res.json();
@@ -445,7 +440,7 @@ export const RelayWorkspace: React.FC<RelayWorkspaceProps> = ({ onNavigate }) =>
   const handleOpenReply = async (mode: 'reply' | 'forward', draft?: string) => {
     if (mode === 'reply' && selectedEmail && !draft) {
       try {
-        const res = await fetch(`/api/threads/${selectedEmail.id}/draft`);
+        const res = await apiFetch(`/threads/${selectedEmail.id}/draft`);
         if (res.ok) {
           const data = await res.json();
           setComposerDraft(data.body);

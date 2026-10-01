@@ -602,10 +602,11 @@ export const CandidatesWorkspace: React.FC<CandidatesWorkspaceProps> = ({
 
                           <button
                             type="button"
-                            onClick={() => setIsDiscoveryModalOpen(true)}
-                            className="px-3 py-1.5 rounded-lg bg-gradient-to-r from-purple-600 to-indigo-600 hover:from-purple-500 hover:to-indigo-500 text-white text-xs font-semibold flex items-center gap-1.5 transition cursor-pointer shadow-sm border border-purple-500/50 hover:scale-[1.02] active:scale-[0.98]"
+                            disabled
+                            title="Coming soon"
+                            className="px-3 py-1.5 rounded-lg bg-purple-900/20 text-slate-400 text-xs font-semibold flex items-center gap-1.5 border border-white/10 opacity-60 cursor-not-allowed"
                           >
-                            <Sparkles className="w-3.5 h-3.5 text-purple-200" />
+                            <Sparkles className="w-3.5 h-3.5 text-slate-400" />
                             <span>Find Jobs for Selected ({selectedCandidateIds.size})</span>
                           </button>
 
@@ -623,14 +624,12 @@ export const CandidatesWorkspace: React.FC<CandidatesWorkspaceProps> = ({
                               <div className="absolute left-0 top-9 z-30 w-44 rounded-xl bg-[#120c24] border border-purple-500/30 shadow-xl py-1 text-xs text-slate-200">
                                 <button
                                   type="button"
-                                  onClick={() => {
-                                    setIsBulkActionsOpen(false);
-                                    setIsDiscoveryModalOpen(true);
-                                  }}
-                                  className="w-full px-3.5 py-2 text-left text-purple-300 hover:bg-purple-500/15 flex items-center gap-2 font-semibold transition cursor-pointer"
+                                  disabled
+                                  title="Coming soon"
+                                  className="w-full px-3.5 py-2 text-left text-slate-500 flex items-center gap-2 font-semibold cursor-not-allowed opacity-60"
                                 >
-                                  <Sparkles className="w-3.5 h-3.5 text-purple-400" />
-                                  <span>Discover Jobs</span>
+                                  <Sparkles className="w-3.5 h-3.5 text-slate-500" />
+                                  <span>Discover Jobs (Soon)</span>
                                 </button>
                                 <button
                                   type="button"

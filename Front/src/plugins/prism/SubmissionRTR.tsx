@@ -1164,7 +1164,8 @@ export const SubmissionRTR: React.FC<SubmissionRTRProps> = ({ navigationContext,
       document.body.removeChild(link);
 
     } else if (format === 'pdf') {
-      alert("PDF export is unavailable.");
+      // PDF export currently disabled pending template generator
+      return;
 
     } else if (format === 'word') {
       const htmlContent = `
@@ -1349,8 +1350,8 @@ export const SubmissionRTR: React.FC<SubmissionRTRProps> = ({ navigationContext,
                   <button onClick={() => handleExport('csv')} className="w-full text-left px-4 py-2.5 text-sm font-semibold text-slate-300 hover:bg-purple-600/20 hover:text-purple-300 transition-colors flex items-center gap-2">
                     <FileSpreadsheet className="w-4 h-4 text-emerald-400" /> Export as CSV
                   </button>
-                  <button onClick={() => handleExport('pdf')} className="w-full text-left px-4 py-2.5 text-sm font-semibold text-slate-300 hover:bg-purple-600/20 hover:text-purple-300 transition-colors flex items-center gap-2">
-                    <FileText className="w-4 h-4 text-red-400" /> Export as PDF
+                  <button disabled title="PDF export coming soon" className="w-full text-left px-4 py-2.5 text-sm font-semibold text-slate-500 opacity-50 cursor-not-allowed flex items-center gap-2">
+                    <FileText className="w-4 h-4 text-slate-500" /> Export as PDF (Coming Soon)
                   </button>
                   <button onClick={() => handleExport('word')} className="w-full text-left px-4 py-2.5 text-sm font-semibold text-slate-300 hover:bg-purple-600/20 hover:text-purple-300 transition-colors flex items-center gap-2">
                     <File className="w-4 h-4 text-blue-400" /> Export as Word

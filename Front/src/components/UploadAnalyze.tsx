@@ -55,6 +55,12 @@ export const UploadAnalyze: React.FC<UploadAnalyzeProps> = ({
     existingTitle: string;
     existingId?: string;
   } | null>(null);
+  const [toastMessage, setToastMessage] = useState<string | null>(null);
+
+  const showToast = (msg: string) => {
+    setToastMessage(msg);
+    setTimeout(() => setToastMessage(null), 3500);
+  };
 
   // Bulk Upload state variables
   const [bulkState, setBulkState] = useState<'upload' | 'processing' | 'results'>('upload');
@@ -861,7 +867,7 @@ export const UploadAnalyze: React.FC<UploadAnalyzeProps> = ({
       }
     } catch (err: any) {
       console.error("Bulk save error", err);
-      alert(err?.message || "Failed to save some items.");
+      showToast(err?.message || "Failed to save some items.");
     } finally {
       setIsSavingBulk(false);
     }
@@ -912,7 +918,7 @@ export const UploadAnalyze: React.FC<UploadAnalyzeProps> = ({
       }
     } catch (err) {
       console.error("Retry error", err);
-      alert("Failed to retry parsing. See console for details.");
+      showToast("Failed to retry parsing. See console for details.");
       if (index !== undefined) {
         setReviewFile(prev => prev ? { ...prev, isRetrying: false } : null);
       }
@@ -921,7 +927,7 @@ export const UploadAnalyze: React.FC<UploadAnalyzeProps> = ({
 
   const saveSingleFile = async () => {
     if (!analyzedId) {
-      alert("Nothing to save yet — wait for analysis to finish.");
+      showToast("Nothing to save yet — wait for analysis to finish.");
       throw new Error("missing analyzedId");
     }
     try {
@@ -940,7 +946,7 @@ export const UploadAnalyze: React.FC<UploadAnalyzeProps> = ({
       }
     } catch (err: any) {
       console.error("Save error", err);
-      alert(err?.message || "Failed to save.");
+      showToast(err?.message || "Failed to save.");
       throw err;
     }
   };
@@ -971,7 +977,7 @@ export const UploadAnalyze: React.FC<UploadAnalyzeProps> = ({
         onGoToMatch(inputType === 'jd' ? 'job' : 'resume', analyzedId);
       }
     } else {
-      alert(`${actionName} action triggered.`);
+      showToast(`${actionName} action triggered.`);
     }
   };
 
@@ -1058,7 +1064,7 @@ export const UploadAnalyze: React.FC<UploadAnalyzeProps> = ({
                     }
                   } catch (e) {
                     console.error(e);
-                    alert("Failed to save before matching");
+                    showToast("Failed to save before matching");
                   }
                 }
               }}
@@ -1871,6 +1877,12 @@ export const UploadAnalyze: React.FC<UploadAnalyzeProps> = ({
               </button>
             </div>
           </div>
+        </div>
+      )}
+      {toastMessage && (
+        <div className="fixed bottom-6 right-6 z-50 bg-[#1e1338] text-white px-5 py-3 rounded-xl shadow-2xl border border-purple-500/40 font-medium text-sm flex items-center gap-2 animate-in fade-in slide-in-from-bottom-4 duration-200">
+          <AlertCircle className="w-4 h-4 text-purple-400 shrink-0" />
+          <span>{toastMessage}</span>
         </div>
       )}
     </div>

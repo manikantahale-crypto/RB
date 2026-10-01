@@ -28,6 +28,11 @@ export async function apiFetch(
       url = input;
       pathOnly = input;
     } else {
+      if (!API_BASE_URL && !import.meta.env.DEV) {
+        throw new Error(
+          '[FATAL] VITE_API_BASE_URL is not configured in this production deployment. Set VITE_API_BASE_URL in your Vercel Dashboard.'
+        );
+      }
       pathOnly = input.startsWith('/') ? input : `/${input}`;
       url = `${API_BASE_URL}${pathOnly}`;
     }
