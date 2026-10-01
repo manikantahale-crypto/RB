@@ -214,7 +214,7 @@ async function getResumeWithCandidate(resumeId, userId) {
     `SELECT r.id, r.candidate_id, r.file_path, r.processing_status
      FROM ${CORE_RESUMES} r
      JOIN ${CORE_PEOPLE} c ON r.candidate_id = c.id
-     WHERE r.id = $1 AND (c.created_by = $2 OR c.created_by IS NULL)`,
+     WHERE r.id = $1 AND c.created_by = $2`,
     [resumeId, userId]
   );
   return rows[0] || null;

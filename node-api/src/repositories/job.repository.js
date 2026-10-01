@@ -62,7 +62,7 @@ async function getJobById(...args) {
   let extraWhere = "";
   if (userId) {
     params.push(userId);
-    extraWhere = " AND (created_by = $2 OR created_by IS NULL)";
+    extraWhere = " AND created_by = $2";
   }
 
   const { rows } = await db.query(
@@ -169,10 +169,10 @@ async function markFailed(jobId, error) {
 async function listJobs({ userId = null, limit = 50 } = {}) {
   const safeLimit = Math.min(Math.max(Number(limit) || 50, 1), 100);
   const whereClause = userId
-    ? "WHERE (j.created_by = $1 OR j.created_by IS NULL) AND j.processed_at IS NOT NULL AND j.processing_failed_at IS NULL AND j.status = 'Active'"
+    ? "WHERE j.created_by = $1 AND j.processed_at IS NOT NULL AND j.processing_failed_at IS NULL AND j.status = 'Active'"
     : "WHERE j.processed_at IS NOT NULL AND j.processing_failed_at IS NULL AND j.status = 'Active'";
   const countWhere = userId
-    ? "WHERE (created_by = $1 OR created_by IS NULL) AND processed_at IS NOT NULL AND processing_failed_at IS NULL AND status = 'Active'"
+    ? "WHERE created_by = $1 AND processed_at IS NOT NULL AND processing_failed_at IS NULL AND status = 'Active'"
     : "WHERE processed_at IS NOT NULL AND processing_failed_at IS NULL AND status = 'Active'";
   const queryParams = userId ? [userId, safeLimit] : [safeLimit];
   const countParams = userId ? [userId] : [];
@@ -257,7 +257,7 @@ async function deleteJobs(jobIds, userId = null) {
   try {
     await client.query("BEGIN");
     const selectSql = userId
-      ? `SELECT id FROM core.requirements WHERE id = ANY($1::uuid[]) AND (created_by = $2 OR created_by IS NULL)`
+      ? `SELECT id FROM core.requirements WHERE id = ANY($1::uuid[]) AND created_by = $2`
       : `SELECT id FROM core.requirements WHERE id = ANY($1::uuid[])`;
     const selectParams = userId ? [ids, userId] : [ids];
     const ownedRows = await client.query(selectSql, selectParams);

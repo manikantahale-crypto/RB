@@ -102,13 +102,13 @@ async function listEnrichedSubmissions(userId, filters = {}) {
     SELECT c.id, c.full_name, r.primary_role, r.total_experience, c.immigration_status, c.location, c.email, c.phone
     FROM core.people c
     LEFT JOIN core.resumes r ON r.person_id = c.id AND r.is_current = true
-    WHERE c.id = ANY($1) AND (c.created_by = $2 OR c.created_by IS NULL)
+    WHERE c.id = ANY($1) AND c.created_by = $2
   `;
   const jobSql = `
     SELECT j.id as job_id, j.title, j.location, j.company_name, v.id as vendor_id, v.name as vendor_name, v.status as vendor_status, v.email as vendor_email, v.phone as vendor_phone, v.location as vendor_location
     FROM core.requirements j
     LEFT JOIN core.vendors v ON j.vendor_id = v.id AND (v.created_by = $2 OR v.created_by IS NULL)
-    WHERE j.id = ANY($1) AND (j.created_by = $2 OR j.created_by IS NULL)
+    WHERE j.id = ANY($1) AND j.created_by = $2
   `;
   const rtrSql = `
     SELECT DISTINCT ON (submission_id) id, submission_id, status, document_url, created_at
@@ -402,7 +402,7 @@ async function updateSubmissionRateAvailability(
     // 1. Link vendor to job/requirement if provided
     if (vendorId && sub.requirement_id) {
       await dbClient.query(
-        "UPDATE core.requirements SET vendor_id = $1, updated_at = now() WHERE id = $2 AND (created_by = $3 OR created_by IS NULL)",
+        "UPDATE core.requirements SET vendor_id = $1, updated_at = now() WHERE id = $2 AND created_by = $3",
         [vendorId, sub.requirement_id, userId]
       );
     }

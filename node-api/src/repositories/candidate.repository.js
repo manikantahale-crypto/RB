@@ -44,7 +44,7 @@ async function getCandidateWithCurrentResume(...args) {
   let extraWhere = "";
   if (userId) {
     params.push(userId);
-    extraWhere = " AND (c.created_by = $2 OR c.created_by IS NULL)";
+    extraWhere = " AND c.created_by = $2";
   }
 
   const { rows } = await db.query(
@@ -89,10 +89,10 @@ async function getCandidateWithCurrentResume(...args) {
 async function listCandidates({ userId = null, limit = 50 } = {}) {
   const safeLimit = Math.min(Math.max(Number(limit) || 50, 1), 100);
   const whereClause = userId
-    ? "WHERE (c.created_by = $1 OR c.created_by IS NULL) AND r.id IS NOT NULL AND c.status = 'Active'"
+    ? "WHERE c.created_by = $1 AND r.id IS NOT NULL AND c.status = 'Active'"
     : "WHERE r.id IS NOT NULL AND c.status = 'Active'";
   const countWhere = userId
-    ? "WHERE (c.created_by = $1 OR c.created_by IS NULL) AND r.id IS NOT NULL AND c.status = 'Active'"
+    ? "WHERE c.created_by = $1 AND r.id IS NOT NULL AND c.status = 'Active'"
     : "WHERE r.id IS NOT NULL AND c.status = 'Active'";
   const queryParams = userId ? [userId, safeLimit] : [safeLimit];
   const countParams = userId ? [userId] : [];
@@ -167,7 +167,7 @@ async function deleteCandidate(candidateId, userId = null) {
   try {
     await client.query("BEGIN");
     const checkSql = userId
-      ? `SELECT id FROM ${CORE_PEOPLE} WHERE id = $1 AND (created_by = $2 OR created_by IS NULL)`
+      ? `SELECT id FROM ${CORE_PEOPLE} WHERE id = $1 AND created_by = $2`
       : `SELECT id FROM ${CORE_PEOPLE} WHERE id = $1`;
     const checkParams = userId ? [candidateId, userId] : [candidateId];
     const existing = await client.query(checkSql, checkParams);
@@ -273,7 +273,7 @@ async function deleteCandidates(candidateIds, userId = null) {
   try {
     await client.query("BEGIN");
     const selectSql = userId
-      ? `SELECT id FROM core.people WHERE id = ANY($1::uuid[]) AND (created_by = $2 OR created_by IS NULL)`
+      ? `SELECT id FROM core.people WHERE id = ANY($1::uuid[]) AND created_by = $2`
       : `SELECT id FROM core.people WHERE id = ANY($1::uuid[])`;
     const selectParams = userId ? [validIds, userId] : [validIds];
     const ownedRows = await client.query(selectSql, selectParams);
@@ -436,7 +436,7 @@ async function updateCandidate(candidateId, updates = {}, userId = null) {
   try {
     await client.query("BEGIN");
     const checkSql = userId
-      ? `SELECT id, org_id FROM core.people WHERE id = $1 AND (created_by = $2 OR created_by IS NULL)`
+      ? `SELECT id, org_id FROM core.people WHERE id = $1 AND created_by = $2`
       : `SELECT id, org_id FROM core.people WHERE id = $1`;
     const checkParams = userId ? [candidateId, userId] : [candidateId];
     const existing = await client.query(checkSql, checkParams);
@@ -631,7 +631,7 @@ async function getCurrentResumeId(candidateId, userId = null) {
   let extra = "";
   if (userId) {
     params.push(userId);
-    extra = " AND (c.created_by = $2 OR c.created_by IS NULL)";
+    extra = " AND c.created_by = $2";
   }
   const { rows } = await pool.query(
     `SELECT r.id

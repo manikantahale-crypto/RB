@@ -145,7 +145,7 @@ async function findRequirementByMessageId(messageId, createdBy = null) {
   let extraWhere = "";
   if (createdBy) {
     params.push(createdBy);
-    extraWhere = " AND (q.created_by = $2 OR q.created_by IS NULL)";
+    extraWhere = " AND q.created_by = $2";
   }
   const sql = `
     SELECT q.id, q.title, q.source_email, q.message_id, q.relay_thread_id,
@@ -171,7 +171,7 @@ async function findRequirementBySummaryHash(summaryHash, createdBy = null) {
   let extraWhere = "";
   if (createdBy) {
     params.push(createdBy);
-    extraWhere = " AND (q.created_by = $2 OR q.created_by IS NULL)";
+    extraWhere = " AND q.created_by = $2";
   }
   const sql = `
     SELECT q.id, q.title, q.source_email, q.message_id, q.relay_thread_id,
