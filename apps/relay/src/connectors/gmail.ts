@@ -1,9 +1,16 @@
-import { google, gmail_v1 } from 'googleapis';
 import { IEmailConnector, EmailData, EmailAttachmentMeta } from './connector.interface';
 import { htmlToPlainText } from '../utils/htmlText';
 import dotenv from 'dotenv';
 
 dotenv.config();
+
+let _google: any = null;
+function getGoogle(): any {
+  if (!_google) {
+    _google = require('googleapis').google;
+  }
+  return _google;
+}
 
 function extractAddress(raw: string): { name: string; email: string } {
   const match = raw.match(/^(.*?)\s*<([^>]+)>$/);
@@ -17,7 +24,7 @@ function decodeBody(data?: string | null): string {
 }
 
 async function extractBodies(
-  gmail: gmail_v1.Gmail,
+  gmail: any,
   messageId: string,
   payload: any,
 ): Promise<{ text: string; html: string; attachments: EmailAttachmentMeta[] }> {
@@ -64,18 +71,24 @@ async function extractBodies(
 }
 
 export class GmailConnector implements IEmailConnector {
-  private oAuth2Client;
+  private oAuth2Client: any = null;
 
-  constructor() {
-    this.oAuth2Client = new google.auth.OAuth2(
-      process.env.GMAIL_CLIENT_ID,
-      process.env.GMAIL_CLIENT_SECRET,
-      process.env.GMAIL_REDIRECT_URI || 'http://localhost',
-    );
+  constructor() {}
 
-    if (process.env.GMAIL_REFRESH_TOKEN) {
-      this.oAuth2Client.setCredentials({ refresh_token: process.env.GMAIL_REFRESH_TOKEN });
+  private getOAuth2Client() {
+    if (!this.oAuth2Client) {
+      const google = getGoogle();
+      this.oAuth2Client = new google.auth.OAuth2(
+        process.env.GMAIL_CLIENT_ID,
+        process.env.GMAIL_CLIENT_SECRET,
+        process.env.GMAIL_REDIRECT_URI || 'http://localhost',
+      );
+
+      if (process.env.GMAIL_REFRESH_TOKEN) {
+        this.oAuth2Client.setCredentials({ refresh_token: process.env.GMAIL_REFRESH_TOKEN });
+      }
     }
+    return this.oAuth2Client;
   }
 
   private fetchDays(): number {
@@ -91,7 +104,8 @@ export class GmailConnector implements IEmailConnector {
     direction: 'received' | 'sent',
     capOverride?: number,
   ): Promise<EmailData[]> {
-    const gmail = google.gmail({ version: 'v1', auth: this.oAuth2Client });
+    const google = getGoogle();
+    const gmail = google.gmail({ version: 'v1', auth: this.getOAuth2Client() });
     const emails: EmailData[] = [];
     const ownEmail = (process.env.GMAIL_SENDER_EMAIL || process.env.IMAP_USERNAME || '').toLowerCase();
     let pageToken: string | undefined;
@@ -118,7 +132,7 @@ export class GmailConnector implements IEmailConnector {
 
         const headers = fullMsg.data.payload?.headers || [];
         const header = (name: string) =>
-          headers.find((h) => h.name?.toLowerCase() === name.toLowerCase())?.value || '';
+          headers.find((h: any) => h.name?.toLowerCase() === name.toLowerCase())?.value || '';
 
         const subject = header('Subject');
         const from = extractAddress(header('From'));
@@ -193,7 +207,8 @@ export class GmailConnector implements IEmailConnector {
   }
 
   public async markAsRead(messageId: string): Promise<void> {
-    const gmail = google.gmail({ version: 'v1', auth: this.oAuth2Client });
+    const google = getGoogle();
+    const gmail = google.gmail({ version: 'v1', auth: this.getOAuth2Client() });
     await gmail.users.messages.modify({
       userId: 'me',
       id: messageId,

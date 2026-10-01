@@ -24,7 +24,6 @@ const {
 const {
   registerConsentAutoResendWorker,
 } = require("./modules/prism/workers/consentAutoResend.worker");
-const { registerRelayWorkers } = require("../../apps/relay/src/jobs/worker");
 console.log(`[${new Date().toISOString()}] [node-api] imports loaded`);
 
 let server = null;
@@ -43,6 +42,7 @@ async function bootstrapPgBossWorkers() {
     await registerAstraRequirementReceivedWorker(boss);
     await registerAstraEmailPollerWorker(boss);
     await registerConsentAutoResendWorker(boss);
+    const { registerRelayWorkers } = require("../../apps/relay/src/jobs/worker");
     await registerRelayWorkers(boss, log);
   });
   log.info("pg-boss workers registered successfully");
@@ -107,6 +107,16 @@ async function start() {
   console.log(`[${new Date().toISOString()}] [node-api] Binding HTTP listener to http://127.0.0.1:${env.PORT}...`);
   server = app.listen(env.PORT, "127.0.0.1", () => {
     console.log(`[${new Date().toISOString()}] [node-api] HTTP server listening on http://127.0.0.1:${env.PORT}`);
+    setImmediate(() => {
+      console.log(`[${new Date().toISOString()}] [node-api] Loading Relay routes...`);
+      const tRelay = Date.now();
+      try {
+        app.loadRelayRoutes();
+        console.log(`[${new Date().toISOString()}] [node-api] Relay routes loaded in ${Date.now() - tRelay}ms`);
+      } catch (err) {
+        console.error(`[${new Date().toISOString()}] [node-api] Failed to load Relay routes:`, err?.stack || err);
+      }
+    });
   });
 
   bootstrapPgBossWorkers().catch((err) => {

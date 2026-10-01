@@ -1,5 +1,4 @@
 import nodemailer from 'nodemailer';
-import { google } from 'googleapis';
 import dotenv from 'dotenv';
 import {
   formatSendError,
@@ -9,6 +8,14 @@ import {
 } from './relayOutbound';
 
 dotenv.config();
+
+let _google: any = null;
+function getGoogle(): any {
+  if (!_google) {
+    _google = require('googleapis').google;
+  }
+  return _google;
+}
 
 export type OutboundAttachment = {
   filename: string;
@@ -188,26 +195,33 @@ export class NodemailerSmtpSender implements ISender {
 }
 
 export class GmailApiSender implements ISender {
-  private oAuth2Client;
+  private oAuth2Client: any = null;
   public lastError: string | null = null;
 
-  constructor() {
-    this.oAuth2Client = new google.auth.OAuth2(
-      process.env.GMAIL_CLIENT_ID,
-      process.env.GMAIL_CLIENT_SECRET,
-      process.env.GMAIL_REDIRECT_URI || 'http://localhost',
-    );
+  constructor() {}
 
-    if (process.env.GMAIL_REFRESH_TOKEN) {
-      this.oAuth2Client.setCredentials({
-        refresh_token: process.env.GMAIL_REFRESH_TOKEN,
-      });
+  private getOAuth2Client() {
+    if (!this.oAuth2Client) {
+      const google = getGoogle();
+      this.oAuth2Client = new google.auth.OAuth2(
+        process.env.GMAIL_CLIENT_ID,
+        process.env.GMAIL_CLIENT_SECRET,
+        process.env.GMAIL_REDIRECT_URI || 'http://localhost',
+      );
+
+      if (process.env.GMAIL_REFRESH_TOKEN) {
+        this.oAuth2Client.setCredentials({
+          refresh_token: process.env.GMAIL_REFRESH_TOKEN,
+        });
+      }
     }
+    return this.oAuth2Client;
   }
 
   private async ensureAccessToken(): Promise<boolean> {
     try {
-      const token = await this.oAuth2Client.getAccessToken();
+      const client = this.getOAuth2Client();
+      const token = await client.getAccessToken();
       if (!token?.token) {
         this.lastError =
           'Gmail OAuth: no access token (invalid_grant or revoked refresh token)';
@@ -244,7 +258,8 @@ export class GmailApiSender implements ISender {
     if (!tokenOk) return false;
 
     try {
-      const gmail = google.gmail({ version: 'v1', auth: this.oAuth2Client });
+      const google = getGoogle();
+      const gmail = google.gmail({ version: 'v1', auth: this.getOAuth2Client() });
       const from =
         process.env.GMAIL_SENDER_EMAIL || process.env.SMTP_USERNAME || 'me';
       const rawMessage = buildMimeMessage(

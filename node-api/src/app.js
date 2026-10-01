@@ -81,8 +81,51 @@ app.use((req, res, next) => {
   next();
 });
 
-/** RELAY (Smart Inbox): consolidated in-process Express router. */
-app.use(require("./modules/relay/routes/relay.routes"));
+/** RELAY (Smart Inbox): mounted behind a startup gate. */
+let relayRouter = null;
+
+function isRelayPath(path) {
+  if (!path) return false;
+  const p = path.split("?")[0];
+  return (
+    p === "/relay-health" ||
+    p === "/threads" ||
+    p.startsWith("/threads/") ||
+    p === "/followups" ||
+    p.startsWith("/followups/") ||
+    p === "/webhooks" ||
+    p.startsWith("/webhooks/") ||
+    p === "/fetch-now" ||
+    p === "/reclassify-inbox" ||
+    p === "/test-sla" ||
+    p === "/test-consent-timeout" ||
+    p === "/test-consent-reminders" ||
+    p.startsWith("/internal/shortlist/") ||
+    p.startsWith("/internal/consent/") ||
+    p.startsWith("/internal/profile/") ||
+    p === "/internal/vendors/cache-clear" ||
+    p === "/internal/interview/send"
+  );
+}
+
+app.use((req, res, next) => {
+  if (relayRouter) {
+    return relayRouter(req, res, next);
+  }
+  if (isRelayPath(req.path)) {
+    return res.status(503).json({ error: "relay starting" });
+  }
+  return next();
+});
+
+function loadRelayRoutes() {
+  if (!relayRouter) {
+    relayRouter = require("./modules/relay/routes/relay.routes");
+  }
+  return relayRouter;
+}
+
+app.loadRelayRoutes = loadRelayRoutes;
 
 app.use(express.json());
 
@@ -132,3 +175,4 @@ app.use("/orchestration", requireAuth, require("./routes/orchestrationActivity.r
 app.use(errorHandler);
 
 module.exports = app;
+module.exports.loadRelayRoutes = loadRelayRoutes;
