@@ -1,3 +1,3 @@
-## Tekisho Orchestration — multi-agent orchestration platform for event-driven workflows.
+# Tekisho Orchestration — multi-agent orchestration platform for event-driven workflows.
 
 
