@@ -1,3 +1,4 @@
+console.log(`[${new Date().toISOString()}] [node-api] module loading started`);
 const app = require("./app");
 const env = require("./config/env");
 const { pool } = require("./config/db");
@@ -24,6 +25,7 @@ const {
   registerConsentAutoResendWorker,
 } = require("./modules/prism/workers/consentAutoResend.worker");
 const { registerRelayWorkers } = require("../../apps/relay/src/jobs/worker");
+console.log(`[${new Date().toISOString()}] [node-api] imports loaded`);
 
 let server = null;
 let isShuttingDown = false;
@@ -63,35 +65,48 @@ async function bootstrapPgBossWorkers() {
 }
 
 async function start() {
-  log.info("Starting node-api…");
+  console.log(`[${new Date().toISOString()}] [node-api] [1/3] Starting node-api bootstrap (target port: ${env.PORT})...`);
 
   try {
     await withPgRetry("syntra-api postgres", async () => {
-      const { rows } = await pool.query(
-        "SELECT now() AS now, current_database() AS db",
-      );
-      log.info("Postgres connected", {
-        now: rows[0].now,
-        database: rows[0].db,
-      });
+      const t0 = Date.now();
+      console.log(`[${new Date().toISOString()}] [node-api] [1/3] Connecting to PostgreSQL (timeout: 10s)...`);
 
+      let timerId;
+      const timeoutPromise = new Promise((_, reject) => {
+        timerId = setTimeout(() => reject(new Error("Postgres connection timed out after 10000ms")), 10000);
+      });
+      const queryPromise = pool.query("SELECT now() AS now, current_database() AS db");
+
+      const { rows } = await Promise.race([queryPromise, timeoutPromise]).finally(() => {
+        if (timerId) clearTimeout(timerId);
+      });
+      console.log(
+        `[${new Date().toISOString()}] [node-api] [1/3] Postgres connected in ${Date.now() - t0}ms (db: ${rows[0].db}, server time: ${rows[0].now})`,
+      );
+
+      const t1 = Date.now();
+      console.log(`[${new Date().toISOString()}] [node-api] [2/3] Checking event catalogue (authoring.event_catalog)...`);
       await seedEventSchemas();
+      console.log(`[${new Date().toISOString()}] [node-api] [2/3] Event catalogue verified in ${Date.now() - t1}ms`);
+
+      const t2 = Date.now();
+      console.log(`[${new Date().toISOString()}] [node-api] [3/3] Verifying review queue schema (syntra.review_queue)...`);
       await ensureRecruiterReviewSchema();
+      console.log(`[${new Date().toISOString()}] [node-api] [3/3] Review queue schema verified in ${Date.now() - t2}ms`);
     });
-    log.info("Platform event catalogue checked (read-only).", {
-      platformEvents: env.PLATFORM_EVENTS_ENABLED,
-      delegateMatch: env.ORCH_DELEGATE_MATCH,
-      emitJdReceived: env.ORCH_EMIT_JD_RECEIVED,
-    });
+    console.log(
+      `[${new Date().toISOString()}] [node-api] Platform event catalogue checked (read-only). [platformEvents=${env.PLATFORM_EVENTS_ENABLED}, delegateMatch=${env.ORCH_DELEGATE_MATCH}, emitJdReceived=${env.ORCH_EMIT_JD_RECEIVED}]`,
+    );
   } catch (err) {
-    log.error("Postgres connection FAILED");
-    log.error(err);
+    console.error(`[${new Date().toISOString()}] [node-api] [FATAL] Database initialization failed:`, err?.stack || err);
     process.exit(1);
   }
 
   // Listen first so wait-on /health succeeds even if pg-boss is waiting on a DB slot.
+  console.log(`[${new Date().toISOString()}] [node-api] Binding HTTP listener to http://127.0.0.1:${env.PORT}...`);
   server = app.listen(env.PORT, "127.0.0.1", () => {
-    log.info(`HTTP server listening on http://127.0.0.1:${env.PORT}`);
+    console.log(`[${new Date().toISOString()}] [node-api] HTTP server listening on http://127.0.0.1:${env.PORT}`);
   });
 
   bootstrapPgBossWorkers().catch((err) => {
